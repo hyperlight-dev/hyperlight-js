@@ -1,0 +1,18 @@
+version: 2
+updates: 
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "03:00"
+  - package-ecosystem: "cargo"
+    directories: 
+      - "/"
+    schedule:
+      interval: "daily"
+      time: "03:00"
+  - package-ecosystem: "npm"
+    directory: "/src/js-host-api"
+    schedule:
+      interval: "daily"
+      time: "03:00"

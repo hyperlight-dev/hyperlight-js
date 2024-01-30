@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Validate Pull Request
+
+on:
+  pull_request:
+    branches: [ dev, 'release/**' ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/dep_build.yml
+    secrets: inherit
+  benchmarks:
+    uses: ./.github/workflows/dep_benchmarks.yml
+    secrets: inherit
+    with:
+      download-benchmarks: true
+      upload-benchmarks: false
+    

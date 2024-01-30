@@ -1,0 +1,53 @@
+[package]
+name = "hyperlight-js-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = """
+hyperlight-js-runtime is a rust binary crate that provides the JavaScript runtime binary for hyperlight-js.
+"""
+
+[[bin]]
+name = "hyperlight-js-runtime"
+harness = false
+test = false
+
+[dependencies]
+anyhow = { version = "1.0", default-features = false }
+base64 = {version = "0.22", default-features = false, features = ["alloc"] }
+fn-traits = "0.2.0"
+hashbrown = { version = "0.16", features = ["serde"] }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+hmac =  { version = "0.12" , default-features = false, features = ["reset"]}
+rquickjs = { version = "0.11", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.149", default-features = false, features = ["alloc"] }
+sha2 =  { version = "0.10" , default-features = false, features = ["force-soft"]}
+spin = "0.10"
+tracing = { version = "0.1.44", default-features = false, features = ["log","attributes","max_level_trace","release_max_level_error"] }
+
+[target.'cfg(hyperlight)'.dependencies]
+hyperlight-common = { workspace = true, default-features = false }
+hyperlight-guest = { workspace = true }
+hyperlight-guest-bin = { workspace = true }
+
+[target.'cfg(not(hyperlight))'.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+libc = "0.2"
+
+[target.'cfg(not(hyperlight))'.dev-dependencies]
+escargot = "0.5"
+tempfile = "3.25"
+
+[build-dependencies]
+cc = "1.2"
+
+[features]
+default = []
+trace_guest = ["hyperlight-common/trace_guest", "hyperlight-guest/trace_guest", "hyperlight-guest-bin/trace_guest"]
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(hyperlight)'] }

@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Build hyperlight-js
+
+on:
+  workflow_call:
+    inputs:
+      environment: 
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    environment: ${{ inputs.environment }}
+    strategy:
+      fail-fast: true
+      matrix:
+        build: [windows-2022-debug, linux-kvm-debug, linux-hyperv3-debug, windows-2022-release, linux-kvm-release, linux-hyperv3-release]
+        include:
+          - build: windows-2022-debug
+            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+            hypervisor: whp
+            config: debug
+          - build: linux-kvm-debug
+            os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+            hypervisor: kvm
+            config: debug
+          - build: linux-hyperv3-debug
+            os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
+            hypervisor: hyperv3
+            config: debug
+          - build: windows-2022-release
+            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+            hypervisor: whp
+            config: release
+          - build: linux-kvm-release
+            os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+            hypervisor: kvm
+            config: release
+          - build: linux-hyperv3-release
+            os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
+            hypervisor: hyperv3
+            config: release
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - uses: hyperlight-dev/ci-setup-workflow@v1.8.0
+      with:
+        rust-toolchain: "1.89"
+
+    - name: install nodejs
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+    - name: fmt
+      run: just fmt-check
+
+    - name: Build
+      run: |
+          just build ${{ matrix.config }}
+
+    - name: Build js-host-api
+      run: |
+          just build-js-host-api ${{ matrix.config }}
+
+    - name: Spell Check Repo
+      # Only run on linux, otherwise we need to install wget on windows...
+      if: runner.os == 'Linux'
+      uses: crate-ci/typos@master
+
+    - name: lint
+      run: just lint ${{ matrix.config }}
+
+    - name: test
+      run: just test-all ${{ matrix.config }}
+
+    - name: Run Rust examples
+      run: just run-examples ${{ matrix.config }}
+
+    - name: Run node examples
+      run: just run-js-host-api-examples ${{ matrix.config }}
+
+    - name: Run Rust examples (tracing)
+      env:
+        CARGO_TERM_COLOR: always
+        RUST_LOG: debug
+      run: just run-examples-tracing ${{ matrix.config }}

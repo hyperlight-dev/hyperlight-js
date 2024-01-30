@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Create a Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+
+permissions:
+  id-token: write
+  contents: write # needed to create a release
+
+jobs:
+  build:
+    uses: ./.github/workflows/dep_build.yml
+    secrets: inherit
+    with:
+        environment: release
+  benchmarks:
+    uses: ./.github/workflows/dep_benchmarks.yml
+    secrets: inherit
+    with:
+        download-benchmarks: true
+        upload-benchmarks: true
+        environment: release
+
+  publish-hyperlight-js-packages-and-create-release:
+    needs: [build, benchmarks]
+    environment: release
+    runs-on: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+    if: ${{ contains(github.ref, 'refs/heads/release/') }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Ensures just is installed using setup wokflow to ensure just version consistency
+      - name: Hyperlight setup
+        uses: hyperlight-dev/ci-setup-workflow@v1.8.0
+        with:
+          rust-toolchain: "1.89"
+
+      - name: Set crate versions
+        run: |
+          git fetch --tags || true
+          version=$(echo "${{ github.ref }}" | sed -E 's#refs/heads/release/v##')
+          echo "Setting version to 'v$version'"
+          echo "HYPERLIGHT_JS_VERSION=v$version" >> $GITHUB_ENV
+
+      - name: Publish hyperlight-js
+        run: |
+          cargo publish -p hyperlight-js-runtime
+          cargo publish -p hyperlight-js
+
+      - name: Download benchmarks (Windows)
+        uses: actions/download-artifact@v7
+        with:
+          name: benchmarks_Windows_whp
+          path: benchmarks_Windows_whp
+
+      - name: Download benchmarks (Linux kvm)
+        uses: actions/download-artifact@v7
+        with:
+          name: benchmarks_Linux_kvm
+          path: benchmarks_Linux_kvm
+
+      - name: Download benchmarks (Linux hyperv3)
+        uses: actions/download-artifact@v7
+        with:
+          name: benchmarks_Linux_hyperv3
+          path: benchmarks_Linux_hyperv3
+  
+      - name: Archive benchmarks
+        run: |
+          tar -zcvf benchmarks_Windows_whp.tar.gz benchmarks_Windows_whp
+          tar -zcvf benchmarks_Linux_kvm.tar.gz benchmarks_Linux_kvm
+          tar -zcvf benchmarks_Linux_hyperv3.tar.gz benchmarks_Linux_hyperv3
+
+      - name: Create GH Release
+        run: |
+            gh release create ${{ env.HYPERLIGHT_JS_VERSION }} \
+              --generate-notes \
+              benchmarks_Windows_whp.tar.gz \
+              benchmarks_Linux_kvm.tar.gz \
+              benchmarks_Linux_hyperv3.tar.gz
+        env:
+            GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "utility": "c",
+        "span": "c",
+        "hyperlight.h": "c"
+    },
+    "chat.tools.terminal.autoApprove": {
+        "just": true
+    }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "@hyperlight/js-host-api",
+  "version": "0.17.0",
+  "description": "Node.js API bindings for Hyperlight JS",
+  "main": "lib.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "js-host-api"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@napi-rs/cli": "^3.5.1",
+    "eslint": "^10.0.0",
+    "prettier": "^3.8.1",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint lib.js tests/ examples/",
+    "lint:fix": "eslint lib.js tests/ examples/ --fix",
+    "fmt": "prettier --write \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"*.config.{js,mjs}\"",
+    "fmt:check": "prettier --check \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"*.config.{js,mjs}\"",
+    "prepublishOnly": "napi prepublish -t npm",
+    "artifacts": "napi artifacts",
+    "version": "napi version"
+  }
+}

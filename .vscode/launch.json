@@ -1,0 +1,45 @@
+{
+  "configurations": [
+    {
+      "name": "Remote GDB attach",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/hyperlight-js-runtime/x86_64-hyperlight-none/debug/hyperlight-js-runtime",
+      "args": [],
+      "stopAtEntry": true,
+      "hardwareBreakpoints": {
+        "require": false,
+        "limit": 4
+      },
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "miDebuggerServerAddress": "localhost:8080",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Set Disassembly Flavor to Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "Remote LLDB attach",
+      "type": "lldb",
+      "request": "launch",
+      "targetCreateCommands": [
+        "target create ${workspaceFolder}/target/hyperlight-js-runtime/x86_64-hyperlight-none/debug/hyperlight-js-runtime"
+      ],
+      "processCreateCommands": [
+        "gdb-remote localhost:8080"
+      ]
+    },
+  ]
+}

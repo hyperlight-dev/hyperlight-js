@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["src/hyperlight-js", "src/js-host-api", "src/hyperlight-js-runtime"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+repository = "https://github.com/hyperlight-dev/hyperlight-js"
+readme = "README.md"
+
+[workspace.dependencies]
+hyperlight-common = { version = "0.12",  default-features = false }
+hyperlight-guest-bin = { version = "0.12" }
+hyperlight-guest = { version = "0.12" }
+hyperlight-host = { version = "0.12", default-features = false, features = ["executable_heap", "init-paging"] }
+hyperlight-js = { version = "0.1.0", path = "src/hyperlight-js" }
+hyperlight-js-runtime = { version = "0.1.0", path = "src/hyperlight-js-runtime" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

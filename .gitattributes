@@ -1,0 +1,4 @@
+# Enforce LF line endings for all text files.
+# Prevents Windows `core.autocrlf = true` from checking out CRLF,
+# which breaks tools like Prettier that default to LF.
+* text=auto eol=lf

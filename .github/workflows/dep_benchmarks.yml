@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Run benchmarks
+
+on:
+  workflow_call:
+    inputs:
+      download-benchmarks:
+        required: true
+        type: boolean
+      upload-benchmarks:
+        required: true
+        type: boolean
+      environment: 
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: FULL
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  benchmark:
+    environment: ${{ inputs.environment }}
+    strategy:
+        fail-fast: true
+        matrix:
+          build: [windows-2022-release, linux-kvm-release, linux-hyperv3-release]
+          include:
+            - build: windows-2022-release
+              os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+              hypervisor: whp
+            - build: linux-kvm-release
+              os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+              hypervisor: kvm
+            - build: linux-hyperv3-release
+              os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
+              hypervisor: hyperv3
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: hyperlight-dev/ci-setup-workflow@v1.8.0
+        with:
+          rust-toolchain: "1.89"
+
+      - name: Install github-cli (Azure Linux)
+        if: runner.os == 'Linux' && matrix.hypervisor == 'mshv3'
+        run: sudo dnf install gh -y
+
+      - name: Install github-cli (Linux ubuntu)
+        if: runner.os == 'Linux' && matrix.hypervisor == 'kvm'
+        run: sudo apt install gh -y
+
+      - name: Build
+        run: |
+            just build-rust release
+
+        ## Download benchmarks from "latest" release
+      - name: Download benchmarks from latest release
+        run: |
+          just bench-download ${{ runner.os }} ${{ matrix.hypervisor }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        if: ${{ inputs.download-benchmarks }}
+
+      - name: Run benchmarks
+        run: |
+          just bench-ci dev release
+        working-directory: ./src/hyperlight-js 
+
+      - name: Upload benchmarks
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmarks_${{runner.os}}_${{matrix.hypervisor}}
+          path: ./target/criterion/
+          if-no-files-found: error
+        if: ${{ inputs.upload-benchmarks }}

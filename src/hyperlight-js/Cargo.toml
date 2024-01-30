@@ -1,0 +1,116 @@
+[package]
+name = "hyperlight-js"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = """
+hyperlight-js is a rust library crate that enables JavaScript code to be run inside lightweight Virtual Machine backed Sandbox.
+It is built on top of Hyperlight.
+"""
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.101"
+fn-traits = "0.2.0"
+hyperlight-host = { workspace = true }
+hyperlight-js-runtime = { workspace = true }
+metrics = "0.24.3"
+oxc_resolver = "11.17.1"
+phf = { version = "0.13", features = ["macros"] }
+serde = { version = "1.0" }
+serde_json = { version = "1.0" }
+tracing = "0.1.44"
+
+# Optional dependencies for execution monitors
+tokio = { version = "1.49", features = ["rt-multi-thread", "time", "sync", "macros"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_WindowsProgramming"], optional = true }
+
+[build-dependencies]
+cargo-hyperlight = "0.1.5"
+serde_json = { version = "1.0" }
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+chrono = "0.4.43"
+clap = { version = "4.5", features = ["derive"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
+crossbeam = { version = "0.8", features = ["std"] }
+crossbeam-queue = { version = "0.3", features = ["std"] }
+crossterm = "0.29.0"
+dashmap = "6.1.0"
+env_logger = "0.11"
+hyperlight-common = { workspace = true }
+lazy_static = "1.4.0"
+metrics-exporter-prometheus = "0.18"
+metrics-util = "0.20.1"
+opentelemetry = "0.31.0"
+opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.31"
+plotters = { version = "0.3.5", default-features = false, features = ["svg_backend"] }
+rand = "0.10.0"
+serde_json = { version = "1.0" }
+tempfile = "3.25"
+tracing-forest = { version = "0.3.1", features = ["full"] }
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber = {version = "0.3.22", features = ["std", "env-filter"]}
+tracing-tracy = { version = "0.11", features = ["timer-fallback", "ondemand"] }
+uuid = "1.21.0"
+
+[features]
+default = ["function_call_metrics", "kvm", "mshv3"]
+crashdump = ["hyperlight-host/crashdump"]
+gdb = ["hyperlight-host/gdb"]
+function_call_metrics = []
+kvm = ["hyperlight-host/kvm"]
+mshv3 = ["hyperlight-host/mshv3"]
+print_debug = ["hyperlight-host/print_debug"]
+trace_guest = ["hyperlight-host/trace_guest"]
+monitor-wall-clock = []
+monitor-cpu-time = ["dep:libc", "dep:windows-sys"]
+
+[package.metadata.cargo-machete]
+ignored = ["hyperlight-js-runtime"]
+
+[[example]]
+name = "run_handler"
+path = "examples/run_handler/main.rs"
+test = false
+
+[[example]]
+name = "metrics"
+path = "examples/metrics/main.rs"
+test = false
+
+[[example]]
+name = "tracing"
+path = "examples/tracing/main.rs"
+test = false
+
+[[example]]
+name = "interrupt"
+path = "examples/interrupt/main.rs"
+test = false
+
+[[example]]
+name = "tracing-otlp"
+path = "examples/tracing-otlp/main.rs"
+test = false
+
+[[example]]
+name = "runtime_debugging"
+path = "examples/runtime_debugging/main.rs"
+test = false
+
+[[bench]]
+name = "benchmarks"
+harness = false

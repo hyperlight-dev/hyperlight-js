@@ -1,0 +1,22 @@
+name: Issue Labeler
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  labeler:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Check and Add label
+      run: |
+        LABELS=$(gh issue view ${{ github.event.issue.number }} --json labels -q '.labels[].name')
+        if [[ $LABELS != *"needs review"* ]]; then
+          gh issue edit ${{ github.event.issue.number }} --add-label "needs review"
+        fi
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

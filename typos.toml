@@ -1,0 +1,5 @@
+[default]
+extend-ignore-re = [
+   "bytesFrom\\(\"[^\"]*\"\\,\\s*\"base64url\"\\)",
+   "(^|[^\\w])key = \"[^\"]*\"",
+]

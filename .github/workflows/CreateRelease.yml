@@ -43,6 +43,10 @@ jobs:
         with:
           rust-toolchain: "1.89"
 
+      - name: Authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: crates-io-auth
+
       - name: Set crate versions
         run: |
           git fetch --tags || true
@@ -54,6 +58,8 @@ jobs:
         run: |
           cargo publish -p hyperlight-js-runtime
           cargo publish -p hyperlight-js
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
       - name: Download benchmarks (Windows)
         uses: actions/download-artifact@v7

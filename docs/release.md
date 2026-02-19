@@ -22,23 +22,23 @@ cargo set-version 0.18.0
 
 For simplicity, we keep the version number consistent across all crates in the repository.
 
-Create a PR with these changes and merge it into the `dev` branch.
+Create a PR with these changes and merge it into the `main` branch.
 
 ## Create a tag
 
-When the `dev` branch has reached a state in which you want to release a new Cargo version, you should create a tag. Although you can do this from the GitHub releases page, we currently recommend doing the tag from the command line. Do so with the following commands:
+When the `main` branch has reached a state in which you want to release a new Cargo version, you should create a tag. Although you can do this from the GitHub releases page, we currently recommend doing the tag from the command line. Do so with the following commands:
 
 ```bash
 git tag -a v0.18.0 -m "A brief description of the release"
 git push origin v0.18.0 # if you've named your git remote for the hyperlight-dev/hyperlight-js repo differently, change 'origin' to your remote name
 ```
 
->Note: we'll use `v0.18.0` as the version for the above and all subsequent instructions. You should replace this with the version you're releasing. Make sure your version follows [SemVer](https://semver.org) conventions as closely as possible, and is prefixed with a `v` character. *In particular do not use a patch version unless you are patching an issue in a release branch, releases from dev should always be minor or major versions*.
+>Note: we'll use `v0.18.0` as the version for the above and all subsequent instructions. You should replace this with the version you're releasing. Make sure your version follows [SemVer](https://semver.org) conventions as closely as possible, and is prefixed with a `v` character. *In particular do not use a patch version unless you are patching an issue in a release branch, releases from main should always be minor or major versions*.
 If you are creating a patch release see the instructions [here](#patching-a-release).
 
 ## Create a release branch (no manual steps)
 
-After you push your new tag in the previous section, the ["Create a Release Branch"](https://github.com/hyperlight-dev/hyperlight-js/blob/dev/.github/workflows/CreateReleaseBranch.yml) CI job will automatically run. When this job completes, a new `release/v0.18.0` branch will be automatically created for you.
+After you push your new tag in the previous section, the ["Create a Release Branch"](https://github.com/hyperlight-dev/hyperlight-js/blob/main/.github/workflows/CreateReleaseBranch.yml) CI job will automatically run. When this job completes, a new `release/v0.18.0` branch will be automatically created for you.
 
 ## Create a new GitHub release and publish the crates
 

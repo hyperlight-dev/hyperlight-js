@@ -5,7 +5,7 @@ name: Create a Release
 on:
   workflow_dispatch:
   push:
-    branches: [dev]
+    branches: [main]
 
 permissions:
   id-token: write

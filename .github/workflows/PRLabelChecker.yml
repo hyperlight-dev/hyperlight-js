@@ -1,7 +1,7 @@
 name: Label Checker
 on:
   pull_request:
-    branches: dev
+    branches: main
     types: [opened, labeled, unlabeled, synchronize, reopened]
 permissions:
   pull-requests: read

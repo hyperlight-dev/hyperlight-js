@@ -12,18 +12,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Check for specific labels
+      - name: Ensure exactly one "kind/*" label is applied
         run: |
-          PR_NUMBER=$(echo ${{ github.event.pull_request.number }})
-          LABELS_JSON=$(gh pr view $PR_NUMBER --json labels -q '.labels.[] | .name')
-          REQUIRED_LABELS=("chore" "ignore" "breaking-change" "enhancement" "feature" "dependencies" "bug" "security" "performance" "refactor" "testing" "documentation" "github-actions")
-          for REQUIRED_LABEL in "${REQUIRED_LABELS[@]}"; do
-            if echo "$LABELS_JSON" | grep -q "$REQUIRED_LABEL"; then
-              echo "One of the required labels is present"
-              exit 0
-            fi
-          done
-          echo "None of the required labels are present"
-          exit 1
+          # Count the number of "kind/*" labels directly from the PR labels
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          KIND_LABEL_COUNT=$(gh pr view "$PR_NUMBER" --json labels -q '.labels.[].name' | grep -c '^kind/')
+
+          if [[ "$KIND_LABEL_COUNT" -eq 1 ]]; then
+            echo "✅ Exactly one 'kind/*' label is applied."
+            exit 0
+          else
+            echo "❌ PR must have exactly one 'kind/*' label, but found $KIND_LABEL_COUNT."
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

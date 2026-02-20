@@ -14,7 +14,7 @@ It is built on top of Hyperlight.
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.101"
+anyhow = "1.0.102"
 fn-traits = "0.2.0"
 hyperlight-host = { workspace = true }
 hyperlight-js-runtime = { workspace = true }

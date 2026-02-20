@@ -6,14 +6,29 @@ on:
   pull_request:
     branches: [ main, 'release/**' ]
 
+# Cancels old running job if a new one is triggered (e.g. by a push onto the same branch).
+# This will cancel dependent jobs as well, such as dep_build and dep_benchmarks
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   id-token: write
   contents: read
 
 jobs:
+  spelling:
+    name: Spell check with typos
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Spell Check Repo
+      uses: crate-ci/typos@v1.38.1
+
   build:
     uses: ./.github/workflows/dep_build.yml
     secrets: inherit
+
   benchmarks:
     uses: ./.github/workflows/dep_benchmarks.yml
     secrets: inherit
@@ -21,3 +36,15 @@ jobs:
       download-benchmarks: true
       upload-benchmarks: false
     
+  # Gate PR merges on this specific "join-job" which requires all other
+  # jobs to run first.
+  report-ci-status:
+    needs:
+      - build
+      - benchmarks
+      - spelling
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: calculate the correct exit status
+        run: jq --exit-status 'all(.result == "success" or .result == "skipped")' <<< '${{ toJson(needs) }}'

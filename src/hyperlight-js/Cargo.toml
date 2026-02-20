@@ -35,7 +35,7 @@ libc = { version = "0.2", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_WindowsProgramming"], optional = true }
 
 [build-dependencies]
-cargo-hyperlight = "0.1.5"
+cargo-hyperlight = "0.1.6"
 serde_json = { version = "1.0" }
 serde = { version = "1.0", features = ["derive"] }
 

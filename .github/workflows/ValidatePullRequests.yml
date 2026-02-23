@@ -23,7 +23,7 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - name: Spell Check Repo
-      uses: crate-ci/typos@v1.38.1
+      uses: crate-ci/typos@v1.43.5
 
   build:
     uses: ./.github/workflows/dep_build.yml

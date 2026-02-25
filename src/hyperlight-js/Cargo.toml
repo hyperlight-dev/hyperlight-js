@@ -59,7 +59,7 @@ opentelemetry-semantic-conventions = "0.31"
 plotters = { version = "0.3.5", default-features = false, features = ["svg_backend"] }
 rand = "0.10.0"
 serde_json = { version = "1.0" }
-tempfile = "3.25"
+tempfile = "3.26"
 tracing-forest = { version = "0.3.1", features = ["full"] }
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber = {version = "0.3.22", features = ["std", "env-filter"]}

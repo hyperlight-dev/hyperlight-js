@@ -40,7 +40,7 @@ libc = "0.2"
 
 [target.'cfg(not(hyperlight))'.dev-dependencies]
 escargot = "0.5"
-tempfile = "3.25"
+tempfile = "3.26"
 
 [build-dependencies]
 cc = "1.2"

@@ -21,7 +21,7 @@ pub struct LoadedJSSandbox {
     inner: MultiUseSandbox,
     // Snapshot of state before the sandbox was loaded and before any handlers were added.
     // This is used to restore state back to a JSSandbox.
-    snapshot: Snapshot,
+    snapshot: Arc<Snapshot>,
     // metric drop guard to manage sandbox metric
     _metric_guard: SandboxMetricsGuard<LoadedJSSandbox>,
 }
@@ -42,7 +42,7 @@ impl Drop for MonitorTask {
 
 impl LoadedJSSandbox {
     #[instrument(err(Debug), skip_all, level=Level::INFO)]
-    pub(super) fn new(inner: MultiUseSandbox, snapshot: Snapshot) -> Result<LoadedJSSandbox> {
+    pub(super) fn new(inner: MultiUseSandbox, snapshot: Arc<Snapshot>) -> Result<LoadedJSSandbox> {
         metrics::counter!(METRIC_SANDBOX_LOADS).increment(1);
         Ok(LoadedJSSandbox {
             inner,
@@ -92,13 +92,13 @@ impl LoadedJSSandbox {
     /// Take a snapshot of the the current state of the sandbox.
     /// This can be used to restore the state of the sandbox later.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn snapshot(&mut self) -> Result<Snapshot> {
+    pub fn snapshot(&mut self) -> Result<Arc<Snapshot>> {
         self.inner.snapshot()
     }
 
     /// Restore the state of the sandbox to a previous snapshot.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn restore(&mut self, snapshot: &Snapshot) -> Result<()> {
+    pub fn restore(&mut self, snapshot: Arc<Snapshot>) -> Result<()> {
         self.inner.restore(snapshot)?;
         Ok(())
     }
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(response_json["count"], 3);
 
         // Restore the snapshot
-        loaded_js_sandbox.restore(&snapshot).unwrap();
+        loaded_js_sandbox.restore(snapshot.clone()).unwrap();
 
         // Handle the event again, should reset to initial state
         let result = loaded_js_sandbox
@@ -432,7 +432,7 @@ mod tests {
             .unwrap_err();
 
         // restore to snapshot before unload/reload
-        reloaded_js_sandbox.restore(&snapshot).unwrap();
+        reloaded_js_sandbox.restore(snapshot.clone()).unwrap();
         // handler should be available again
         let result = reloaded_js_sandbox
             .handle_event("handler", get_static_counter_event(), gc)

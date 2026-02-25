@@ -50,7 +50,7 @@ Creates and configures a new sandbox.
 
 **Methods:**
 - `setHeapSize(bytes: number)` → `this` — Set guest heap size (must be > 0, chainable)
-- `setStackSize(bytes: number)` → `this` — Set guest stack size (must be > 0, chainable)
+- `setScratchSize(bytes: number)` → `this` — Set guest scratch size, includes stack (must be > 0, chainable)
 - `setInputBufferSize(bytes: number)` → `this` — Set guest input buffer size (must be > 0, chainable)
 - `setOutputBufferSize(bytes: number)` → `this` — Set guest output buffer size (must be > 0, chainable)
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
@@ -58,7 +58,7 @@ Creates and configures a new sandbox.
 ```javascript
 const builder = new SandboxBuilder()
     .setHeapSize(8 * 1024 * 1024)
-    .setStackSize(512 * 1024);
+    .setScratchSize(1024 * 1024);
 const protoSandbox = await builder.build();
 ```
 
@@ -237,9 +237,8 @@ All errors thrown by the API include a `code` property for programmatic handling
 |------|---------|
 | `ERR_INVALID_ARG` | Bad argument (empty handler name, zero timeout, etc.) |
 | `ERR_CONSUMED` | Object already consumed (e.g., calling `loadRuntime()` twice) |
-| `ERR_POISONED` | Sandbox is in an inconsistent state (after timeout kill, guest abort, etc.) — restore from snapshot or unload |
+| `ERR_POISONED` | Sandbox is in an inconsistent state (after timeout kill, guest abort, stack overflow, etc.) — restore from snapshot or unload |
 | `ERR_CANCELLED` | Execution was cancelled (by monitor timeout or manual `kill()`) |
-| `ERR_STACK_OVERFLOW` | Guest code caused a stack overflow |
 | `ERR_GUEST_ABORT` | Guest code aborted |
 | `ERR_INTERNAL` | Unexpected internal error |
 
@@ -251,8 +250,8 @@ try {
         case 'ERR_CANCELLED':
             console.log('Execution was cancelled');
             break;
-        case 'ERR_STACK_OVERFLOW':
-            console.log('Stack overflow in guest code');
+        case 'ERR_POISONED':
+            console.log('Sandbox is poisoned (e.g. stack overflow, timeout)');
             break;
         default:
             console.log(`Unexpected error [${error.code}]: ${error.message}`);

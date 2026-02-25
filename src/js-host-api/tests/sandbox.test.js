@@ -22,7 +22,7 @@ describe('SandboxBuilder', () => {
         const builder = new SandboxBuilder();
         const result = builder
             .setHeapSize(8 * 1024 * 1024)
-            .setStackSize(512 * 1024)
+            .setScratchSize(1024 * 1024)
             .setInputBufferSize(4096)
             .setOutputBufferSize(4096);
         expect(result).toBe(builder);
@@ -53,9 +53,9 @@ describe('SandboxBuilder', () => {
         expectThrowsWithCode(() => builder.setHeapSize(0), 'ERR_INVALID_ARG');
     });
 
-    it('should reject zero stack size', () => {
+    it('should reject zero scratch size', () => {
         const builder = new SandboxBuilder();
-        expectThrowsWithCode(() => builder.setStackSize(0), 'ERR_INVALID_ARG');
+        expectThrowsWithCode(() => builder.setScratchSize(0), 'ERR_INVALID_ARG');
     });
 
     it('should reject zero input buffer size', () => {

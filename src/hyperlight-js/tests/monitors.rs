@@ -97,7 +97,7 @@ fn wall_clock_monitor_sandbox_recovers_with_restore() {
     assert!(loaded.poisoned(), "Should be poisoned after kill");
 
     // Restore from snapshot
-    loaded.restore(&snapshot).unwrap();
+    loaded.restore(snapshot.clone()).unwrap();
     assert!(!loaded.poisoned(), "Should not be poisoned after restore");
 
     // Should be able to run again
@@ -162,7 +162,7 @@ fn cpu_time_monitor_sandbox_recovers_with_restore() {
     assert!(loaded.poisoned(), "Should be poisoned after kill");
 
     // Restore from snapshot
-    loaded.restore(&snapshot).unwrap();
+    loaded.restore(snapshot.clone()).unwrap();
     assert!(!loaded.poisoned(), "Should not be poisoned after restore");
 
     // Should be able to run again
@@ -237,7 +237,7 @@ fn tuple_monitor_sandbox_recovers_with_restore() {
     assert!(loaded.poisoned(), "Should be poisoned after kill");
 
     // Restore and verify recovery
-    loaded.restore(&snapshot).unwrap();
+    loaded.restore(snapshot.clone()).unwrap();
     assert!(!loaded.poisoned(), "Should not be poisoned after restore");
 
     let monitor2 = (

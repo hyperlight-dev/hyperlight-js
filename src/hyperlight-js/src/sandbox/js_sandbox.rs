@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use hyperlight_host::sandbox::snapshot::Snapshot;
 use hyperlight_host::{new_error, MultiUseSandbox, Result};
@@ -15,7 +16,7 @@ pub struct JSSandbox {
     handlers: HashMap<String, Script>,
     // Snapshot of state before any handlers are added.
     // This is used to restore state back to a neutral JSSandbox.
-    snapshot: Snapshot,
+    snapshot: Arc<Snapshot>,
     // metric drop guard to manage sandbox metric
     _metric_guard: SandboxMetricsGuard<JSSandbox>,
 }
@@ -33,8 +34,11 @@ impl JSSandbox {
     }
 
     /// Creates a new `JSSandbox` from a `MultiUseSandbox` and a `Snapshot` of state before any handlers were added.
-    pub(crate) fn from_loaded(mut loaded: MultiUseSandbox, snapshot: Snapshot) -> Result<Self> {
-        loaded.restore(&snapshot)?;
+    pub(crate) fn from_loaded(
+        mut loaded: MultiUseSandbox,
+        snapshot: Arc<Snapshot>,
+    ) -> Result<Self> {
+        loaded.restore(snapshot.clone())?;
         Ok(Self {
             inner: loaded,
             handlers: HashMap::new(),

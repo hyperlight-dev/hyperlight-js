@@ -92,7 +92,7 @@ fn handle_termination() -> Result<()> {
     );
 
     // Restore the sandbox from snapshot
-    loaded_sandbox.restore(&snapshot)?;
+    loaded_sandbox.restore(snapshot)?;
 
     // Verify sandbox is no longer poisoned after restore
     assert!(

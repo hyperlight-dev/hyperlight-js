@@ -99,7 +99,7 @@ fn main() -> Result<()> {
 
     // Demonstrate recovery from poisoned state
     println!("\n📸 Restoring sandbox from snapshot...");
-    loaded_sandbox.restore(&snapshot)?;
+    loaded_sandbox.restore(snapshot)?;
 
     println!("🔒 Poisoned after restore: {}", loaded_sandbox.poisoned());
     assert!(

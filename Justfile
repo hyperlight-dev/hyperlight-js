@@ -35,6 +35,9 @@ check-npm:
 check:
     cargo check
 
+check-license-headers:
+    ./dev/check-license-headers.sh
+
 clippy target=default-target features="": (ensure-tools)
     cd src/hyperlight-js-runtime && \
         cargo hyperlight clippy \

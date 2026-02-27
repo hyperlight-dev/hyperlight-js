@@ -62,19 +62,19 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
       - name: Download benchmarks (Windows)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: benchmarks_Windows_whp
           path: benchmarks_Windows_whp
 
       - name: Download benchmarks (Linux kvm)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: benchmarks_Linux_kvm
           path: benchmarks_Linux_kvm
 
       - name: Download benchmarks (Linux hyperv3)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: benchmarks_Linux_hyperv3
           path: benchmarks_Linux_hyperv3

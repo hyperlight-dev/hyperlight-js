@@ -2,6 +2,10 @@
 
 #include_next "time.h"
 
+#include <sys/time.h>
+#include <sys/types.h>
+#include <errno.h>
+
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
 

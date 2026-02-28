@@ -20,6 +20,7 @@ extern crate alloc;
 mod globals;
 pub mod host;
 mod host_fn;
+mod libc;
 mod modules;
 pub(crate) mod utils;
 

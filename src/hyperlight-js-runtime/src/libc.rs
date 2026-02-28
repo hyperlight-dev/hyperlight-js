@@ -1,5 +1,5 @@
 /*
-Copyright 2026  The Hyperlight Authors.
+Copyright 2026 The Hyperlight Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,13 +13,21 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#![cfg_attr(hyperlight, no_std)]
-#![cfg_attr(hyperlight, no_main)]
+mod bindings {
+    #![allow(
+        non_camel_case_types,
+        non_snake_case,
+        non_upper_case_globals,
+        dead_code,
+        unnecessary_transmutes,
+        clippy::upper_case_acronyms,
+        clippy::ptr_offset_with_cast
+    )]
+    include!(concat!(env!("OUT_DIR"), "/libc_stubs.rs"));
+}
 
-mod libc;
+#[allow(unused_imports)] // not used in native.rs
+pub(crate) use core::ffi::*;
 
-#[cfg(hyperlight)]
-include!("main/hyperlight.rs");
-
-#[cfg(not(hyperlight))]
-include!("main/native.rs");
+#[allow(unused_imports)] // not used in native.rs
+pub(crate) use bindings::*;

@@ -5,7 +5,8 @@
 
 #define stdout NULL
 
-#define putchar(c) _putchar((char)(c))
+int putchar(int c);
+
 #define vfprintf(f, ...) vprintf(__VA_ARGS__)
 #define fprintf(f, ...) printf(__VA_ARGS__)
 #define fputc(c, f) putc((char)(c), f)

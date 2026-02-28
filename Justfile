@@ -18,7 +18,7 @@ export HYPERLIGHT_CFLAGS := \
 export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
 
 ensure-tools:
-    cargo install cargo-hyperlight --locked --version 0.1.3
+    cargo install cargo-hyperlight --locked --version 0.1.7
 
 # Check if npm is installed, install automatically if missing (Linux)
 [private]
@@ -39,8 +39,7 @@ check-license-headers:
     ./dev/check-license-headers.sh
 
 clippy target=default-target features="": (ensure-tools)
-    cd src/hyperlight-js-runtime && \
-        cargo hyperlight clippy \
+    cargo hyperlight clippy -p hyperlight-js-runtime \
             --profile={{ if target == "debug" {"dev"} else { target } }} \
             -- -D warnings
     cargo clippy --all-targets \

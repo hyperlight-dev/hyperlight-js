@@ -78,7 +78,7 @@ jobs:
         working-directory: ./src/hyperlight-js 
 
       - name: Upload benchmarks
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: benchmarks_${{runner.os}}_${{matrix.hypervisor}}
           path: ./target/criterion/

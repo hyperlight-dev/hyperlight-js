@@ -168,7 +168,12 @@ ProtoJSSandbox.prototype.loadRuntime = wrapAsync(ProtoJSSandbox.prototype.loadRu
 // SandboxBuilder — async build + sync setters
 SandboxBuilder.prototype.build = wrapAsync(SandboxBuilder.prototype.build);
 
-for (const method of ['setHeapSize', 'setStackSize', 'setInputBufferSize', 'setOutputBufferSize']) {
+for (const method of [
+    'setHeapSize',
+    'setScratchSize',
+    'setInputBufferSize',
+    'setOutputBufferSize',
+]) {
     const orig = SandboxBuilder.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: SandboxBuilder.${method}`);
     SandboxBuilder.prototype[method] = wrapSync(orig);

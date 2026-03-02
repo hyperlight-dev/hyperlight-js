@@ -16,8 +16,8 @@ limitations under the License.
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
-use hyperlight_host::sandbox::{is_hypervisor_present, SandboxConfiguration};
-use hyperlight_host::{GuestBinary, HyperlightError, Result};
+use hyperlight_host::sandbox::SandboxConfiguration;
+use hyperlight_host::{is_hypervisor_present, GuestBinary, HyperlightError, Result};
 
 use super::proto_js_sandbox::ProtoJSSandbox;
 use crate::HostPrintFn;
@@ -28,16 +28,35 @@ pub struct SandboxBuilder {
     host_print_fn: Option<HostPrintFn>,
 }
 
-const MIN_STACK_SIZE: u64 = 256 * 1024;
-// The minimum heap size is 4096KB.
+/// The minimum scratch size for the JS runtime sandbox.
+///
+/// The scratch region provides writable physical memory for:
+///   - I/O buffers (input + output data)
+///   - Page table copies (proportional to snapshot size — our ~13 MB guest
+///     binary + heap produce ~72 KiB of page tables)
+///   - Dynamically allocated pages (GDT/IDT, stack growth, Copy-on-Write
+///     resolution during QuickJS initialisation)
+///   - Exception stack and metadata (2 pages at the top)
+///
+/// Hyperlight's default scratch (288 KiB) is far too small for the JS
+/// runtime guest: after fixed overheads there are only ~44 free pages,
+/// which are exhausted during init.  1 MiB (0x10_0000) matches
+/// hyperlight's own "large guest" test configuration and gives
+/// comfortable headroom.
+const MIN_SCRATCH_SIZE: usize = 0x10_0000; // 1 MiB
+
+/// The minimum heap size is 4 MiB.  The QuickJS engine needs a
+/// reasonable amount of heap during initialisation for builtins,
+/// global objects, and the bytecode compiler.  This lives in the
+/// identity-mapped snapshot region (NOT scratch).
 const MIN_HEAP_SIZE: u64 = 4096 * 1024;
 
 impl SandboxBuilder {
     /// Create a new SandboxBuilder
     pub fn new() -> Self {
         let mut config = SandboxConfiguration::default();
-        config.set_stack_size(MIN_STACK_SIZE);
         config.set_heap_size(MIN_HEAP_SIZE);
+        config.set_scratch_size(MIN_SCRATCH_SIZE);
 
         Self {
             config,
@@ -67,13 +86,14 @@ impl SandboxBuilder {
         self
     }
 
-    /// Set the guest stack size
-    /// This is the size of the stack that code executing in the guest can use.
-    /// If this value is too small then the guest will fail with a stack overflow error
-    /// The default value (and minimum) is set to the value of the MIN_STACK_SIZE const.
-    pub fn with_guest_stack_size(mut self, guest_stack_size: u64) -> Self {
-        if guest_stack_size > MIN_STACK_SIZE {
-            self.config.set_stack_size(guest_stack_size);
+    /// Set the guest scratch size in bytes.
+    /// The scratch region provides writable memory for the guest, including the
+    /// dynamically-sized stack. Increase this if your guest code needs deep
+    /// recursion or large local variables.
+    /// Values smaller than the default (288KiB) are ignored.
+    pub fn with_guest_scratch_size(mut self, guest_scratch_size: usize) -> Self {
+        if guest_scratch_size > MIN_SCRATCH_SIZE {
+            self.config.set_scratch_size(guest_scratch_size);
         }
         self
     }

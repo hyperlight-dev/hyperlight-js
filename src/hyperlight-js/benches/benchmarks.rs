@@ -197,7 +197,7 @@ fn handle_events_benchmark(c: &mut Criterion) {
                     let start = Instant::now();
                     let _ =
                         loaded_js_sandbox.handle_event("function1", event.to_string(), Some(gc));
-                    loaded_js_sandbox.restore(&snapshot).unwrap();
+                    loaded_js_sandbox.restore(snapshot.clone()).unwrap();
                     elapsed += start.elapsed();
                 }
             }

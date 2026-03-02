@@ -126,7 +126,7 @@ const { SandboxBuilder } = require('../lib.js');
 async function main() {
     const builder = new SandboxBuilder();
     builder.setHeapSize(8 * 1024 * 1024);   // Set heap size
-    builder.setStackSize(512 * 1024);        // Set stack size
+    builder.setScratchSize(1024 * 1024);        // Set scratch size (includes stack)
     const protoSandbox = await builder.build(); // Build sandbox
 }
 main();

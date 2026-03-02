@@ -95,8 +95,6 @@ enum ErrorCode {
     Poisoned,
     /// Execution was cancelled by the host (monitor timeout or manual `kill()`).
     Cancelled,
-    /// Guest stack overflow — increase stack size or reduce recursion depth.
-    StackOverflow,
     /// Guest abort (trap, panic, or fatal error in guest code).
     GuestAbort,
     /// Invalid arguments (bad types, empty names, zero sizes).
@@ -113,7 +111,6 @@ impl ErrorCode {
         match self {
             Self::Poisoned => "ERR_POISONED",
             Self::Cancelled => "ERR_CANCELLED",
-            Self::StackOverflow => "ERR_STACK_OVERFLOW",
             Self::GuestAbort => "ERR_GUEST_ABORT",
             Self::InvalidArg => "ERR_INVALID_ARG",
             Self::Consumed => "ERR_CONSUMED",
@@ -159,7 +156,6 @@ fn to_napi_error(err: HyperlightError) -> napi::Error {
         HyperlightError::PoisonedSandbox => ErrorCode::Poisoned,
         HyperlightError::ExecutionCanceledByHost() => ErrorCode::Cancelled,
         HyperlightError::JsonConversionFailure(_) => ErrorCode::InvalidArg,
-        HyperlightError::StackOverflow() => ErrorCode::StackOverflow,
         HyperlightError::GuestAborted(_, _) => ErrorCode::GuestAbort,
         _ => ErrorCode::Internal,
     };
@@ -226,7 +222,7 @@ pub struct SnapshotWrapper {
 /// ```js
 /// const proto = await new SandboxBuilder()
 ///     .setHeapSize(8 * 1024 * 1024)
-///     .setStackSize(512 * 1024)
+///     .setScratchSize(1024 * 1024)
 ///     .build();
 /// ```
 #[napi(js_name = "SandboxBuilder")]
@@ -311,20 +307,21 @@ impl SandboxBuilderWrapper {
         self.with_inner(|b| b.with_guest_input_buffer_size(size as usize))
     }
 
-    /// Set the guest stack size in bytes.
+    /// Set the guest scratch size in bytes.
     ///
-    /// Controls how much stack space is available for guest code execution.
-    /// Deep recursion or large local variables need a bigger stack.
+    /// Controls how much scratch space (which includes the stack) is available
+    /// for guest code execution. Deep recursion or large local variables need
+    /// a bigger scratch region.
     ///
-    /// @param size - Stack size in bytes (must be > 0)
+    /// @param size - Scratch size in bytes (must be > 0)
     /// @returns this (for chaining)
     /// @throws If size is 0
     #[napi]
-    pub fn set_stack_size(&self, size: u32) -> napi::Result<&Self> {
+    pub fn set_scratch_size(&self, size: u32) -> napi::Result<&Self> {
         if size == 0 {
-            return Err(invalid_arg_error("Stack size must be greater than 0"));
+            return Err(invalid_arg_error("Scratch size must be greater than 0"));
         }
-        self.with_inner(|b| b.with_guest_stack_size(size as u64))
+        self.with_inner(|b| b.with_guest_scratch_size(size as usize))
     }
 
     /// Set the guest heap size in bytes.
@@ -834,9 +831,7 @@ impl LoadedJSSandboxWrapper {
         })
         .await
         .map_err(join_error)??;
-        Ok(SnapshotWrapper {
-            inner: Arc::new(snapshot),
-        })
+        Ok(SnapshotWrapper { inner: snapshot })
     }
 
     /// Restore the sandbox to a previously captured snapshot state.
@@ -858,7 +853,7 @@ impl LoadedJSSandboxWrapper {
             let sandbox = guard
                 .as_mut()
                 .ok_or_else(|| consumed_error("LoadedJSSandbox"))?;
-            let result = sandbox.restore(&snap).map_err(to_napi_error);
+            let result = sandbox.restore(snap).map_err(to_napi_error);
             poisoned_flag.store(sandbox.poisoned(), Ordering::Release);
             result
         })

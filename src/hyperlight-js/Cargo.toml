@@ -19,7 +19,7 @@ fn-traits = "0.2.0"
 hyperlight-host = { workspace = true }
 hyperlight-js-runtime = { workspace = true }
 metrics = "0.24.3"
-oxc_resolver = "11.19.0"
+oxc_resolver = "11.19.1"
 phf = { version = "0.13", features = ["macros"] }
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }

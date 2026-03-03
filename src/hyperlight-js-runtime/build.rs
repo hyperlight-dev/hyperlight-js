@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .clang_arg("-D_POSIX_C_SOURCE=200809L");
 
     bindings = bindings.header_contents(
-        "libc_stubs.h",
+        "libc.h",
         "
         #pragma once
         #include <errno.h>
@@ -37,11 +37,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ",
     );
 
-    println!("cargo:rerun-if-changed=stubs/include/stdio.h");
-    println!("cargo:rerun-if-changed=stubs/include/time.h");
+    println!("cargo:rerun-if-changed=include");
+    println!("cargo:rerun-if-changed=include/stdio.h");
+    println!("cargo:rerun-if-changed=include/time.h");
+    println!("cargo:rerun-if-changed=include/unistd.h");
 
     // Write the generated bindings to an output file.
-    let out_path = PathBuf::from(env::var("OUT_DIR")?).join("libc_stubs.rs");
+    let out_path = PathBuf::from(env::var("OUT_DIR")?).join("libc.rs");
     bindings.generate()?.write_to_file(out_path)?;
 
     Ok(())

@@ -16,6 +16,7 @@ limitations under the License.
 #![cfg_attr(hyperlight, no_std)]
 #![cfg_attr(hyperlight, no_main)]
 
+#[cfg(hyperlight)]
 mod libc;
 
 #[cfg(hyperlight)]

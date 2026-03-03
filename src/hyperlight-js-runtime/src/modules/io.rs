@@ -25,7 +25,7 @@ pub mod io {
     #[rquickjs::function]
     pub fn print(txt: String) {
         for byte in txt.bytes() {
-            let _ = unsafe { libc::putchar(byte as _) };
+            let _ = unsafe { libc::putchar(byte as libc::c_int) };
         }
         flush()
     }

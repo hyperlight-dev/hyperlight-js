@@ -44,7 +44,6 @@ tempfile = "3.26"
 
 [build-dependencies]
 bindgen = "0.72"
-glob = "0.3"
 
 [features]
 default = []

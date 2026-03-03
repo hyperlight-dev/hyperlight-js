@@ -11,14 +11,14 @@ PWD := replace(justfile_dir(), "\\", "/")
 # * include the stubs required by hyperlight-js-runtime
 # * define __wasi__ as this disables threading support in quickjs
 export HYPERLIGHT_CFLAGS := \
-    "-I" + PWD + "/src/hyperlight-js-runtime/stubs/include " + \
+    "-I" + PWD + "/src/hyperlight-js-runtime/include " + \
     "-D__wasi__=1 "
 
 # On Windows, use Ninja generator for CMake to avoid aws-lc-sys build issues with Visual Studio generator
 export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
 
 ensure-tools:
-    cargo install cargo-hyperlight --locked --version 0.1.7
+    cargo install cargo-hyperlight --locked
 
 # Check if npm is installed, install automatically if missing (Linux)
 [private]

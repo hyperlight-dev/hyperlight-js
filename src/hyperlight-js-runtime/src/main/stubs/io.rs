@@ -22,7 +22,7 @@ extern "C" fn putchar(c: libc::c_int) -> libc::c_int {
         // force a flush of the internal buffer in the hyperlight putchar implementation
         unsafe { libc::_putchar(0) };
     }
-    (c as libc::c_char) as libc::c_int
+    (c as u8) as libc::c_int
 }
 
 #[unsafe(no_mangle)]

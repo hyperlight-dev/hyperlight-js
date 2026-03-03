@@ -1,0 +1,19 @@
+{
+    "name": "@hyperlight/mcp-server-example",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "MCP server that executes JavaScript in a Hyperlight sandbox — safe, isolated, CPU-bounded",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.26.0",
+        "zod": "^3.25.0"
+    },
+    "devDependencies": {
+        "vitest": "^4.0.18"
+    }
+}

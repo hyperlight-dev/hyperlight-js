@@ -21,8 +21,13 @@ use hyperlight_js::{
     CpuTimeMonitor, HyperlightError, InterruptHandle, JSSandbox, LoadedJSSandbox, ProtoJSSandbox,
     SandboxBuilder, Script, Snapshot, WallClockMonitor,
 };
+use napi::bindgen_prelude::{JsValuesTupleIntoVec, Promise, ToNapiValue};
+use napi::sys::{napi_env, napi_value};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::{tokio, Status};
 use napi_derive::napi;
 use serde_json::Value as JsonValue;
+use tokio::sync::oneshot;
 
 // ── napi-rs wrapper architecture ──────────────────────────────────────
 //
@@ -133,6 +138,17 @@ const MIN_TIMEOUT_MS: u32 = 1;
 /// via ECMAScript's ToUint32 conversion) and other unreasonable durations.
 const MAX_TIMEOUT_MS: u32 = 3_600_000;
 
+/// Prefix automatically prepended to host module names before passing them
+/// to the Rust `ProtoJSSandbox`.
+///
+/// Guest JavaScript imports host modules as `import * as m from "host:m"`.
+/// This makes it structurally impossible for a host module to collide with
+/// a built-in QuickJS native module (`io`, `crypto`, `console`, `require`).
+///
+/// The prefix is applied here in the NAPI layer — the underlying Rust
+/// library stores the exact module name it receives, with no transformation.
+const HOST_MODULE_PREFIX: &str = "host:";
+
 /// Creates a napi error with a `[ERR_CODE]` prefix in the message.
 ///
 /// The JS wrapper (`lib.js`) parses this prefix and promotes it to
@@ -173,6 +189,14 @@ fn consumed_error(type_name: &str) -> napi::Error {
 /// Creates an error for invalid argument conditions.
 fn invalid_arg_error(msg: &str) -> napi::Error {
     hl_error(ErrorCode::InvalidArg, msg)
+}
+
+/// Validates a host module name: must be non-empty.
+fn validate_module_name(name: &str) -> napi::Result<()> {
+    if name.is_empty() {
+        return Err(invalid_arg_error("Module name must not be empty"));
+    }
+    Ok(())
 }
 
 /// Creates an error when a Mutex is poisoned (Rust-level, not sandbox-level).
@@ -368,19 +392,38 @@ impl SandboxBuilderWrapper {
 
 /// A sandbox with VM resources allocated, ready to load the JS runtime.
 ///
-/// This is a transitional state — call `loadRuntime()` to proceed to
-/// `JSSandbox` where you can register handlers.
+/// This is a transitional state — register host functions with
+/// `hostModule()` / `register()`, then call `loadRuntime()` to proceed
+/// to `JSSandbox` where you can register handlers.
 ///
 /// ```js
 /// const proto = await new SandboxBuilder().build();
+///
+/// // Register host functions callable from guest JS
+/// const math = proto.hostModule('math');
+/// math.register('add', (a, b) => a + b);
+///
 /// const sandbox = await proto.loadRuntime();
 /// ```
 #[napi(js_name = "ProtoJSSandbox")]
+#[derive(Clone)]
 pub struct ProtoJSSandboxWrapper {
     inner: Arc<Mutex<Option<ProtoJSSandbox>>>,
 }
 
 impl ProtoJSSandboxWrapper {
+    /// Borrow the inner value mutably via Mutex, or error if consumed.
+    fn with_inner_mut<F, R>(&self, f: F) -> napi::Result<R>
+    where
+        F: FnOnce(&mut ProtoJSSandbox) -> napi::Result<R>,
+    {
+        let mut guard = self.inner.lock().map_err(|_| lock_error())?;
+        let sandbox = guard
+            .as_mut()
+            .ok_or_else(|| consumed_error("ProtoJSSandbox"))?;
+        f(sandbox)
+    }
+
     /// Take ownership of the inner value, returning a consumed-state error if
     /// this instance has already been used.
     fn take_inner(&self) -> napi::Result<ProtoJSSandbox> {
@@ -396,9 +439,9 @@ impl ProtoJSSandboxWrapper {
 impl ProtoJSSandboxWrapper {
     /// Load the JavaScript runtime into the sandbox.
     ///
-    /// This is an expensive operation — the QuickJS engine is initialized
-    /// inside the sandbox. The `ProtoJSSandbox` is consumed and cannot be
-    /// reused.
+    /// All host functions registered via `hostModule()` / `register()`
+    /// are applied before the runtime is loaded. The `ProtoJSSandbox` is
+    /// consumed and cannot be reused.
     ///
     /// Returns a `Promise` — does not block the Node.js event loop.
     ///
@@ -407,6 +450,7 @@ impl ProtoJSSandboxWrapper {
     #[napi]
     pub async fn load_runtime(&self) -> napi::Result<JSSandboxWrapper> {
         let proto_sandbox = self.take_inner()?;
+
         let js_sandbox = tokio::task::spawn_blocking(move || {
             proto_sandbox.load_runtime().map_err(to_napi_error)
         })
@@ -415,6 +459,200 @@ impl ProtoJSSandboxWrapper {
         Ok(JSSandboxWrapper {
             inner: Arc::new(Mutex::new(Some(js_sandbox))),
         })
+    }
+
+    /// Get a builder for registering host functions in a named module.
+    ///
+    /// Host modules are namespaces for host functions that guest JavaScript
+    /// can import:
+    ///
+    /// ```js
+    /// // Host side (Node.js)
+    /// const math = proto.hostModule('math');
+    /// math.register('add', (a, b) => a + b);
+    ///
+    /// // Guest side (sandboxed JS)
+    /// import * as math from "host:math";
+    /// const result = math.add(1, 2); // calls host function
+    /// ```
+    ///
+    /// The returned `HostModule` stores registrations that are
+    /// applied during `loadRuntime()`.
+    ///
+    /// @param name - Module name that guest JS uses in `import * as name from "host:name"`
+    /// @returns A `HostModule` for registering functions
+    /// @throws If the module name is empty
+    #[napi]
+    pub fn host_module(&self, name: String) -> napi::Result<HostModuleWrapper> {
+        validate_module_name(&name)?;
+        Ok(HostModuleWrapper {
+            module_name: format!("{HOST_MODULE_PREFIX}{name}"),
+            sandbox: self.clone(),
+        })
+    }
+
+    /// Register a host function in a named module (convenience method).
+    ///
+    /// Equivalent to `proto.hostModule(module).register(name, callback)`.
+    /// The `host:` prefix is added automatically — guest code imports with
+    /// `from "host:<moduleName>"`.
+    ///
+    /// Arguments are automatically parsed from JSON and spread into your
+    /// callback. The return value is automatically JSON-stringified.
+    ///
+    /// @param moduleName - Bare module name (e.g. `'math'`); guest imports as `"host:math"`
+    /// @param functionName - Function name within the module
+    /// @param callback - `(...args) => any | Promise<any>` — the host function implementation
+    /// @throws If module name or function name is empty
+    #[napi]
+    #[allow(clippy::type_complexity)] // allow the type complexity here so that index.d.ts is cleaner
+    pub fn register(
+        &self,
+        module_name: String,
+        function_name: String,
+        func: ThreadsafeFunction<
+            Rest<Option<serde_json::Value>>,
+            Promise<Option<serde_json::Value>>,
+            Rest<Option<serde_json::Value>>,
+            Status,
+            false,
+            true,
+        >,
+    ) -> napi::Result<()> {
+        self.host_module(module_name)?.register(function_name, func)
+    }
+}
+
+/// Napi takes a tuple of values as the generic for `ThreadsafeFunction`'s input arguments.
+/// This wrapper allows us to take a variable number of arguments in a `Vec` instead of a tuple with a fixed number of elements.
+pub struct Rest<T: ToNapiValue>(pub Vec<T>);
+
+impl<T: ToNapiValue> JsValuesTupleIntoVec for Rest<T> {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn into_vec(self, env: napi_env) -> napi::Result<Vec<napi_value>> {
+        self.0
+            .into_iter()
+            .map(|v| unsafe { T::to_napi_value(env, v) })
+            .collect()
+    }
+}
+
+// ── HostModule ───────────────────────────────────────────────────────
+
+/// A builder for registering host functions in a named module.
+///
+/// Obtained from `ProtoJSSandbox.hostModule(name)`. Host functions
+/// registered here become available to guest JavaScript code via
+/// `import * as <name> from "host:<name>"` after `loadRuntime()` is called.
+///
+/// The `host:` prefix is added automatically by the NAPI layer to prevent
+/// collisions with built-in QuickJS modules (e.g. `io`, `crypto`).
+/// You register with a bare name (`'math'`) and guest code imports with the
+/// prefix (`from "host:math"`).
+///
+/// ```js
+/// // Host side (Node.js)
+/// const math = proto.hostModule('math');
+/// math.register('add', (a, b) => a + b);
+/// math.register('multiply', (a, b) => a * b);
+///
+/// // Guest side (sandboxed JS)
+/// import * as math from "host:math";
+/// math.add(1, 2);       // calls host function
+/// math.multiply(3, 4);  // calls host function
+/// ```
+///
+/// Arguments are automatically parsed from JSON and spread into your
+/// callback. The return value is automatically JSON-stringified.
+#[napi(js_name = "HostModule")]
+pub struct HostModuleWrapper {
+    /// Module name this builder registers functions under.
+    module_name: String,
+
+    /// Reference to the parent `ProtoJSSandboxWrapper`'s inner sandbox, for
+    /// applying registrations.
+    sandbox: ProtoJSSandboxWrapper,
+}
+
+#[napi]
+impl HostModuleWrapper {
+    /// Register a host function in this module.
+    ///
+    /// Arguments are automatically parsed from JSON and spread into your
+    /// callback. The return value is automatically JSON-stringified.
+    /// Both sync and async callbacks are supported — if the callback
+    /// returns a `Promise`, the bridge awaits it automatically.
+    ///
+    /// Registering a function with the same name as an existing one in
+    /// this module overwrites the previous registration.
+    ///
+    /// ```js
+    /// const math = proto.hostModule('math');
+    ///
+    /// // Sync callback — args are spread, return value auto-stringified
+    /// math.register('add', (a, b) => a + b);
+    ///
+    /// // Async callback (automatically awaited)
+    /// math.register('fetchData', async (url) => {
+    ///     const res = await fetch(url);
+    ///     return res.json();
+    /// });
+    /// ```
+    ///
+    /// @param name - Function name within the module (must be non-empty)
+    /// @param callback - `(...args) => any | Promise<any>` — the host function
+    /// @throws If the function name is empty
+    #[napi]
+    #[allow(clippy::type_complexity)] // allow the type complexity here so that index.d.ts is cleaner
+    pub fn register(
+        &self,
+        name: String,
+        func: ThreadsafeFunction<
+            Rest<Option<serde_json::Value>>,
+            Promise<Option<serde_json::Value>>,
+            Rest<Option<serde_json::Value>>,
+            Status,
+            false,
+            true,
+        >,
+    ) -> napi::Result<()> {
+        if name.is_empty() {
+            return Err(invalid_arg_error("Function name must not be empty"));
+        }
+        let wrapper = move |args: String| -> hyperlight_js::Result<String> {
+            use ThreadsafeFunctionCallMode::NonBlocking;
+            let args: Vec<Option<serde_json::Value>> = serde_json::from_str(&args)?;
+            let (tx, rx) = oneshot::channel();
+            let status = func.call_with_return_value(Rest(args), NonBlocking, move |result, _| {
+                let _ = tx.send(result);
+                Ok(())
+            });
+            if status != Status::Ok {
+                return Err(HyperlightError::Error(format!(
+                    "Host function call failed: {status:?}"
+                )));
+            }
+            tokio::runtime::Handle::current().block_on(async move {
+                let promise = rx
+                    .await
+                    .map_err(|_| HyperlightError::Error("Channel closed".into()))?
+                    .map_err(|err| HyperlightError::Error(format!("{err}")))?;
+
+                let value = promise
+                    .await
+                    .map_err(|err| HyperlightError::Error(format!("{err}")))?;
+
+                let value = serde_json::to_string(&value)?;
+                Ok(value)
+            })
+        };
+        self.sandbox.with_inner_mut(|sandbox| {
+            sandbox
+                .host_module(&self.module_name)
+                .register_raw(name, wrapper);
+            Ok(())
+        })?;
+        Ok(())
     }
 }
 

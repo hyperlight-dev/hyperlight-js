@@ -117,7 +117,7 @@ function wrapSync(fn) {
 // cached by require(), so prototypes are patched once per process, after
 // this module has been required at least once.
 
-const { LoadedJSSandbox, JSSandbox, ProtoJSSandbox, SandboxBuilder } = native;
+const { LoadedJSSandbox, JSSandbox, ProtoJSSandbox, SandboxBuilder, HostModule } = native;
 
 /**
  * Wrap a getter so that thrown errors have enriched codes.
@@ -162,8 +162,36 @@ for (const method of ['addHandler', 'removeHandler', 'clearHandlers']) {
 }
 wrapGetter(JSSandbox, 'poisoned');
 
-// ProtoJSSandbox — async
+// ProtoJSSandbox — async + sync methods
 ProtoJSSandbox.prototype.loadRuntime = wrapAsync(ProtoJSSandbox.prototype.loadRuntime);
+
+// hostModule() is sync — just wrap for error enrichment
+ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModule);
+
+// ProtoJSSandbox — register() handle errors and wraps callback to return Promise
+{
+    const origRegister = ProtoJSSandbox.prototype.register;
+    ProtoJSSandbox.prototype.register = wrapSync(function (moduleName, functionName, callback) {
+        // the rust code expects the host function to return a Promise, so we wrap the callback result in Promise.resolve().then(..) to allow sync functions as well
+        // note that Promise.resolve(callback(...args)) would not work because if callback throws that would not return a rejected promise, it would just throw before returning the promise.
+        return origRegister.call(this, moduleName, functionName, (...args) =>
+            Promise.resolve().then(() => callback(...args))
+        );
+    });
+}
+
+// HostModule — register()
+{
+    const origRegister = HostModule.prototype.register;
+    if (!origRegister) throw new Error('Cannot wrap missing method: HostModule.register');
+    HostModule.prototype.register = wrapSync(function (name, callback) {
+        // the rust code expects the host function to return a Promise, so we wrap the callback result in Promise.resolve().then(..) to allow sync functions as well
+        // note that Promise.resolve(callback(...args)) would not work because if callback throws that would not return a rejected promise, it would just throw before returning the promise.
+        return origRegister.call(this, name, (...args) =>
+            Promise.resolve().then(() => callback(...args))
+        );
+    });
+}
 
 // SandboxBuilder — async build + sync setters
 SandboxBuilder.prototype.build = wrapAsync(SandboxBuilder.prototype.build);

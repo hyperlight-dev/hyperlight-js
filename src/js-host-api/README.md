@@ -39,8 +39,10 @@ console.log(result); // { name: 'World', message: 'Hello, World!' }
 
 > **Note:** All sandbox operations that touch the hypervisor (`build`, `loadRuntime`,
 > `getLoadedSandbox`, `callHandler`, `unload`, `snapshot`,
-> `restore`) return Promises. This means the Node.js event loop stays free while
-> the hypervisor does its work — no blocking!
+> `restore`) return Promises and run on background threads (`spawn_blocking`),
+> so they don't block the Node.js event loop. However, if a guest call triggers
+> a host function callback, that callback executes on the main V8 thread
+> (see [Host Functions](#host-functions) for details).
 
 ## API
 
@@ -64,12 +66,20 @@ const protoSandbox = await builder.build();
 
 ### ProtoJSSandbox
 
-A proto sandbox ready to load the JavaScript runtime.
+A proto sandbox ready to load the JavaScript runtime. This is also where
+you register **host functions** — callbacks that guest sandboxed code can
+call. See [Host Functions](#host-functions) below.
 
 **Methods:**
-- `loadRuntime()` → `Promise<JSSandbox>` — Loads the JavaScript runtime into the sandbox
+- `loadRuntime()` → `Promise<JSSandbox>` — Loads the JavaScript runtime into the sandbox. All host functions registered via `hostModule()` / `register()` are applied before the runtime loads.
+- `hostModule(name: string)` → `HostModule` — Create a builder for registering functions in a named module
+- `register(moduleName, functionName, callback)` — Convenience method to register a single host function (args are spread, return value auto-stringified)
 
 ```javascript
+// Register host functions, then load the runtime
+const math = protoSandbox.hostModule('math');
+math.register('add', (a, b) => a + b);
+
 const jsSandbox = await protoSandbox.loadRuntime();
 ```
 
@@ -182,7 +192,7 @@ When both timeouts are set, monitors race with **OR semantics** — whichever fi
 
 ### InterruptHandle ⏱️
 
-Handle for interrupting/killing handler execution. Because all hypervisor calls return Promises, the Node.js event loop stays free during execution — you can call `kill()` from a timer, a signal handler, or any async callback.
+Handle for interrupting/killing handler execution. Because hypervisor calls run on background threads and return Promises, you can call `kill()` from a timer, a signal handler, or any async callback while a handler is running.
 
 **Methods:**
 - `kill()` — Immediately stops the currently executing handler in the sandbox
@@ -259,6 +269,270 @@ try {
 }
 ```
 
+## Host Functions
+
+Host functions let sandboxed guest JavaScript call back into the host
+(Node.js) environment. This is how you extend the sandbox capabilities.
+
+### How It Works
+
+```mermaid
+sequenceDiagram
+    participant Guest as Guest JS (micro-VM)
+    participant HL as Hyperlight Runtime
+    participant Bridge as NAPI Bridge
+    participant Host as Host Callback (Node.js)
+
+    Note over Guest,Host: Registration (before loadRuntime)
+    Host->>Bridge: proto.hostModule('math').register('add', callback)
+    Bridge->>HL: register_raw('math', 'add', closure)
+
+    Note over Guest,Host: Invocation (during callHandler)
+    Guest->>HL: math.add(1, 2)
+    HL->>Bridge: closure("[1,2]")
+    Bridge->>Host: callback("[1,2]")
+    Note right of Host: sync: return immediately<br/>async: await Promise
+    Host-->>Bridge: "3"
+    Bridge-->>HL: Ok("3")
+    HL-->>Guest: 3
+```
+
+1. **Register** host functions on the `ProtoJSSandbox` (before loading the runtime)
+2. **Guest code** imports them as ES modules: `import * as math from "host:math"`
+3. **At call time**, the guest's arguments are JSON-serialised and dispatched to the Node.js main thread via a threadsafe function (V8 is single-threaded, so callbacks *must* execute there). The JSON result is then returned to the guest
+
+### Quick Start
+
+```javascript
+const { SandboxBuilder } = require('@hyperlight/js-host-api');
+
+const proto = await new SandboxBuilder().build();
+
+// Register a sync host function — args are spread, return auto-stringified
+proto.hostModule('math').register('add', (a, b) => a + b);
+
+// Load the runtime (applies all registrations)
+const sandbox = await proto.loadRuntime();
+
+// Guest code can now call math.add()
+sandbox.addHandler('handler', `
+    import * as math from "host:math";
+    function handler(event) {
+        return { result: math.add(event.a, event.b) };
+    }
+`);
+
+const loaded = await sandbox.getLoadedSandbox();
+const result = await loaded.callHandler('handler', { a: 10, b: 32 });
+console.log(result); // { result: 42 }
+```
+
+### The JSON Wire Protocol
+
+All arguments and return values cross the sandbox boundary as **JSON strings**.
+With `register()`, this is handled automatically — your callback receives
+individual arguments (parsed from the JSON array) and the return value is
+automatically `JSON.stringify`'d.
+
+```javascript
+// Guest calls: math.add(1, 2)
+// Your callback receives: (1, 2) — individual args, already parsed
+// Your return value: 3 — automatically stringified to '3'
+math.register('add', (a, b) => a + b);
+
+// Guest calls: db.query("users")
+// Your callback receives: ("users") — the single string arg
+// Your return value is automatically stringified
+db.register('query', (table) => ({
+    rows: [{ id: 1, name: 'Alice' }],
+}));
+```
+
+> **Why JSON strings?** The guest runs in a separate micro-VM with its own
+> JavaScript engine. There's no shared object graph — serialisation is the
+> only way to cross the boundary. JSON is universal, debuggable, and fast
+> enough for the vast majority of use cases.
+
+### API Reference
+
+#### `proto.hostModule(name)` → `HostModule`
+
+Creates a builder for a named module. The module name is what guest code
+uses in its `import` statement.
+
+```javascript
+const math = proto.hostModule('math');
+// Guest: import * as math from "host:math";
+```
+
+Throws `ERR_INVALID_ARG` if name is empty.
+
+#### `builder.register(name, callback)` → `HostModule`
+
+Registers a function within the module. Returns the builder for chaining.
+Arguments are auto-parsed from the guest's JSON array and spread into your
+callback. The return value is automatically `JSON.stringify`'d.
+
+```javascript
+const math = proto.hostModule('math');
+math.register('add', (a, b) => a + b);
+math.register('multiply', (a, b) => a * b);
+```
+
+Throws `ERR_INVALID_ARG` if function name is empty.
+
+#### `proto.register(moduleName, functionName, callback)`
+
+Convenience shorthand — equivalent to `proto.hostModule(moduleName).register(functionName, callback)`.
+
+```javascript
+proto.register('strings', 'upper', (s) => s.toUpperCase());
+```
+
+### Async Callbacks
+
+Host function callbacks can be `async` or return a `Promise`. The bridge
+automatically awaits the result before returning to the guest:
+
+```javascript
+proto.hostModule('api').register('fetchUser', async (userId) => {
+    const response = await fetch(`https://api.example.com/users/${userId}`);
+    return await response.json();
+});
+```
+
+From the guest's perspective, the call is still synchronous — `api.fetchUser(42)`
+blocks until the host's async work completes. The callback runs on the Node.js
+main thread (V8 is single-threaded), so **synchronous callbacks briefly occupy
+the event loop**. For `async` callbacks, the event loop is free during awaited
+I/O (database queries, HTTP requests, etc.) — just like any other async
+Node.js code.
+
+> **Important — why the guest blocks today:**
+>
+> Hyperlight's host function type is synchronous:
+> ```rust
+> type BoxFunction = Box<dyn Fn(String) -> Result<String> + Send + Sync>
+> ```
+> When guest code calls `math.add(1, 2)`, the QuickJS VM inside the micro-VM
+> freezes — it's a blocking `Fn` call, not a `Future`. There's no suspend/resume
+> mechanism in hyperlight-host or hyperlight-common today.
+>
+> The NAPI bridge uses a `ThreadsafeFunction` to dispatch callbacks to the
+> Node.js main thread and waits for the result via a oneshot channel. This
+> allows both sync and async JS callbacks to work transparently.
+
+### Error Handling
+
+If your callback throws (sync) or rejects (async), the error propagates
+to the guest as a `HostFunctionError`:
+
+```javascript
+proto.hostModule('auth').register('validate', (token) => {
+    if (!token) {
+        throw new Error('Token is required');
+    }
+    return { valid: true };
+});
+```
+
+```javascript
+// Guest code
+import * as auth from "host:auth";
+function handler(event) {
+    try {
+        return auth.validate(event.token);
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+```
+
+### Registration Timing
+
+Host functions must be registered **before** calling `loadRuntime()`.
+Registrations are accumulated and applied in bulk when the runtime loads.
+
+```javascript
+const proto = await new SandboxBuilder().build();
+
+// ✅ Register before loadRuntime()
+proto.hostModule('math').register('add', (a, b) => a + b);
+proto.hostModule('strings').register('upper', (s) => s.toUpperCase());
+
+const sandbox = await proto.loadRuntime(); // all registrations applied here
+```
+
+### Snapshot / Restore
+
+Host functions survive snapshot/restore cycles. The snapshot captures the
+guest micro-VM's memory — the host-side JS callbacks live in the Node.js
+process and are unaffected by restore:
+
+```javascript
+// Host-side counter — lives in Node.js, outside the micro-VM
+let callCount = 0;
+
+const proto = await new SandboxBuilder().build();
+proto.register('stats', 'hit', () => {
+    callCount++;
+    return callCount;
+});
+
+const sandbox = await proto.loadRuntime();
+sandbox.addHandler('handler', `
+    import * as stats from "host:stats";
+    function handler() {
+        return { count: stats.hit() };
+    }
+`);
+
+const loaded = await sandbox.getLoadedSandbox();
+const snapshot = await loaded.snapshot();
+
+await loaded.callHandler('handler', {}); // callCount → 1
+await loaded.callHandler('handler', {}); // callCount → 2
+
+await loaded.restore(snapshot); // guest VM memory reset, callCount still 2
+
+await loaded.callHandler('handler', {}); // callCount → 3
+```
+
+### Architecture Notes
+
+How the NAPI bridge works under the hood.
+
+**The problem:** Hyperlight's host function dispatch runs on a `spawn_blocking`
+thread (so it doesn't block the Node.js event loop). But the JS callback must
+run on the main V8 thread. And the callback might be `async`.
+
+**The solution — ThreadsafeFunction with return value:**
+
+```
+spawn_blocking thread          Node.js main thread
+────────────────────           ────────────────────
+1. Parse args from JSON
+2. Create oneshot channel
+3. Fire TSFN with             
+   (args, callback) ──────► 4. TSFN calls JS callback with
+                                  spread args
+                               5. Callback returns (sync or
+                                  Promise)
+                               6. Result sent via callback
+◄──────────────────────────── 
+7. block_on(receiver)
+   gets the Promise
+8. await Promise
+9. JSON stringify result
+10. Return to guest
+```
+
+This design:
+- Works for **both** sync and async JS callbacks
+- For `async` callbacks, the event loop is free during awaited I/O (sync callbacks briefly occupy it — V8 is single-threaded)
+- Uses napi-rs `call_with_return_value` for simple async result handling
+- JSON serialization is handled automatically by the bridge
+
 ## Examples
 
 See the `examples/` directory for complete examples:
@@ -277,6 +551,11 @@ Timeout-based handler termination using wall-clock timeout. Demonstrates killing
 
 ### CPU Timeout (`cpu-timeout.js`) 🚀
 Combined CPU + wall-clock monitoring — the recommended pattern for comprehensive resource protection. Demonstrates OR semantics where the CPU monitor fires first for compute-bound work, with wall-clock as backstop.
+
+### Host Functions (`host-functions.js`)
+Registering sync and async host functions that guest code can call. Demonstrates
+`hostModule().register()` with spread args, `async` callbacks, and the convenience
+`register()` API.
 
 ## Requirements
 

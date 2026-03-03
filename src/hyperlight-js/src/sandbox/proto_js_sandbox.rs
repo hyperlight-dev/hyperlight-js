@@ -212,6 +212,27 @@ impl ProtoJSSandbox {
         self.host_module(module).register(name, func);
         Ok(())
     }
+
+    /// Register a raw host function that operates on JSON strings directly.
+    ///
+    /// This is equivalent to calling `sbox.host_module(module).register_raw(name, func)`.
+    ///
+    /// Unlike [`register`](Self::register), which handles serde serialization /
+    /// deserialization automatically, this method passes the raw JSON string
+    /// from the guest to the callback and expects a JSON string result.
+    ///
+    /// Primarily intended for dynamic / bridge scenarios (e.g. NAPI bindings)
+    /// where argument types are not known at compile time.
+    #[instrument(err(Debug), skip(self, func), level=Level::INFO)]
+    pub fn register_raw(
+        &mut self,
+        module: impl Into<String> + Debug,
+        name: impl Into<String> + Debug,
+        func: impl Fn(String) -> Result<String> + Send + Sync + 'static,
+    ) -> Result<()> {
+        self.host_module(module).register_raw(name, func);
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for ProtoJSSandbox {

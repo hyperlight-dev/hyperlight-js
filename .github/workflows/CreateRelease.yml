@@ -30,6 +30,8 @@ jobs:
     environment: release
     runs-on: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
     if: ${{ contains(github.ref, 'refs/heads/release/') }}
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v6
@@ -48,11 +50,13 @@ jobs:
         id: crates-io-auth
 
       - name: Set crate versions
+        id: set-version
         run: |
           git fetch --tags || true
           version=$(echo "${{ github.ref }}" | sed -E 's#refs/heads/release/v##')
           echo "Setting version to 'v$version'"
           echo "HYPERLIGHT_JS_VERSION=v$version" >> $GITHUB_ENV
+          echo "version=$version" >> $GITHUB_OUTPUT
 
       - name: Publish hyperlight-js
         run: |
@@ -94,3 +98,13 @@ jobs:
               benchmarks_Linux_hyperv3.tar.gz
         env:
             GH_TOKEN: ${{ github.token }}
+
+  publish-npm-packages:
+    needs: [publish-hyperlight-js-packages-and-create-release]
+    if: ${{ contains(github.ref, 'refs/heads/release/') }}
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      version: ${{ needs.publish-hyperlight-js-packages-and-create-release.outputs.version }}
+      dry-run: false
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

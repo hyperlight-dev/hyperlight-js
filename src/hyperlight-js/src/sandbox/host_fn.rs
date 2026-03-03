@@ -92,6 +92,27 @@ impl HostModule {
         self
     }
 
+    /// Register a raw host function that operates on JSON strings directly.
+    ///
+    /// Unlike [`register`](Self::register), which handles serde serialization /
+    /// deserialization automatically via the [`Function`] trait, this method
+    /// passes the raw JSON string argument from the guest to the closure and
+    /// expects a JSON string result.
+    ///
+    /// This is primarily intended for dynamic / bridge scenarios (e.g. NAPI
+    /// bindings) where argument types are not known at compile time.
+    ///
+    /// Registering a function with the same `name` as an existing function
+    /// overwrites the previous registration.
+    pub fn register_raw(
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn(String) -> crate::Result<String> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.functions.insert(name.into(), Box::new(func));
+        self
+    }
+
     pub(crate) fn get(&self, name: &str) -> Option<&BoxFunction> {
         self.functions.get(name)
     }

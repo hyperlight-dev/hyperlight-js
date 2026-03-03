@@ -160,7 +160,7 @@ test-monitors target=default-target:
 test-js-host-api target=default-target features="": (build-js-host-api target features)
     cd src/js-host-api && npm test
 
-# Run js-host-api examples (simple.js, calculator.js, unload.js, interrupt.js, cpu-timeout.js)
+# Run js-host-api examples (simple.js, calculator.js, unload.js, interrupt.js, cpu-timeout.js, host-functions.js)
 run-js-host-api-examples target=default-target features="": (build-js-host-api target features)
     @echo "Running js-host-api examples..."
     @echo ""
@@ -173,6 +173,8 @@ run-js-host-api-examples target=default-target features="": (build-js-host-api t
     cd src/js-host-api && node examples/interrupt.js
     @echo ""
     cd src/js-host-api && node examples/cpu-timeout.js
+    @echo ""
+    cd src/js-host-api && node examples/host-functions.js
     @echo ""
     @echo "✅ All examples completed successfully!"
 

@@ -64,6 +64,9 @@ pub use hyperlight_host::sandbox::snapshot::Snapshot;
 pub use hyperlight_host::sandbox::SandboxConfiguration;
 /// Module resolution and loading functionality.
 pub use resolver::{FileMetadata, FileSystem, FileSystemEmbedded, ResolveError};
+/// Execution statistics from the most recent guest function call.
+#[cfg(feature = "guest-call-stats")]
+pub use sandbox::execution_stats::ExecutionStats;
 /// The monitor module — re-exports `sleep` so custom monitors don't couple to tokio directly.
 pub use sandbox::monitor;
 /// CPU time based execution monitor.

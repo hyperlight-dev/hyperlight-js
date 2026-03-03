@@ -17,9 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arc_swap::ArcSwapOption;
 use hyperlight_js::{
-    CpuTimeMonitor, HyperlightError, InterruptHandle, JSSandbox, LoadedJSSandbox, ProtoJSSandbox,
-    SandboxBuilder, Script, Snapshot, WallClockMonitor,
+    CpuTimeMonitor, ExecutionStats, HyperlightError, InterruptHandle, JSSandbox, LoadedJSSandbox,
+    ProtoJSSandbox, SandboxBuilder, Script, Snapshot, WallClockMonitor,
 };
 use napi::bindgen_prelude::{JsValuesTupleIntoVec, Promise, ToNapiValue};
 use napi::sys::{napi_env, napi_value};
@@ -788,6 +789,7 @@ impl JSSandboxWrapper {
             inner: Arc::new(Mutex::new(Some(loaded_sandbox))),
             interrupt,
             poisoned_flag,
+            last_call_stats: Arc::new(ArcSwapOption::empty()),
         })
     }
 
@@ -839,6 +841,18 @@ pub struct LoadedJSSandboxWrapper {
     /// (where we already hold the lock), read via `Ordering::Acquire` in the
     /// getter. See the module-level architecture comment for the full rationale.
     poisoned_flag: Arc<AtomicBool>,
+
+    /// Execution statistics from the most recent `callHandler()` call.
+    ///
+    /// Updated inside the `spawn_blocking` closure while we still hold the
+    /// inner lock. Read by the `lastCallStats` getter after `callHandler()`
+    /// resolves. Uses `ArcSwapOption` for lock-free reads — the getter
+    /// never blocks the event loop.
+    ///
+    /// The outer `Arc` is needed because we clone this into `spawn_blocking`
+    /// closures (which require `'static + Send`). `ArcSwapOption` alone is
+    /// not `Clone` — the `Arc` provides cheap shared ownership across threads.
+    last_call_stats: Arc<ArcSwapOption<CallStats>>,
 }
 
 #[napi]
@@ -907,6 +921,7 @@ impl LoadedJSSandboxWrapper {
 
         let inner = self.inner.clone();
         let poisoned_flag = self.poisoned_flag.clone();
+        let last_call_stats_store = self.last_call_stats.clone();
         let gc = options.gc;
         let wall_clock_timeout_ms = options.wall_clock_timeout_ms;
         let cpu_timeout_ms = options.cpu_timeout_ms;
@@ -965,6 +980,14 @@ impl LoadedJSSandboxWrapper {
             // Update poisoned flag while we hold the lock — keeps the getter
             // lock-free so it never blocks the Node.js event loop.
             poisoned_flag.store(sandbox.poisoned(), Ordering::Release);
+
+            // Copy execution stats while we still hold the lock.
+            last_call_stats_store.store(
+                sandbox
+                    .last_call_stats()
+                    .map(|s| Arc::new(CallStats::from(s))),
+            );
+
             result
         })
         .await
@@ -1043,6 +1066,35 @@ impl LoadedJSSandboxWrapper {
     #[napi(getter)]
     pub fn poisoned(&self) -> bool {
         self.poisoned_flag.load(Ordering::Acquire)
+    }
+
+    /// Execution statistics from the most recent `callHandler()` call.
+    ///
+    /// Returns `null` before any call has been made. After each call,
+    /// this returns timing and termination information — stats are
+    /// **not** cumulative.
+    ///
+    /// Stats are captured even when `callHandler()` throws (e.g. the
+    /// sandbox was poisoned by a monitor timeout).
+    ///
+    /// ```js
+    /// await loaded.callHandler('compute', data, {
+    ///     wallClockTimeoutMs: 5000,
+    ///     cpuTimeoutMs: 500,
+    /// });
+    /// const stats = loaded.lastCallStats;
+    /// if (stats) {
+    ///     console.log(`Wall: ${stats.wallClockMs}ms`);
+    ///     if (stats.cpuTimeMs != null) console.log(`CPU: ${stats.cpuTimeMs}ms`);
+    ///     if (stats.terminatedBy) console.log(`Killed by: ${stats.terminatedBy}`);
+    /// }
+    /// ```
+    #[napi(getter)]
+    pub fn last_call_stats(&self) -> Option<CallStats> {
+        self.last_call_stats
+            .load()
+            .as_ref()
+            .map(|arc| (**arc).clone())
     }
 
     /// Capture the current sandbox state as a snapshot.
@@ -1174,5 +1226,46 @@ impl InterruptHandleWrapper {
     #[napi]
     pub fn kill(&self) {
         self.inner.kill();
+    }
+}
+
+// ── CallStats ────────────────────────────────────────────────────────
+
+/// Execution statistics from a guest function call.
+///
+/// Retrieved via `loaded.lastCallStats` after calling `callHandler()`.
+/// Stats are captured even when the call throws (e.g. monitor timeout).
+///
+/// ```js
+/// try {
+///     await loaded.callHandler('compute', data, { cpuTimeoutMs: 500 });
+/// } catch (e) { /* monitor fired */ }
+/// const stats = loaded.lastCallStats;
+/// console.log(stats);
+/// // { wallClockMs: 502.3, cpuTimeMs: 499.8, terminatedBy: 'cpu-time' }
+/// ```
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct CallStats {
+    /// Wall-clock (elapsed) time in milliseconds. Always present.
+    pub wall_clock_ms: f64,
+
+    /// CPU time in milliseconds. Only present when the `monitor-cpu-time`
+    /// feature is enabled and the CPU clock handle was successfully obtained.
+    pub cpu_time_ms: Option<f64>,
+
+    /// Name of the monitor that terminated execution, if any.
+    /// e.g. `"wall-clock"`, `"cpu-time"`, or a custom monitor name.
+    /// `null` when the call completed (or failed) without monitor intervention.
+    pub terminated_by: Option<String>,
+}
+
+impl From<&ExecutionStats> for CallStats {
+    fn from(stats: &ExecutionStats) -> Self {
+        Self {
+            wall_clock_ms: stats.wall_clock.as_secs_f64() * 1000.0,
+            cpu_time_ms: stats.cpu_time.map(|d| d.as_secs_f64() * 1000.0),
+            terminated_by: stats.terminated_by.map(|s| s.to_string()),
+        }
     }
 }

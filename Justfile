@@ -126,6 +126,7 @@ run-examples target=default-target features="": (build target)
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example run_handler regex
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F function_call_metrics," + features } }} --example metrics
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example metrics
+    cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {'--features guest-call-stats,monitor-wall-clock,monitor-cpu-time'} else if features=="no-default-features" {"--no-default-features -F guest-call-stats,monitor-wall-clock,monitor-cpu-time" } else {"--no-default-features -F guest-call-stats,monitor-wall-clock,monitor-cpu-time," + features } }} --example execution_stats
 
 run-examples-tracing target=default-target features="": (build target)
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {'--features function_call_metrics'} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example tracing fmt
@@ -151,10 +152,10 @@ test target=default-target features="": (build target)
     cd src/hyperlight-js && cargo test {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} test_metrics --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
     cargo test --manifest-path=./src/hyperlight-js-runtime/Cargo.toml --test=native_cli --profile={{ if target == "debug" {"dev"} else { target } }}
 
-# Test with monitor features enabled (wall-clock and CPU time monitors)
+# Test with monitor features enabled (wall-clock, CPU time, and guest-call-stats)
 # Note: We exclude test_metrics as it requires process isolation and is already run by `test` recipe
 test-monitors target=default-target:
-    cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics
+    cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time,guest-call-stats --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics
 
 test-js-host-api target=default-target features="": (build-js-host-api target features)
     cd src/js-host-api && npm test

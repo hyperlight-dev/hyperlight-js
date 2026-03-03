@@ -23,6 +23,8 @@ use hyperlight_host::{MultiUseSandbox, Result};
 use tokio::task::JoinHandle;
 use tracing::{instrument, Level};
 
+#[cfg(feature = "guest-call-stats")]
+use super::execution_stats::ExecutionStats;
 use super::js_sandbox::JSSandbox;
 use super::metrics::{METRIC_SANDBOX_LOADS, METRIC_SANDBOX_UNLOADS};
 use super::monitor::runtime::get_monitor_runtime;
@@ -39,6 +41,10 @@ pub struct LoadedJSSandbox {
     snapshot: Arc<Snapshot>,
     // metric drop guard to manage sandbox metric
     _metric_guard: SandboxMetricsGuard<LoadedJSSandbox>,
+    // Stats from the most recent handle_event / handle_event_with_monitor call.
+    // None before any call has been made.
+    #[cfg(feature = "guest-call-stats")]
+    last_call_stats: Option<ExecutionStats>,
 }
 
 /// RAII guard that aborts a spawned monitor task on drop.
@@ -63,6 +69,8 @@ impl LoadedJSSandbox {
             inner,
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
+            #[cfg(feature = "guest-call-stats")]
+            last_call_stats: None,
         })
     }
 
@@ -93,7 +101,65 @@ impl LoadedJSSandbox {
         #[cfg(feature = "function_call_metrics")]
         let _metric_guard = EventHandlerMetricGuard::new(&func_name, should_gc);
 
-        self.inner.call(&func_name, (event, should_gc))
+        // --- guest-call-stats: capture timing before the call ---
+        #[cfg(feature = "guest-call-stats")]
+        let wall_start = std::time::Instant::now();
+
+        #[cfg(all(feature = "guest-call-stats", feature = "monitor-cpu-time"))]
+        let cpu_start = super::monitor::cpu_time::ThreadCpuHandle::for_current_thread()
+            .and_then(|h| h.elapsed().map(|t| (h, t)));
+
+        let result = self.inner.call(&func_name, (event, should_gc));
+
+        // --- guest-call-stats: record timing after the call ---
+        // CPU time is read first so the wall-clock measurement fully wraps it.
+        #[cfg(feature = "guest-call-stats")]
+        {
+            #[cfg(feature = "monitor-cpu-time")]
+            let cpu_time = cpu_start.and_then(|(handle, start_ticks)| {
+                handle.elapsed().map(|end_ticks| {
+                    let delta_nanos =
+                        handle.ticks_to_approx_nanos(end_ticks.saturating_sub(start_ticks));
+                    std::time::Duration::from_nanos(delta_nanos)
+                })
+            });
+            #[cfg(not(feature = "monitor-cpu-time"))]
+            let cpu_time: Option<std::time::Duration> = None;
+
+            let wall_clock = wall_start.elapsed();
+
+            self.last_call_stats = Some(ExecutionStats {
+                wall_clock,
+                cpu_time,
+                terminated_by: None,
+            });
+        }
+
+        result
+    }
+
+    /// Returns the execution statistics from the most recent guest function call.
+    ///
+    /// Returns `None` before any call has been made. After each `handle_event` or
+    /// `handle_event_with_monitor` call, this returns the timing and termination
+    /// information from that call — stats are **not** cumulative.
+    ///
+    /// Stats are captured even when the call returns an error (e.g. the sandbox
+    /// was poisoned by a monitor timeout).
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// let _ = loaded.handle_event("handler", event, None);
+    /// if let Some(stats) = loaded.last_call_stats() {
+    ///     println!("Wall clock: {:?}", stats.wall_clock);
+    ///     println!("CPU time: {:?}", stats.cpu_time);
+    ///     println!("Terminated by: {:?}", stats.terminated_by);
+    /// }
+    /// ```
+    #[cfg(feature = "guest-call-stats")]
+    pub fn last_call_stats(&self) -> Option<&ExecutionStats> {
+        self.last_call_stats.as_ref()
     }
 
     /// Unloads the Handlers from the sandbox and returns a `JSSandbox` with the JavaScript runtime loaded.
@@ -219,8 +285,9 @@ impl LoadedJSSandbox {
         })?;
 
         // Phase 2: Spawn the racing future on the shared runtime.
-        // When the first monitor fires, to_race() emits the metric and log,
-        // then we call kill() to terminate the guest.
+        // When the first monitor fires, to_race() returns the winner's name.
+        // We record the metric/log, store the winner name for stats, then
+        // call kill() to terminate the guest.
         // kill() is safe to call even if the guest already finished — hyperlight's
         // InterruptHandle checks RUNNING_BIT and clear_cancel() at the start of
         // the next guest call clears any stale CANCEL_BIT.
@@ -229,14 +296,40 @@ impl LoadedJSSandbox {
             HyperlightError::Error("Monitor runtime is unavailable".to_string())
         })?;
 
+        // Shared slot for the winning monitor's name. The monitor task writes
+        // the winner *before* calling kill(), and handle_event only returns
+        // *after* kill takes effect, so the read after handle_event is safe.
+        let terminated_by = Arc::new(std::sync::Mutex::new(None::<&'static str>));
+        let terminated_by_writer = terminated_by.clone();
+
         let _monitor_task = MonitorTask(runtime.spawn(async move {
-            racing_future.await;
+            let winner = racing_future.await;
+            super::monitor::record_monitor_triggered(winner);
+            // Store the winner name before kill — ordering guarantee:
+            // handle_event returns only after kill() poisons the sandbox,
+            // so the caller sees the write.
+            if let Ok(mut guard) = terminated_by_writer.lock() {
+                *guard = Some(winner);
+            }
             interrupt_handle.kill();
         }));
 
         // Phase 3: Execute the handler (blocking). When this returns (success
         // or error), _monitor_task drops and aborts the spawned monitor task.
-        self.handle_event(&func_name, event, gc)
+        let result = self.handle_event(&func_name, event, gc);
+
+        // Phase 4: Patch terminated_by into the stats captured by handle_event.
+        // If the monitor fired, the winner name was written before kill(), so
+        // we can read it safely now.
+        #[cfg(feature = "guest-call-stats")]
+        if let Ok(guard) = terminated_by.lock()
+            && let Some(winner) = *guard
+            && let Some(stats) = &mut self.last_call_stats
+        {
+            stats.terminated_by = Some(winner);
+        }
+
+        result
     }
 
     /// Generate a crash dump of the current state of the VM underlying this sandbox.

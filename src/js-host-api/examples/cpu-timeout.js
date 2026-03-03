@@ -47,6 +47,7 @@ async function main() {
         );
         console.log(`   ✅ SUCCESS: Handler completed!`);
         console.log(`   📊 Counter: ${result.counter.toLocaleString()}`);
+        printCallStats(loaded);
         console.log(`   🔒 Poisoned: ${loaded.poisoned}\n`);
     } catch (err) {
         console.log(`   ❌ Unexpected timeout: ${err.message}\n`);
@@ -99,6 +100,7 @@ async function main() {
             console.log(`   💀 Handler killed after ~${elapsed}ms`);
             console.log(`   ⚡ CPU time limit: 500ms (fired first for compute-bound work)`);
             console.log(`   ⏱️  Wall-clock limit: 5000ms (backstop, not reached)`);
+            printCallStats(loaded);
             console.log(`   🔒 Poisoned: ${loaded.poisoned} (sandbox is in inconsistent state)`);
             console.log(`   ✅ SUCCESS: Timeout enforced correctly!\n`);
 
@@ -131,3 +133,15 @@ main().catch((error) => {
     console.error('\nStack trace:', error.stack);
     process.exit(1);
 });
+
+/// Print last call stats from the loaded sandbox.
+function printCallStats(loaded) {
+    const stats = loaded.lastCallStats;
+    if (stats) {
+        console.log(
+            `   📊 Stats: wall=${stats.wallClockMs.toFixed(1)}ms` +
+                (stats.cpuTimeMs != null ? `, cpu=${stats.cpuTimeMs.toFixed(1)}ms` : '') +
+                (stats.terminatedBy ? `, terminated_by=${stats.terminatedBy}` : '')
+        );
+    }
+}

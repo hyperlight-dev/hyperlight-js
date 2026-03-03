@@ -15,6 +15,9 @@ limitations under the License.
 */
 //! The `sandbox` module contains the sandbox types for the Hyperlight JavaScript runtime.
 use std::env;
+/// Execution statistics captured after each guest function call.
+#[cfg(feature = "guest-call-stats")]
+pub mod execution_stats;
 /// Definition of a host function that can be called from guest JavaScript code.
 pub(crate) mod host_fn;
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.

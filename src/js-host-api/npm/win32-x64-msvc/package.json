@@ -1,0 +1,27 @@
+{
+  "name": "@hyperlight/js-host-api-win32-x64-msvc",
+  "version": "0.17.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "js-host-api.win32-x64-msvc.node",
+  "files": [
+    "js-host-api.win32-x64-msvc.node"
+  ],
+  "description": "Node.js API bindings for Hyperlight JS - Windows x64 msvc",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyperlight-dev/hyperlight-js.git"
+  },
+  "homepage": "https://github.com/hyperlight-dev/hyperlight-js#readme",
+  "bugs": {
+    "url": "https://github.com/hyperlight-dev/hyperlight-js/issues"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

@@ -1,0 +1,199 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Publish npm packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.17.0)'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  WORKING_DIR: src/js-host-api
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+            build_name: linux-x64-gnu
+          - target: x86_64-pc-windows-msvc
+            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+            build_name: win32-x64-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Hyperlight setup
+        uses: hyperlight-dev/ci-setup-workflow@v1.8.0
+        with:
+          rust-toolchain: "1.89"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm ci --ignore-scripts --omit=optional
+
+      - name: Set package version
+        working-directory: ${{ env.WORKING_DIR }}
+        shell: bash
+        run: |
+          npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: Build native module
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v8
+        with:
+          name: bindings-${{ matrix.build_name }}
+          path: ${{ env.WORKING_DIR }}/*.node
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm ci --ignore-scripts --omit=optional
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: bindings-linux-x64-gnu
+          path: ${{ env.WORKING_DIR }}/artifacts/linux-x64-gnu
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: bindings-win32-x64-msvc
+          path: ${{ env.WORKING_DIR }}/artifacts/win32-x64-msvc
+
+      - name: List artifacts
+        run: ls -la ${{ env.WORKING_DIR }}/artifacts/*/
+
+      - name: Move artifacts to npm directories
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          # Rename artifacts to match napi-rs naming convention
+          mv artifacts/linux-x64-gnu/*.node npm/linux-x64-gnu/js-host-api.linux-x64-gnu.node
+          mv artifacts/win32-x64-msvc/*.node npm/win32-x64-msvc/js-host-api.win32-x64-msvc.node
+          ls -la npm/linux-x64-gnu/
+          ls -la npm/win32-x64-msvc/
+
+      - name: Set package versions
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          # Update main package version
+          npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+          
+          # Update platform package versions
+          cd npm/linux-x64-gnu && npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+          cd ../win32-x64-msvc && npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: Update optionalDependencies versions
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          # Update only @hyperlight platform package versions (not other optionalDeps)
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            for (const dep of Object.keys(pkg.optionalDependencies || {})) {
+              if (dep.startsWith('@hyperlight/js-host-api-')) {
+                pkg.optionalDependencies[dep] = '${{ inputs.version }}';
+              }
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          cat package.json
+
+      - name: Generate JS bindings (index.js and index.d.ts)
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          # napi prepublish generates index.js and index.d.ts from the .node artifacts
+          npx napi prepublish -t npm --skip-gh-release
+          ls -la index.js index.d.ts
+
+      - name: Publish Linux package
+        if: ${{ !inputs.dry-run }}
+        working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish Windows package
+        if: ${{ !inputs.dry-run }}
+        working-directory: ${{ env.WORKING_DIR }}/npm/win32-x64-msvc
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package
+        if: ${{ !inputs.dry-run }}
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry run - show what would be published
+        if: ${{ inputs.dry-run }}
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "=== DRY RUN - Would publish the following packages ==="
+          echo ""
+          echo "--- @hyperlight/js-host-api-linux-x64-gnu ---"
+          npm pack ./npm/linux-x64-gnu --dry-run
+          echo ""
+          echo "--- @hyperlight/js-host-api-win32-x64-msvc ---"
+          npm pack ./npm/win32-x64-msvc --dry-run
+          echo ""
+          echo "--- @hyperlight/js-host-api ---"
+          npm pack --dry-run

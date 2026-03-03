@@ -1,0 +1,27 @@
+{
+  "name": "@hyperlight/js-host-api-linux-x64-gnu",
+  "version": "0.17.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "js-host-api.linux-x64-gnu.node",
+  "files": [
+    "js-host-api.linux-x64-gnu.node"
+  ],
+  "description": "Node.js API bindings for Hyperlight JS - Linux x64 gnu",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyperlight-dev/hyperlight-js.git"
+  },
+  "homepage": "https://github.com/hyperlight-dev/hyperlight-js#readme",
+  "bugs": {
+    "url": "https://github.com/hyperlight-dev/hyperlight-js/issues"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

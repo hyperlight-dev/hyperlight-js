@@ -15,9 +15,6 @@ limitations under the License.
 */
 extern crate alloc;
 
-use core::ffi::*;
-use core::time::Duration;
-
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -31,6 +28,8 @@ use hyperlight_guest::error::{HyperlightGuestError, Result};
 use hyperlight_guest_bin::{guest_function, host_function};
 use spin::Mutex;
 use tracing::instrument;
+
+mod stubs;
 
 struct Host;
 
@@ -127,54 +126,10 @@ fn register_host_modules(host_modules_json: String) -> Result<()> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn srand(_seed: u32) {
-    // No-op
-}
-
-#[unsafe(no_mangle)]
 pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
     let params = function_call.parameters.unwrap_or_default();
     let function_name = function_call.function_name;
     let (event, run_gc) = ParameterTuple::from_value(params)?;
     let result = RUNTIME.lock().run_handler(function_name, event, run_gc)?;
     Ok(get_flatbuffer_result(result.as_str()))
-}
-
-/// # Safety
-/// This function is used by the C code to get the current time in seconds and nanoseconds.
-/// `ts` must be a valid pointer to an array of two `u64` values.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn _current_time(ts: *mut u64) -> c_int {
-    #[host_function("CurrentTimeMicros")]
-    fn current_time_micros() -> Result<u64>;
-
-    let dur = current_time_micros().unwrap_or(1609459200u64 * 1_000_000u64);
-    let dur = Duration::from_micros(dur);
-
-    let ts = unsafe { core::slice::from_raw_parts_mut(ts, 2) };
-    ts[0] = dur.as_secs();
-    ts[1] = dur.subsec_nanos() as u64;
-
-    0
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn putchar(c: c_int) -> c_int {
-    unsafe { hyperlight_guest_bin::host_comm::_putchar(c as c_char) };
-    if c == '\n' as c_int {
-        // force a flush of the internal buffer in the hyperlight putchar implementation
-        unsafe { hyperlight_guest_bin::host_comm::_putchar(0) };
-    }
-    (c as c_char) as c_int
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn fflush(f: *mut c_void) -> c_int {
-    if !f.is_null() {
-        // we only support flushing all streams, and stdout is our only stream
-        return -1;
-    }
-    // flush stdout
-    putchar('\0' as _);
-    0
 }

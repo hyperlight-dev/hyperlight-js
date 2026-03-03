@@ -13,16 +13,38 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-fn main() {
-    if std::env::var_os("CARGO_CFG_HYPERLIGHT").is_none() {
-        return;
-    }
 
-    let files = ["stubs/clock.c", "stubs/localtime.c"];
+use std::env;
+use std::path::PathBuf;
 
-    for file in files {
-        println!("cargo:rerun-if-changed={}", file);
-    }
+use bindgen::RustEdition::Edition2024;
 
-    cc::Build::new().files(files).compile("stubs");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut bindings = bindgen::builder()
+        .use_core()
+        .wrap_unsafe_ops(true)
+        .rust_edition(Edition2024)
+        .clang_arg("-D_POSIX_MONOTONIC_CLOCK=1")
+        .clang_arg("-D_POSIX_C_SOURCE=200809L");
+
+    bindings = bindings.header_contents(
+        "libc.h",
+        "
+        #pragma once
+        #include <errno.h>
+        #include <stdio.h>
+        #include <time.h>
+        ",
+    );
+
+    println!("cargo:rerun-if-changed=include");
+    println!("cargo:rerun-if-changed=include/stdio.h");
+    println!("cargo:rerun-if-changed=include/time.h");
+    println!("cargo:rerun-if-changed=include/unistd.h");
+
+    // Write the generated bindings to an output file.
+    let out_path = PathBuf::from(env::var("OUT_DIR")?).join("libc.rs");
+    bindings.generate()?.write_to_file(out_path)?;
+
+    Ok(())
 }

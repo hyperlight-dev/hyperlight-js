@@ -1,5 +1,5 @@
 /*
-Copyright 2026  The Hyperlight Authors.
+Copyright 2026 The Hyperlight Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,14 +13,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#![cfg_attr(hyperlight, no_std)]
-#![cfg_attr(hyperlight, no_main)]
+#pragma once
 
-#[cfg(hyperlight)]
-mod libc;
+#include_next "time.h"
 
-#[cfg(hyperlight)]
-include!("main/hyperlight.rs");
+#include <sys/time.h>
+#include <sys/types.h>
+#include <errno.h>
 
-#[cfg(not(hyperlight))]
-include!("main/native.rs");
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1
+
+int clock_gettime(clockid_t clk_id, struct timespec *tp);
+struct tm *localtime_r(const time_t *timer, struct tm *tm);

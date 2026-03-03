@@ -33,17 +33,17 @@ tracing = { version = "0.1.44", default-features = false, features = ["log","att
 hyperlight-common = { workspace = true, default-features = false }
 hyperlight-guest = { workspace = true }
 hyperlight-guest-bin = { workspace = true }
+chrono = { version = "0.4", default-features = false }
 
 [target.'cfg(not(hyperlight))'.dependencies]
 clap = { version = "4.5", features = ["derive"] }
-libc = "0.2"
 
 [target.'cfg(not(hyperlight))'.dev-dependencies]
 escargot = "0.5"
 tempfile = "3.26"
 
 [build-dependencies]
-cc = "1.2"
+bindgen = "0.72"
 
 [features]
 default = []

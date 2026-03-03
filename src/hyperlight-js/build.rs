@@ -147,8 +147,13 @@ fn build_js_runtime() -> PathBuf {
     // the PROFILE env var unfortunately only gives us 1 bit of "dev or release"
     let cargo_profile = if profile == "debug" { "dev" } else { "release" };
 
-    let stubs_inc = runtime_dir.join("stubs").join("include");
+    let stubs_inc = runtime_dir.join("include");
     let cflags = format!("-I{} -D__wasi__=1", stubs_inc.display());
+
+    // in windows escape the backslash to make bindgen happy
+    // TODO(jprendes): this should probably go in cargo-hyperlight instead, where
+    // we already do something similar, but looks like its not enough.
+    let cflags = cflags.replace("\\", "\\\\");
 
     let mut cargo_cmd = cargo_hyperlight::cargo().unwrap();
     let cmd = cargo_cmd

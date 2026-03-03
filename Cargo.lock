@@ -1607,7 +1607,8 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
- "cc",
+ "bindgen",
+ "chrono",
  "clap",
  "escargot",
  "fn-traits",
@@ -1617,7 +1618,6 @@ dependencies = [
  "hyperlight-common",
  "hyperlight-guest",
  "hyperlight-guest-bin",
- "libc",
  "rquickjs",
  "serde",
  "serde_json",

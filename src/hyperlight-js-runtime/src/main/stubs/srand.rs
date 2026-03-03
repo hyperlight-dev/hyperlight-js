@@ -1,5 +1,5 @@
 /*
-Copyright 2026  The Hyperlight Authors.
+Copyright 2026 The Hyperlight Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,14 +13,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#![cfg_attr(hyperlight, no_std)]
-#![cfg_attr(hyperlight, no_main)]
+use crate::libc;
 
-#[cfg(hyperlight)]
-mod libc;
-
-#[cfg(hyperlight)]
-include!("main/hyperlight.rs");
-
-#[cfg(not(hyperlight))]
-include!("main/native.rs");
+#[unsafe(no_mangle)]
+extern "C" fn srand(_seed: libc::c_uint) {
+    // No-op
+}

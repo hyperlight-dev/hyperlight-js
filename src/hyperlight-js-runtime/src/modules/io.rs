@@ -15,6 +15,8 @@ limitations under the License.
 */
 use alloc::string::String;
 
+use crate::libc;
+
 #[rquickjs::module(rename_vars = "camelCase", rename_types = "camelCase")]
 #[allow(clippy::module_inception)]
 pub mod io {
@@ -22,11 +24,8 @@ pub mod io {
 
     #[rquickjs::function]
     pub fn print(txt: String) {
-        unsafe extern "C" {
-            safe fn putchar(c: core::ffi::c_int) -> core::ffi::c_int;
-        }
         for byte in txt.bytes() {
-            let _ = putchar(byte as _);
+            let _ = unsafe { libc::putchar(byte as libc::c_int) };
         }
         flush()
     }
@@ -34,9 +33,6 @@ pub mod io {
     #[rquickjs::function]
     pub fn flush() {
         // Flush the output buffer of libc to make sure all output is printed out.
-        unsafe extern "C" {
-            fn fflush(f: *mut core::ffi::c_void) -> core::ffi::c_int;
-        }
-        let _ = unsafe { fflush(core::ptr::null_mut()) };
+        let _ = unsafe { libc::fflush(core::ptr::null_mut()) };
     }
 }

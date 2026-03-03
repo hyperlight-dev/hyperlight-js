@@ -1,5 +1,5 @@
 /*
-Copyright 2026  The Hyperlight Authors.
+Copyright 2026 The Hyperlight Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,14 +13,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#![cfg_attr(hyperlight, no_std)]
-#![cfg_attr(hyperlight, no_main)]
+#pragma once
 
-#[cfg(hyperlight)]
-mod libc;
+#include "printf.h"
+#include_next "stdio.h"
 
-#[cfg(hyperlight)]
-include!("main/hyperlight.rs");
+#define stdout NULL
 
-#[cfg(not(hyperlight))]
-include!("main/native.rs");
+int putchar(int c);
+
+#define vfprintf(f, ...) vprintf(__VA_ARGS__)
+#define fprintf(f, ...) printf(__VA_ARGS__)
+#define fputc(c, f) putc((char)(c), f)
+
+int fflush(FILE *f);

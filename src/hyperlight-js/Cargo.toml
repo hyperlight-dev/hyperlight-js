@@ -64,7 +64,7 @@ tracing-forest = { version = "0.3.1", features = ["full"] }
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber = {version = "0.3.22", features = ["std", "env-filter"]}
 tracing-tracy = { version = "0.11", features = ["timer-fallback", "ondemand"] }
-uuid = "1.21.0"
+uuid = "1.22.0"
 
 [features]
 default = ["function_call_metrics", "kvm", "mshv3"]

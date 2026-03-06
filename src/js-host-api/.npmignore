@@ -1,0 +1,32 @@
+# npm publish ignores - override .gitignore for package publishing
+# Include generated files that are gitignored but needed in the package
+!index.js
+!index.d.ts
+
+# Exclude development files
+node_modules/
+target/
+Cargo.lock
+*.tgz
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+
+# Exclude package-lock from published package
+package-lock.json
+
+# Exclude test and dev files
+tests/
+examples/
+*.config.js
+*.config.mjs
+.prettierrc
+TYPE_NAMING.md
+build.rs
+src/
+Cargo.toml
+test-examples.sh
+
+# Exclude artifacts directory (only used during CI)
+artifacts/

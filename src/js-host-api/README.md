@@ -600,3 +600,44 @@ just test-js-host-api release
 just build-all
 just test-all release
 ```
+
+## Publishing to npm
+
+The package is published to npmjs.com as `@hyperlight/js-host-api` with platform-specific binary packages.
+
+### Automated Release
+
+Publishing happens automatically when a release is created via the `CreateRelease` workflow on a `release/vX.Y.Z` branch.
+
+### Manual Publishing
+
+You can also trigger the npm publish workflow manually:
+
+1. Go to **Actions** → **Publish npm packages**
+2. Click **Run workflow**
+3. Enter the version (e.g., `0.17.0`)
+4. Optionally enable **dry-run** to test without publishing
+
+### Setup Requirements
+
+The following secret must be configured in the repository:
+
+| Secret | Description |
+|--------|-------------|
+| `NPM_TOKEN` | npm access token with publish permissions for the `@hyperlight` scope |
+
+To create an npm token:
+1. Log in to [npmjs.com](https://www.npmjs.com/)
+2. Go to **Access Tokens** → **Generate New Token**
+3. Select **Automation** token type (for CI/CD)
+4. Add the token as a repository secret named `NPM_TOKEN`
+
+### Package Structure
+
+The npm release consists of three packages:
+
+| Package | Description |
+|---------|-------------|
+| `@hyperlight/js-host-api` | Main package (installs correct binary automatically) |
+| `@hyperlight/js-host-api-linux-x64-gnu` | Linux x86_64 native binary |
+| `@hyperlight/js-host-api-win32-x64-msvc` | Windows x86_64 native binary |

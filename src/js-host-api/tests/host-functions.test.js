@@ -543,3 +543,291 @@ describe('Multi-sandbox isolation', () => {
         expect(resultB).toEqual({ sum: 21, product: 10 });
     });
 });
+
+// ── Binary data (Buffer/Uint8Array) ──────────────────────────────────
+
+describe('Binary data support', () => {
+    it('should pass Buffer args from guest Uint8Array to host', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('byte_length', (data) => {
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    return data.length;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = new Uint8Array([72, 101, 108, 108, 111]);
+                return { len: host.byte_length(data) };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 5 });
+    });
+
+    it('should return Buffer from host as Uint8Array on guest', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_bytes', () => {
+                    return Buffer.from([1, 2, 3, 4, 5]);
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = host.get_bytes();
+                return { len: data.length, first: data[0], last: data[4] };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 5, first: 1, last: 5 });
+    });
+
+    it('should handle mixed Buffer and JSON args', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('describe', (prefix, data, num) => {
+                    expect(typeof prefix).toBe('string');
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    expect(typeof num).toBe('number');
+                    return `${prefix}-${data.length}-${num}`;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = new Uint8Array([10, 20, 30]);
+                return { result: host.describe("pfx", data, 42) };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ result: 'pfx-3-42' });
+    });
+
+    it('should handle empty Uint8Array', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('check_empty', (data) => {
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    return data.length;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                return { len: host.check_empty(new Uint8Array(0)) };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 0 });
+    });
+
+    it('should handle host returning empty Buffer', async () => {
+        // Regression: napi_get_buffer_info returns data=null, len=0 for
+        // empty buffers. JsReturn::from_napi_value must not panic on the
+        // null pointer — it should return an empty Vec instead.
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('empty_response', () => {
+                    return Buffer.alloc(0);
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = host.empty_response();
+                return { len: data.length, isUint8: data instanceof Uint8Array };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 0, isUint8: true });
+    });
+
+    it('should round-trip binary data (send and receive)', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('echo_bytes', (data) => {
+                    // Return the same Buffer back
+                    return data;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const input = new Uint8Array([0, 127, 128, 255]);
+                const output = host.echo_bytes(input);
+                // Verify round-trip preserves all byte values
+                return {
+                    len: output.length,
+                    b0: output[0],
+                    b1: output[1],
+                    b2: output[2],
+                    b3: output[3],
+                };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 4, b0: 0, b1: 127, b2: 128, b3: 255 });
+    });
+
+    // ── Nested binary returns ────────────────────────────────────────
+
+    it('should handle nested Buffer in returned object', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_payload', () => {
+                    return {
+                        name: 'test',
+                        data: Buffer.from([10, 20, 30]),
+                    };
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const result = host.get_payload();
+                return {
+                    name: result.name,
+                    data_len: result.data.length,
+                    first: result.data[0],
+                    last: result.data[2],
+                };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({
+            name: 'test',
+            data_len: 3,
+            first: 10,
+            last: 30,
+        });
+    });
+
+    it('should handle nested Buffer in returned array', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_items', () => {
+                    return [Buffer.from([1, 2, 3]), Buffer.from([4, 5])];
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const items = host.get_items();
+                return {
+                    count: items.length,
+                    first_len: items[0].length,
+                    second_len: items[1].length,
+                    first_byte: items[0][0],
+                };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({
+            count: 2,
+            first_len: 3,
+            second_len: 2,
+            first_byte: 1,
+        });
+    });
+
+    it('should handle deeply nested Buffer in returned object', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_nested', () => {
+                    return {
+                        outer: {
+                            inner: {
+                                label: 'deep',
+                                data: Buffer.from([0xab, 0xcd]),
+                            },
+                        },
+                    };
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const result = host.get_nested();
+                return {
+                    inner_len: result.outer.inner.data.length,
+                    first_byte: result.outer.inner.data[0],
+                    label: result.outer.inner.label,
+                };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({
+            inner_len: 2,
+            first_byte: 0xab,
+            label: 'deep',
+        });
+    });
+
+    it('should handle mixed Buffers and JSON in returned object', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_mixed', () => {
+                    return {
+                        header: Buffer.from([1, 2]),
+                        status: 'ok',
+                        payload: Buffer.from([3, 4, 5]),
+                        count: 42,
+                    };
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const r = host.get_mixed();
+                return {
+                    header_len: r.header.length,
+                    payload_len: r.payload.length,
+                    status: r.status,
+                    count: r.count,
+                    h0: r.header[0],
+                    p2: r.payload[2],
+                };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({
+            header_len: 2,
+            payload_len: 3,
+            status: 'ok',
+            count: 42,
+            h0: 1,
+            p2: 5,
+        });
+    });
+
+    it('should handle nested Uint8Array (not just Buffer)', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_uint8', () => {
+                    return { data: new Uint8Array([7, 8, 9]) };
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const r = host.get_uint8();
+                return { len: r.data.length, first: r.data[0] };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 3, first: 7 });
+    });
+});

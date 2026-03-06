@@ -189,15 +189,34 @@ ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModu
     });
 }
 
-// HostModule — register()
+// HostModule — register() with Buffer support
 {
     const origRegister = HostModule.prototype.register;
     if (!origRegister) throw new Error('Cannot wrap missing method: HostModule.register');
     HostModule.prototype.register = wrapSync(function (name, callback) {
-        // the rust code expects the host function to return a Promise, so we wrap the callback result in Promise.resolve().then(..) to allow sync functions as well
-        // note that Promise.resolve(callback(...args)) would not work because if callback throws that would not return a rejected promise, it would just throw before returning the promise.
+        // Wrap the callback to handle Buffer returns.
+        // Args: Rust creates native Buffer objects directly via the
+        //       NAPI C API — no conversion needed on the JS side.
+        // Returns: Top-level Buffer/Uint8Array is ensured to be a Buffer
+        //          so Rust's napi_is_buffer detects it. For other return
+        //          values (objects, arrays), Rust's recursive NAPI walker
+        //          extracts nested Buffers into the binary sidecar
+        //          directly — no base64 conversion needed on the JS side.
         return origRegister.call(this, name, (...args) =>
-            Promise.resolve().then(() => callback(...args))
+            Promise.resolve()
+                .then(() => callback(...args))
+                .then((result) => {
+                    if (Buffer.isBuffer(result)) {
+                        // Already a Buffer — return as-is to avoid an unnecessary copy.
+                        return result;
+                    }
+                    if (result instanceof Uint8Array) {
+                        // Plain Uint8Array — wrap in Buffer so Rust's
+                        // napi_is_buffer detects it.
+                        return Buffer.from(result);
+                    }
+                    return result;
+                })
         );
     });
 }

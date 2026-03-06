@@ -1741,6 +1741,7 @@ dependencies = [
  "env_logger",
  "fn-traits",
  "hyperlight-host",
+ "hyperlight-js-common",
  "hyperlight-js-runtime",
  "lazy_static",
  "libc",
@@ -1769,6 +1770,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperlight-js-common"
+version = "0.3.0"
+
+[[package]]
 name = "hyperlight-js-runtime"
 version = "0.3.0"
 dependencies = [
@@ -1781,7 +1786,10 @@ dependencies = [
  "hashbrown 0.17.1",
  "hex",
  "hmac",
+ "hyperlight-common",
+ "hyperlight-guest",
  "hyperlight-guest-bin",
+ "hyperlight-js-common",
  "rquickjs",
  "serde",
  "serde_json",
@@ -2025,6 +2033,7 @@ version = "0.3.0"
 dependencies = [
  "arc-swap",
  "hyperlight-js",
+ "hyperlight-js-common",
  "napi",
  "napi-build",
  "napi-derive",

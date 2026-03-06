@@ -17,17 +17,20 @@ use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString as _};
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::cell::{Ref, RefCell, RefMut};
 use core::ptr::NonNull;
 
 use anyhow::{bail, ensure, Context as _};
 use hashbrown::HashMap;
+use hyperlight_js_common::{FnReturn, MAX_JSON_DEPTH, PLACEHOLDER_BIN};
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::prelude::Rest;
-use rquickjs::{Ctx, Exception, Function, JsLifetime, Module, Value};
+use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Module, TypedArray, Value};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde_json::json;
 
 /// A clone of rquickjs::Module so that we can access the ctx from it by transmuting.
 struct NakedModule<'js> {
@@ -87,6 +90,234 @@ where
     f
 }
 
+/// Checks if a JS value is a Uint8Array and extracts its bytes.
+fn try_extract_uint8array(value: &Value<'_>) -> Option<Vec<u8>> {
+    let obj = value.as_object()?;
+    let typed_array = obj.as_typed_array::<u8>()?;
+    typed_array.as_bytes().map(|b| b.to_vec())
+}
+
+/// Recursively processes a JS value, extracting binary data and replacing with placeholders.
+/// Returns a serde_json::Value with placeholders and collects binary blobs.
+fn value_to_json_with_binaries<'js>(
+    ctx: &Ctx<'js>,
+    value: Value<'js>,
+    binaries: &mut Vec<Vec<u8>>,
+    depth: usize,
+) -> anyhow::Result<serde_json::Value> {
+    if depth > MAX_JSON_DEPTH {
+        anyhow::bail!("JSON nesting depth exceeds maximum ({MAX_JSON_DEPTH})");
+    }
+
+    // Check for Uint8Array first
+    if let Some(bytes) = try_extract_uint8array(&value) {
+        let index = binaries.len();
+        binaries.push(bytes);
+        return Ok(json!({PLACEHOLDER_BIN: index}));
+    }
+
+    // Handle null/undefined
+    if value.is_null() || value.is_undefined() {
+        return Ok(serde_json::Value::Null);
+    }
+
+    // Handle booleans
+    if let Some(b) = value.as_bool() {
+        return Ok(serde_json::Value::Bool(b));
+    }
+
+    // Handle numbers
+    // QuickJS stores numbers as doubles internally but optimises small
+    // integers into SMIs. We check as_int() first for integer fidelity,
+    // falling back to as_float() for all other numeric values.
+    // For floats that represent whole numbers (e.g. 42.0 from JSON.parse),
+    // we emit them as integers to match JSON.stringify behaviour and
+    // preserve serde integer deserialization on the host side.
+    if let Some(n) = value.as_int() {
+        return Ok(serde_json::Value::Number(n.into()));
+    }
+    if let Some(n) = value.as_float() {
+        // Handle NaN and Infinity as null (like JSON.stringify)
+        if n.is_finite() {
+            // If the float is a whole number that fits in i64, emit as integer
+            // to match JSON.stringify behaviour (42.0 → 42, not 42.0)
+            if n == (n as i64) as f64 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                return Ok(serde_json::Value::Number((n as i64).into()));
+            }
+            if let Some(num) = serde_json::Number::from_f64(n) {
+                return Ok(serde_json::Value::Number(num));
+            }
+        }
+        return Ok(serde_json::Value::Null);
+    }
+
+    // Handle strings
+    if let Some(s) = value.as_string() {
+        let s = s.to_string()?;
+        return Ok(serde_json::Value::String(s));
+    }
+
+    // Handle arrays
+    if let Some(array) = value.as_array() {
+        let mut json_array = Vec::with_capacity(array.len());
+        for item in array.iter::<Value>() {
+            let item = item?;
+            json_array.push(value_to_json_with_binaries(ctx, item, binaries, depth + 1)?);
+        }
+        return Ok(serde_json::Value::Array(json_array));
+    }
+
+    // Handle objects
+    if let Some(obj) = value.as_object() {
+        let mut json_obj = serde_json::Map::new();
+        for entry in obj.props::<String, Value>() {
+            let (key, val) = entry?;
+            json_obj.insert(
+                key,
+                value_to_json_with_binaries(ctx, val, binaries, depth + 1)?,
+            );
+        }
+        return Ok(serde_json::Value::Object(json_obj));
+    }
+
+    // Fallback: use JSON.stringify for anything else
+    let json_str = ctx
+        .json_stringify(value)?
+        .map(|s| s.to_string())
+        .transpose()?
+        .unwrap_or_else(|| "null".into());
+    let parsed: serde_json::Value = serde_json::from_str(&json_str)?;
+    Ok(parsed)
+}
+
+/// Extracts binary data from JS arguments, replacing with placeholders.
+/// Returns the JSON string with placeholders and the collected binary blobs.
+fn extract_binaries<'js>(
+    ctx: &Ctx<'js>,
+    args: Vec<Value<'js>>,
+) -> anyhow::Result<(String, Vec<Vec<u8>>)> {
+    let mut binaries = Vec::new();
+    let mut json_args = Vec::with_capacity(args.len());
+
+    for arg in args {
+        json_args.push(value_to_json_with_binaries(ctx, arg, &mut binaries, 0)?);
+    }
+
+    let json = serde_json::to_string(&json_args)?;
+    Ok((json, binaries))
+}
+
+/// Converts a `serde_json::Value` tree into an `rquickjs::Value`, delegating
+/// binary-marker resolution to `resolve_binary`.
+///
+/// When the traversal encounters a JSON object, it first calls
+/// `resolve_binary(&obj, ctx)`. If the closure returns `Ok(Some(value))` the
+/// object is replaced with that JS value (typically a `Uint8Array`). If it
+/// returns `Ok(None)` the object is treated as a regular JS object.
+///
+/// This keeps the conversion logic in one place while allowing different
+/// strategies for resolving binary markers (`__bin__` placeholder path).
+fn json_to_js_value<'js, F>(
+    ctx: &Ctx<'js>,
+    value: serde_json::Value,
+    resolve_binary: &F,
+    depth: usize,
+) -> anyhow::Result<Value<'js>>
+where
+    F: Fn(
+        &serde_json::Map<String, serde_json::Value>,
+        &Ctx<'js>,
+    ) -> anyhow::Result<Option<Value<'js>>>,
+{
+    if depth > MAX_JSON_DEPTH {
+        anyhow::bail!("JSON nesting depth exceeds maximum ({MAX_JSON_DEPTH})");
+    }
+
+    match value {
+        serde_json::Value::Null => Ok(Value::new_null(ctx.clone())),
+        serde_json::Value::Bool(b) => Ok(Value::new_bool(ctx.clone(), b)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64()
+                && let Ok(i32_val) = i32::try_from(i)
+            {
+                Ok(Value::new_int(ctx.clone(), i32_val))
+            } else if let Some(f) = n.as_f64() {
+                Ok(Value::new_float(ctx.clone(), f))
+            } else {
+                Ok(Value::new_null(ctx.clone()))
+            }
+        }
+        serde_json::Value::String(s) => {
+            let js_str = rquickjs::String::from_str(ctx.clone(), &s)?;
+            Ok(js_str.into_value())
+        }
+        serde_json::Value::Array(arr) => {
+            let js_array = Array::new(ctx.clone())?;
+            for (i, item) in arr.into_iter().enumerate() {
+                let js_item = json_to_js_value(ctx, item, resolve_binary, depth + 1)?;
+                js_array.set(i, js_item)?;
+            }
+            Ok(js_array.into_value())
+        }
+        serde_json::Value::Object(obj) => {
+            // Let the caller decide if this object is a binary marker.
+            if let Some(resolved) = resolve_binary(&obj, ctx)? {
+                return Ok(resolved);
+            }
+            // Regular object
+            let js_obj = rquickjs::Object::new(ctx.clone())?;
+            for (key, val) in obj {
+                let js_val = json_to_js_value(ctx, val, resolve_binary, depth + 1)?;
+                js_obj.set(&key, js_val)?;
+            }
+            Ok(js_obj.into_value())
+        }
+    }
+}
+
+/// Converts a serde_json Value to a rquickjs Value without any
+/// binary marker resolution (plain JSON objects pass through as-is).
+fn json_to_plain_value<'js>(
+    ctx: &Ctx<'js>,
+    value: serde_json::Value,
+    depth: usize,
+) -> anyhow::Result<Value<'js>> {
+    json_to_js_value(ctx, value, &|_obj, _ctx| Ok(None), depth)
+}
+
+/// Converts a serde_json Value to a rquickjs Value, resolving `{"__bin__": N}`
+/// placeholders from the provided binary blobs (optimised sidecar path).
+fn json_to_value_with_blobs<'js>(
+    ctx: &Ctx<'js>,
+    value: serde_json::Value,
+    blobs: &[Vec<u8>],
+    depth: usize,
+) -> anyhow::Result<Value<'js>> {
+    json_to_js_value(
+        ctx,
+        value,
+        &|obj: &serde_json::Map<String, serde_json::Value>, ctx: &Ctx<'js>| {
+            // Check for {"__bin__": N} placeholder
+            if obj.len() == 1
+                && let Some(serde_json::Value::Number(n)) = obj.get(PLACEHOLDER_BIN)
+                && let Some(idx) = n.as_u64()
+            {
+                let idx = idx as usize;
+                if idx < blobs.len() {
+                    let array = TypedArray::<u8>::new(ctx.clone(), blobs[idx].clone())?;
+                    return Ok(Some(array.into_value()));
+                }
+                anyhow::bail!(
+                    "Binary placeholder index {idx} out of bounds (have {} blobs)",
+                    blobs.len()
+                );
+            }
+            Ok(None)
+        },
+        depth,
+    )
+}
+
 /// A `ModuleDef` implementation that can be used to declare and evaluate host modules.
 /// This module will look up the module name in the ctx userdata and declare/evaluate
 /// the functions in the module accordingly.
@@ -129,7 +360,7 @@ impl ModuleDef for HostModuleDef {
         let module: &Module = unsafe { core::mem::transmute(exports) };
         let module_name: String = module.name()?;
 
-        // We don't have access to self in this function, so we can pass rich data to this function.
+        // We don't have access to self in this function, so we can't pass rich data to this function.
         // Instead, we use a userdata in the context to get the list of functions to export.
         let Some(loader) = ctx.userdata::<HostModuleLoader>() else {
             return Err(Exception::throw_internal(ctx, "HostModuleLoader not found"));
@@ -176,7 +407,10 @@ impl HostFunction {
                     func(ctx, args).map_err(|e| match e.downcast::<rquickjs::Error>() {
                         Ok(e) => e,
                         Err(e) => {
-                            Exception::throw_internal(ctx, &format!("Host function error: {e:#?}"))
+                            // Use Display chain ({e:#}) instead of Debug struct
+                            // ({e:#?}) to keep the message compact and avoid
+                            // truncation at the hyperlight guest↔host boundary.
+                            Exception::throw_internal(ctx, &format!("Host function error: {e:#}"))
                         }
                     })
                 },
@@ -188,6 +422,11 @@ impl HostFunction {
     ///
     /// This is useful for hyperlight, where we use JSON as the serialization format for communication
     /// with the host.
+    ///
+    /// **Note:** This variant does not support `Uint8Array`/`Buffer` arguments —
+    /// QuickJS's `JSON.stringify` will serialize them as plain objects with numeric
+    /// keys (e.g. `{ "0": 1, "1": 2 }`), not as binary blobs. Use [`new_bin`](Self::new_bin)
+    /// for functions that handle binary data.
     pub fn new_json(func: impl Fn(String) -> anyhow::Result<String> + 'static) -> Self {
         Self::new(
             move |ctx: &Ctx, args: Rest<Value>| -> anyhow::Result<Value> {
@@ -198,6 +437,62 @@ impl HostFunction {
                     .context("Serializing host function arguments")?;
                 let res = func(args).context("Calling host function")?;
                 ctx.json_parse(res).context("Parsing host function result")
+            },
+        )
+    }
+
+    /// Create a new `HostFunction` from a closure that supports binary data.
+    ///
+    /// This variant detects `Uint8Array` arguments and passes them
+    /// through a sidecar binary channel instead of JSON-encoding them. The JSON
+    /// contains `{"__bin__": N}` placeholders that reference the sidecar blobs.
+    ///
+    /// The closure receives:
+    /// - `args_json`: JSON string with placeholders for binary arguments
+    /// - `binaries`: Packed binary sidecar (length-prefixed format)
+    ///
+    /// The closure returns a tagged result:
+    /// - `0x00` + JSON = JSON return value
+    /// - `0x01` + bytes = raw binary return (becomes `Uint8Array` on JS side)
+    pub fn new_bin(func: impl Fn(String, Vec<u8>) -> anyhow::Result<Vec<u8>> + 'static) -> Self {
+        Self::new(
+            move |ctx: &Ctx, args: Rest<Value>| -> anyhow::Result<Value> {
+                // Extract binary blobs and replace with placeholders
+                let (json_args, binaries) = extract_binaries(ctx, args.into_inner())?;
+
+                // Encode binaries into sidecar format — encode_binaries
+                // accepts &[Vec<u8>] directly, no intermediate Vec<&[u8]> needed
+                let packed = hyperlight_js_common::encode_binaries(&binaries)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                // Call the host function
+                let result = func(json_args, packed).context("Calling binary host function")?;
+
+                // Decode the tagged return value
+                match hyperlight_js_common::decode_return(&result)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                {
+                    FnReturn::Json(json) => {
+                        // Plain JSON return — no binary markers to resolve.
+                        let json_value: serde_json::Value =
+                            serde_json::from_str(&json).context("Parsing JSON return from host")?;
+                        json_to_plain_value(ctx, json_value, 0)
+                    }
+                    FnReturn::JsonWithBinaries(json, sidecar) => {
+                        // Optimised sidecar path: decode blobs and resolve
+                        // {"__bin__": N} placeholders by index lookup.
+                        let blobs = hyperlight_js_common::decode_binaries(&sidecar)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        let json_value: serde_json::Value = serde_json::from_str(&json)
+                            .context("Parsing JSON-with-binaries return from host")?;
+                        json_to_value_with_blobs(ctx, json_value, &blobs, 0)
+                    }
+                    FnReturn::Binary(data) => {
+                        // Create a Uint8Array from the binary data
+                        let array = TypedArray::<u8>::new(ctx.clone(), data)?;
+                        Ok(array.into_value())
+                    }
+                }
             },
         )
     }

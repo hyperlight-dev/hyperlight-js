@@ -136,20 +136,20 @@ impl ProtoJSSandbox {
 
         let host_modules_json = serde_json::to_string(&host_modules)?;
 
+        // Register the host function that the guest calls for all host
+        // function invocations. Binary data (if any) is carried in a
+        // length-prefixed sidecar alongside the JSON args.
         self.inner.register(
             "CallHostJsFunction",
-            move |module_name: String, func_name: String, args: String| -> Result<String> {
+            move |module_name: String,
+                  func_name: String,
+                  args_json: String,
+                  binaries: Vec<u8>|
+                  -> Result<Vec<u8>> {
                 let module = host_modules
                     .get(&module_name)
                     .ok_or_else(|| new_error!("Host module '{}' not found", module_name))?;
-                let func = module.get(&func_name).ok_or_else(|| {
-                    new_error!(
-                        "Host function '{}' not found in module '{}'",
-                        func_name,
-                        module_name
-                    )
-                })?;
-                func(args)
+                module.call(&func_name, args_json, Some(binaries))
             },
         )?;
 
@@ -210,27 +210,6 @@ impl ProtoJSSandbox {
         func: impl Function<Output, Args> + Send + Sync + 'static,
     ) -> Result<()> {
         self.host_module(module).register(name, func);
-        Ok(())
-    }
-
-    /// Register a raw host function that operates on JSON strings directly.
-    ///
-    /// This is equivalent to calling `sbox.host_module(module).register_raw(name, func)`.
-    ///
-    /// Unlike [`register`](Self::register), which handles serde serialization /
-    /// deserialization automatically, this method passes the raw JSON string
-    /// from the guest to the callback and expects a JSON string result.
-    ///
-    /// Primarily intended for dynamic / bridge scenarios (e.g. NAPI bindings)
-    /// where argument types are not known at compile time.
-    #[instrument(err(Debug), skip(self, func), level=Level::INFO)]
-    pub fn register_raw(
-        &mut self,
-        module: impl Into<String> + Debug,
-        name: impl Into<String> + Debug,
-        func: impl Fn(String) -> Result<String> + Send + Sync + 'static,
-    ) -> Result<()> {
-        self.host_module(module).register_raw(name, func);
         Ok(())
     }
 }

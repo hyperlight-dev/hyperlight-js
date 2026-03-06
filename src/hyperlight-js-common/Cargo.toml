@@ -1,0 +1,18 @@
+[package]
+name = "hyperlight-js-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = """
+Shared constants and binary framing utilities for hyperlight-js.
+
+This crate is `no_std`-compatible (with `alloc`) so it can be used by both
+the host-side `hyperlight-js` crate and the guest-side `hyperlight-js-runtime`
+crate (which compiles for `x86_64-hyperlight-none`).
+"""
+
+[dependencies]
+# no_std + alloc only — no std, no serde, no anyhow

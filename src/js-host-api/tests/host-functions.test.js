@@ -543,3 +543,115 @@ describe('Multi-sandbox isolation', () => {
         expect(resultB).toEqual({ sum: 21, product: 10 });
     });
 });
+
+// ── Binary data (Buffer/Uint8Array) ──────────────────────────────────
+
+describe('Binary data support', () => {
+    it('should pass Buffer args from guest Uint8Array to host', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('byte_length', (data) => {
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    return data.length;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = new Uint8Array([72, 101, 108, 108, 111]);
+                return { len: host.byte_length(data) };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 5 });
+    });
+
+    it('should return Buffer from host as Uint8Array on guest', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('get_bytes', () => {
+                    return Buffer.from([1, 2, 3, 4, 5]);
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = host.get_bytes();
+                return { len: data.length, first: data[0], last: data[4] };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 5, first: 1, last: 5 });
+    });
+
+    it('should handle mixed Buffer and JSON args', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('describe', (prefix, data, num) => {
+                    expect(typeof prefix).toBe('string');
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    expect(typeof num).toBe('number');
+                    return `${prefix}-${data.length}-${num}`;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = new Uint8Array([10, 20, 30]);
+                return { result: host.describe("pfx", data, 42) };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ result: 'pfx-3-42' });
+    });
+
+    it('should handle empty Uint8Array', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('check_empty', (data) => {
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    return data.length;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                return { len: host.check_empty(new Uint8Array(0)) };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 0 });
+    });
+
+    it('should round-trip binary data (send and receive)', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('echo_bytes', (data) => {
+                    // Return the same Buffer back
+                    return data;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const input = new Uint8Array([0, 127, 128, 255]);
+                const output = host.echo_bytes(input);
+                // Verify round-trip preserves all byte values
+                return {
+                    len: output.length,
+                    b0: output[0],
+                    b1: output[1],
+                    b2: output[2],
+                    b3: output[3],
+                };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 4, b0: 0, b1: 127, b2: 128, b3: 255 });
+    });
+});

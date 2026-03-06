@@ -21,7 +21,7 @@ use hyperlight_js::{
     CpuTimeMonitor, HyperlightError, InterruptHandle, JSSandbox, LoadedJSSandbox, ProtoJSSandbox,
     SandboxBuilder, Script, Snapshot, WallClockMonitor,
 };
-use napi::bindgen_prelude::{JsValuesTupleIntoVec, Promise, ToNapiValue};
+use napi::bindgen_prelude::{FromNapiValue, JsValuesTupleIntoVec, Promise, ToNapiValue};
 use napi::sys::{napi_env, napi_value};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{tokio, Status};
@@ -511,9 +511,9 @@ impl ProtoJSSandboxWrapper {
         module_name: String,
         function_name: String,
         func: ThreadsafeFunction<
-            Rest<Option<serde_json::Value>>,
-            Promise<Option<serde_json::Value>>,
-            Rest<Option<serde_json::Value>>,
+            Rest<Option<JsArg>>,
+            Promise<Option<JsReturn>>,
+            Rest<Option<JsArg>>,
             Status,
             false,
             true,
@@ -535,6 +535,228 @@ impl<T: ToNapiValue> JsValuesTupleIntoVec for Rest<T> {
             .map(|v| unsafe { T::to_napi_value(env, v) })
             .collect()
     }
+}
+
+// ── Native Buffer marshalling ────────────────────────────────────────
+//
+// These types eliminate the base64 round-trip that previously occurred
+// when passing binary data between Rust and JS callbacks. Instead of
+// encoding blobs as `{"__buffer__": "base64..."}` markers in
+// `serde_json::Value`, we now create/detect native Node.js `Buffer`
+// objects directly via the NAPI C API.
+
+/// A JS argument value that can contain native Buffers in place of
+/// `{"__bin__": N}` placeholder objects.
+///
+/// When napi-rs calls `ToNapiValue` to convert this into a JS value,
+/// the recursive converter walks the JSON tree and creates real Buffer
+/// objects at placeholder positions — no base64 encoding needed.
+pub struct JsArg {
+    /// The JSON value tree, potentially containing `{"__bin__": N}` placeholders.
+    value: serde_json::Value,
+    /// Shared reference to the decoded binary blobs. Placeholders index
+    /// into this Vec.
+    blobs: Arc<Vec<Vec<u8>>>,
+}
+
+impl ToNapiValue for JsArg {
+    /// # Safety
+    ///
+    /// Must be called on the JS thread with a valid `napi_env`.
+    unsafe fn to_napi_value(env: napi_env, val: Self) -> napi::Result<napi_value> {
+        if val.blobs.is_empty() {
+            // Fast path: no binary data — delegate entirely to napi-rs's
+            // built-in serde_json conversion (avoids the recursive walk).
+            // SAFETY: env is valid, val.value is a valid serde_json::Value.
+            return unsafe { serde_json::Value::to_napi_value(env, val.value) };
+        }
+        // SAFETY: env is valid, blobs contains valid byte slices.
+        unsafe { json_to_napi_with_buffers(env, val.value, &val.blobs, 0) }
+    }
+}
+
+/// A JS return value that may be a native Buffer.
+///
+/// When napi-rs converts the JS callback's return value, we check for
+/// Buffer first (via `napi_is_buffer`) before falling back to the
+/// standard `serde_json::Value` conversion.
+pub enum JsReturn {
+    /// Regular JSON-serializable value.
+    Value(serde_json::Value),
+    /// Native Buffer — extracted directly, no base64 decoding.
+    Buffer(Vec<u8>),
+}
+
+impl FromNapiValue for JsReturn {
+    /// # Safety
+    ///
+    /// Must be called on the JS thread with a valid `napi_env` and `napi_value`.
+    unsafe fn from_napi_value(env: napi_env, val: napi_value) -> napi::Result<Self> {
+        // Check for Buffer first — this is a fast C-level type check.
+        let mut is_buffer = false;
+        // SAFETY: env and val are valid napi handles.
+        let status = unsafe { napi::sys::napi_is_buffer(env, val, &mut is_buffer) };
+        if status != napi::sys::Status::napi_ok {
+            return Err(napi::Error::new(
+                napi::Status::from(status),
+                "Failed to check buffer type",
+            ));
+        }
+        if is_buffer {
+            let mut data = std::ptr::null_mut();
+            let mut len = 0;
+            // SAFETY: env and val are valid, val is confirmed to be a buffer.
+            let status = unsafe { napi::sys::napi_get_buffer_info(env, val, &mut data, &mut len) };
+            if status != napi::sys::Status::napi_ok {
+                return Err(napi::Error::new(
+                    napi::Status::from(status),
+                    "Failed to get buffer info",
+                ));
+            }
+            // SAFETY: data points to len bytes of valid buffer memory.
+            let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, len) }.to_vec();
+            return Ok(JsReturn::Buffer(bytes));
+        }
+
+        // Not a buffer — fall through to standard JSON conversion.
+        // SAFETY: env and val are valid napi handles.
+        let value = unsafe { serde_json::Value::from_napi_value(env, val)? };
+        Ok(JsReturn::Value(value))
+    }
+}
+
+/// Recursively converts a `serde_json::Value` into a `napi_value`,
+/// replacing `{"__bin__": N}` placeholders with native Node.js Buffers.
+///
+/// Non-container values (strings, numbers, booleans, null) are delegated
+/// to napi-rs's built-in `serde_json::Value` → JS conversion.
+///
+/// # Safety
+///
+/// Caller must ensure `env` is a valid napi environment.
+unsafe fn json_to_napi_with_buffers(
+    env: napi_env,
+    value: serde_json::Value,
+    blobs: &[Vec<u8>],
+    depth: usize,
+) -> napi::Result<napi_value> {
+    use hyperlight_js_common::PLACEHOLDER_BIN;
+
+    if depth > hyperlight_js_common::MAX_JSON_DEPTH {
+        return Err(napi::Error::from_reason(format!(
+            "JSON nesting depth exceeds maximum ({})",
+            hyperlight_js_common::MAX_JSON_DEPTH
+        )));
+    }
+
+    match value {
+        serde_json::Value::Object(obj) => {
+            // Check for __bin__ placeholder: {"__bin__": N}
+            if obj.len() == 1
+                && let Some(serde_json::Value::Number(n)) = obj.get(PLACEHOLDER_BIN)
+                && let Some(idx) = n.as_u64()
+            {
+                let idx = idx as usize;
+                if idx < blobs.len() {
+                    // SAFETY: env is valid, blobs[idx] is a valid byte slice.
+                    return unsafe { create_napi_buffer(env, &blobs[idx]) };
+                }
+                return Err(napi::Error::from_reason(format!(
+                    "Binary placeholder index {idx} out of bounds (have {} blobs)",
+                    blobs.len()
+                )));
+            }
+
+            // Regular object — recursively convert properties
+            let mut js_obj: napi_value = std::ptr::null_mut();
+            // SAFETY: env is valid.
+            let status = unsafe { napi::sys::napi_create_object(env, &mut js_obj) };
+            if status != napi::sys::Status::napi_ok {
+                return Err(napi::Error::new(
+                    napi::Status::from(status),
+                    "Failed to create JS object",
+                ));
+            }
+
+            for (key, val) in obj {
+                // SAFETY: env is valid, recursive call maintains invariants.
+                let js_val = unsafe { json_to_napi_with_buffers(env, val, blobs, depth + 1)? };
+                let c_key = std::ffi::CString::new(key)
+                    .map_err(|_| napi::Error::from_reason("Object key contains null byte"))?;
+                // SAFETY: env, js_obj, c_key, js_val are all valid.
+                let status = unsafe {
+                    napi::sys::napi_set_named_property(env, js_obj, c_key.as_ptr(), js_val)
+                };
+                if status != napi::sys::Status::napi_ok {
+                    return Err(napi::Error::new(
+                        napi::Status::from(status),
+                        "Failed to set object property",
+                    ));
+                }
+            }
+            Ok(js_obj)
+        }
+        serde_json::Value::Array(arr) => {
+            let len = arr.len();
+            if len > u32::MAX as usize {
+                return Err(napi::Error::from_reason(format!(
+                    "Array length {len} exceeds u32::MAX"
+                )));
+            }
+            let mut js_arr: napi_value = std::ptr::null_mut();
+            // SAFETY: env is valid.
+            let status = unsafe { napi::sys::napi_create_array_with_length(env, len, &mut js_arr) };
+            if status != napi::sys::Status::napi_ok {
+                return Err(napi::Error::new(
+                    napi::Status::from(status),
+                    "Failed to create JS array",
+                ));
+            }
+
+            for (i, val) in arr.into_iter().enumerate() {
+                // SAFETY: env is valid, recursive call maintains invariants.
+                let js_val = unsafe { json_to_napi_with_buffers(env, val, blobs, depth + 1)? };
+                // SAFETY: env, js_arr, js_val are valid; i is in bounds.
+                let status = unsafe { napi::sys::napi_set_element(env, js_arr, i as u32, js_val) };
+                if status != napi::sys::Status::napi_ok {
+                    return Err(napi::Error::new(
+                        napi::Status::from(status),
+                        "Failed to set array element",
+                    ));
+                }
+            }
+            Ok(js_arr)
+        }
+        // Non-container values can't contain placeholders — delegate to napi-rs
+        // SAFETY: env is valid, other is a valid serde_json::Value.
+        other => unsafe { serde_json::Value::to_napi_value(env, other) },
+    }
+}
+
+/// Creates a native Node.js Buffer by copying raw bytes into V8's heap.
+///
+/// # Safety
+///
+/// Caller must ensure `env` is a valid napi environment.
+unsafe fn create_napi_buffer(env: napi_env, data: &[u8]) -> napi::Result<napi_value> {
+    let mut buf: napi_value = std::ptr::null_mut();
+    // SAFETY: env is valid, data is a valid byte slice.
+    let status = unsafe {
+        napi::sys::napi_create_buffer_copy(
+            env,
+            data.len(),
+            data.as_ptr().cast(),
+            std::ptr::null_mut(), // we don't need the result_data pointer
+            &mut buf,
+        )
+    };
+    if status != napi::sys::Status::napi_ok {
+        return Err(napi::Error::new(
+            napi::Status::from(status),
+            "Failed to create Buffer",
+        ));
+    }
+    Ok(buf)
 }
 
 // ── HostModule ───────────────────────────────────────────────────────
@@ -583,6 +805,11 @@ impl HostModuleWrapper {
     /// Both sync and async callbacks are supported — if the callback
     /// returns a `Promise`, the bridge awaits it automatically.
     ///
+    /// **Binary data support**: `Uint8Array`/`Buffer` arguments from guest
+    /// code are automatically converted to Node.js `Buffer` objects before
+    /// being passed to your callback. If your callback returns a `Buffer`,
+    /// it will be converted back to a `Uint8Array` on the guest side.
+    ///
     /// Registering a function with the same name as an existing one in
     /// this module overwrites the previous registration.
     ///
@@ -597,6 +824,12 @@ impl HostModuleWrapper {
     ///     const res = await fetch(url);
     ///     return res.json();
     /// });
+    ///
+    /// // Binary data — Buffer args/returns work natively
+    /// math.register('compress', (data) => {
+    ///     // data is a Buffer if guest passed Uint8Array
+    ///     return zlib.gzipSync(data); // Return Buffer → Uint8Array on guest
+    /// });
     /// ```
     ///
     /// @param name - Function name within the module (must be non-empty)
@@ -608,9 +841,9 @@ impl HostModuleWrapper {
         &self,
         name: String,
         func: ThreadsafeFunction<
-            Rest<Option<serde_json::Value>>,
-            Promise<Option<serde_json::Value>>,
-            Rest<Option<serde_json::Value>>,
+            Rest<Option<JsArg>>,
+            Promise<Option<JsReturn>>,
+            Rest<Option<JsArg>>,
             Status,
             false,
             true,
@@ -619,14 +852,46 @@ impl HostModuleWrapper {
         if name.is_empty() {
             return Err(invalid_arg_error("Function name must not be empty"));
         }
-        let wrapper = move |args: String| -> hyperlight_js::Result<String> {
+
+        // Use binary-capable registration to support Buffer arguments.
+        // The closure receives parsed JsonValue args (with {"__bin__": N}
+        // placeholders) and decoded binary blobs. JsArg's ToNapiValue
+        // impl converts placeholders directly to native Node.js Buffers
+        // via the NAPI API — no base64 encoding needed.
+        let wrapper = move |args: serde_json::Value,
+                            blobs: Vec<Vec<u8>>|
+              -> hyperlight_js::Result<hyperlight_js::FnReturn> {
+            use hyperlight_js::FnReturn;
             use ThreadsafeFunctionCallMode::NonBlocking;
-            let args: Vec<Option<serde_json::Value>> = serde_json::from_str(&args)?;
+
+            let blobs = Arc::new(blobs);
+
+            // Spread the JSON array into individual JsArg values.
+            // Each JsArg carries a reference to the blobs so its
+            // ToNapiValue impl can resolve __bin__ placeholders at
+            // any nesting depth.
+            let js_args: Vec<Option<JsArg>> = match args {
+                JsonValue::Array(arr) => arr
+                    .into_iter()
+                    .map(|v| {
+                        Some(JsArg {
+                            value: v,
+                            blobs: blobs.clone(),
+                        })
+                    })
+                    .collect(),
+                other => vec![Some(JsArg {
+                    value: other,
+                    blobs: blobs.clone(),
+                })],
+            };
+
             let (tx, rx) = oneshot::channel();
-            let status = func.call_with_return_value(Rest(args), NonBlocking, move |result, _| {
-                let _ = tx.send(result);
-                Ok(())
-            });
+            let status =
+                func.call_with_return_value(Rest(js_args), NonBlocking, move |result, _| {
+                    let _ = tx.send(result);
+                    Ok(())
+                });
             if status != Status::Ok {
                 return Err(HyperlightError::Error(format!(
                     "Host function call failed: {status:?}"
@@ -642,14 +907,22 @@ impl HostModuleWrapper {
                     .await
                     .map_err(|err| HyperlightError::Error(format!("{err}")))?;
 
-                let value = serde_json::to_string(&value)?;
-                Ok(value)
+                // JsReturn discriminates Buffer from JSON natively via
+                // napi_is_buffer — no base64 markers to hunt for.
+                match value {
+                    Some(JsReturn::Buffer(bytes)) => Ok(FnReturn::Binary(bytes)),
+                    Some(JsReturn::Value(v)) => {
+                        let json = serde_json::to_string(&v)?;
+                        Ok(FnReturn::Json(json))
+                    }
+                    None => Ok(FnReturn::Json("null".into())),
+                }
             })
         };
         self.sandbox.with_inner_mut(|sandbox| {
             sandbox
                 .host_module(&self.module_name)
-                .register_raw(name, wrapper);
+                .register_js(name, wrapper);
             Ok(())
         })?;
         Ok(())

@@ -27,6 +27,9 @@ mod script;
 pub mod sandbox;
 
 use hyperlight_host::func::HostFunction;
+// Re-export FnReturn for the NAPI bridge (used in register_js signature).
+#[doc(hidden)]
+pub use sandbox::host_fn::FnReturn;
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.
 pub use sandbox::js_sandbox::JSSandbox;
 /// A Hyperlight Sandbox with a JavaScript run time loaded and guest code loaded.

@@ -93,7 +93,12 @@ fn register_handler(
 }
 
 #[host_function("CallHostJsFunction")]
-fn call_host_js_function(module_name: String, func_name: String, args: String) -> Result<String>;
+fn call_host_js_function(
+    module_name: String,
+    func_name: String,
+    args_json: String,
+    binaries: Vec<u8>,
+) -> Result<Vec<u8>>;
 
 #[guest_function("RegisterHostModules")]
 fn register_host_modules(host_modules_json: String) -> Result<()> {
@@ -112,12 +117,28 @@ fn register_host_modules(host_modules_json: String) -> Result<()> {
     for (module_name, functions) in host_modules {
         for function_name in functions {
             let module_name = module_name.clone();
-            runtime.register_json_host_function(
+            // Register binary-capable host function that can handle Uint8Array/Buffer
+            runtime.register_binary_host_function(
                 module_name.clone(),
                 function_name.clone(),
-                move |args: String| -> anyhow::Result<String> {
-                    call_host_js_function(module_name.clone(), function_name.clone(), args)
-                        .map_err(|e| anyhow!("Calling host function {module_name:?} {function_name:?} failed: {e:#?}"))
+                move |args_json: String, binaries: Vec<u8>| -> anyhow::Result<Vec<u8>> {
+                    call_host_js_function(
+                        module_name.clone(),
+                        function_name.clone(),
+                        args_json,
+                        binaries,
+                    )
+                    .map_err(|e| {
+                        // Use e.message directly — {e:#?} would expand into a
+                        // huge Debug struct that exceeds the hyperlight
+                        // guest↔host error buffer and gets truncated.
+                        // Include the error kind for diagnostics.
+                        anyhow!(
+                            "Calling host function {module_name:?} {function_name:?} failed ({:?}): {}",
+                            e.kind,
+                            e.message
+                        )
+                    })
                 },
             )?;
         }

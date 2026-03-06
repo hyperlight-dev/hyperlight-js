@@ -27,6 +27,7 @@ pub(crate) mod utils;
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
@@ -100,26 +101,6 @@ impl JsRuntime {
     }
 
     /// Register a host function in the specified module.
-    /// The function takes and returns a JSON string, which is deserialized and serialized by the runtime.
-    /// The arguments are serialized as a JSON array containing all the arguments passed to the function.
-    pub fn register_json_host_function(
-        &mut self,
-        module_name: impl Into<String>,
-        function_name: impl Into<String>,
-        function: impl Fn(String) -> anyhow::Result<String> + 'static,
-    ) -> anyhow::Result<()> {
-        self.context.with(|ctx| {
-            ctx.userdata::<HostModuleLoader>()
-                .context("HostModuleLoader not found in context")?
-                .borrow_mut()
-                .entry(module_name.into())
-                .or_default()
-                .add_function(function_name.into(), HostFunction::new_json(function));
-            Ok(())
-        })
-    }
-
-    /// Register a host function in the specified module.
     /// The function takes and returns any type that can be (de)serialized by `serde`.
     pub fn register_host_function<Args, Output>(
         &mut self,
@@ -138,6 +119,36 @@ impl JsRuntime {
                 .entry(module_name.into())
                 .or_default()
                 .add_function(function_name.into(), HostFunction::new_serde(function));
+            Ok(())
+        })
+    }
+
+    /// Register a binary-capable host function in the specified module.
+    ///
+    /// This variant supports `Uint8Array`/`ArrayBuffer` arguments and returns.
+    /// Binary data is passed via a sidecar channel instead of JSON encoding,
+    /// avoiding base64 overhead.
+    ///
+    /// The function receives:
+    /// - `args_json`: JSON string with `{"__bin__": N}` placeholders for binary args
+    /// - `binaries`: Packed binary sidecar (length-prefixed format)
+    ///
+    /// The function returns a tagged result:
+    /// - `0x00` + JSON = JSON return value
+    /// - `0x01` + bytes = raw binary return (becomes `Uint8Array` on JS side)
+    pub fn register_binary_host_function(
+        &mut self,
+        module_name: impl Into<String>,
+        function_name: impl Into<String>,
+        function: impl Fn(String, Vec<u8>) -> anyhow::Result<Vec<u8>> + 'static,
+    ) -> anyhow::Result<()> {
+        self.context.with(|ctx| {
+            ctx.userdata::<HostModuleLoader>()
+                .context("HostModuleLoader not found in context")?
+                .borrow_mut()
+                .entry(module_name.into())
+                .or_default()
+                .add_function(function_name.into(), HostFunction::new_bin(function));
             Ok(())
         })
     }

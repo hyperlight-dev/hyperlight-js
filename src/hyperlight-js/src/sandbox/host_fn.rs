@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use serde::de::DeserializeOwned;
 use serde::ser::SerializeSeq;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 
 // Unlike hyperlight-host's Function, this Function trait uses `serde`'s Serialize and DeserializeOwned traits for input and output types.
 
@@ -48,22 +49,57 @@ where
     }
 }
 
-type BoxFunction = Box<dyn Fn(String) -> crate::Result<String> + Send + Sync>;
+type JsonFn = std::sync::Arc<dyn Fn(String) -> crate::Result<String> + Send + Sync>;
+
+/// Re-export the unified return type from the common crate.
+pub use hyperlight_js_common::FnReturn;
+
+/// The closure type for JS bridge host functions.
+///
+/// Receives the parsed JSON arguments (with `{"__bin__": N}` placeholders
+/// still in place) and the decoded individual binary blobs. This avoids a
+/// redundant stringify→parse round-trip that would occur if we passed a
+/// pre-processed JSON string.
+type BinaryFn =
+    std::sync::Arc<dyn Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync>;
+
+/// A registered host function — either typed (serde) or JS bridge.
+///
+/// This enum allows a single `HashMap` to store both variants, eliminating
+/// the need for parallel maps and cross-removal bookkeeping.
+#[derive(Clone)]
+enum HostFn {
+    /// Typed: receives a JSON args string, deserializes via serde,
+    /// returns a JSON result string. Does not support binary args.
+    Typed(JsonFn),
+    /// JS bridge: receives parsed JSON args + binary blobs, returns a
+    /// tagged result (JSON or binary).
+    JsBridge(BinaryFn),
+}
 
 fn type_erased<Output: Serialize, Args: DeserializeOwned>(
     func: impl Function<Output, Args> + Send + Sync + 'static,
-) -> BoxFunction {
-    Box::new(move |args: String| {
+) -> JsonFn {
+    std::sync::Arc::new(move |args: String| {
         let args: Args = serde_json::from_str(&args)?;
         let output: Output = func.call(args);
         Ok(serde_json::to_string(&output)?)
     })
 }
 
+/// Decodes the sidecar binary format into individual blobs.
+///
+/// Thin wrapper around [`hyperlight_js_common::decode_binaries`] that maps
+/// the common crate's `DecodeError` into the host's `HyperlightError`.
+pub(crate) fn decode_binaries(data: &[u8]) -> crate::Result<Vec<Vec<u8>>> {
+    hyperlight_js_common::decode_binaries(data)
+        .map_err(|e| crate::HyperlightError::Error(e.to_string()))
+}
+
 /// A module containing host functions that can be called from the guest JavaScript code.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct HostModule {
-    functions: HashMap<String, BoxFunction>,
+    functions: HashMap<String, HostFn>,
 }
 
 // The serialization of this struct has to match the deserialization in
@@ -79,7 +115,18 @@ impl Serialize for HostModule {
 }
 
 impl HostModule {
-    /// Register a host function that can be called from the guest JavaScript code.
+    /// Register a typed host function that can be called from the guest
+    /// JavaScript code.
+    ///
+    /// Arguments are deserialized from JSON via serde and the return value
+    /// is serialized back to JSON automatically.
+    ///
+    /// This variant does **not** support `Uint8Array`/`Buffer` arguments.
+    /// For binary data support, use the JS bridge API instead.
+    ///
+    /// ```text
+    /// module.register("add", |a: i32, b: i32| a + b);
+    /// ```
     ///
     /// Registering a function with the same `name` as an existing function
     /// overwrites the previous registration.
@@ -88,32 +135,122 @@ impl HostModule {
         name: impl Into<String>,
         func: impl Function<Output, Args> + Send + Sync + 'static,
     ) -> &mut Self {
-        self.functions.insert(name.into(), type_erased(func));
+        self.functions
+            .insert(name.into(), HostFn::Typed(type_erased(func)));
         self
     }
 
-    /// Register a raw host function that operates on JSON strings directly.
+    /// Register a host function for the JavaScript bridge (NAPI layer).
     ///
-    /// Unlike [`register`](Self::register), which handles serde serialization /
-    /// deserialization automatically via the [`Function`] trait, this method
-    /// passes the raw JSON string argument from the guest to the closure and
-    /// expects a JSON string result.
+    /// This is an internal API used by the `js-host-api` NAPI bridge.
+    /// Rust users should use [`register`](Self::register) instead, which
+    /// handles binary data transparently via serde.
     ///
-    /// This is primarily intended for dynamic / bridge scenarios (e.g. NAPI
-    /// bindings) where argument types are not known at compile time.
-    ///
-    /// Registering a function with the same `name` as an existing function
-    /// overwrites the previous registration.
-    pub fn register_raw(
+    /// The closure receives parsed `JsonValue` args and decoded binary
+    /// blobs directly. Return [`FnReturn::Json`] or [`FnReturn::Binary`].
+    #[doc(hidden)]
+    pub fn register_js(
         &mut self,
         name: impl Into<String>,
-        func: impl Fn(String) -> crate::Result<String> + Send + Sync + 'static,
+        func: impl Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync + 'static,
     ) -> &mut Self {
-        self.functions.insert(name.into(), Box::new(func));
+        self.functions
+            .insert(name.into(), HostFn::JsBridge(std::sync::Arc::new(func)));
         self
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<&BoxFunction> {
-        self.functions.get(name)
+    /// Dispatch a guest→host function call.
+    ///
+    /// Decodes the binary sidecar (if present) and routes to the
+    /// appropriate handler variant.
+    ///
+    /// For `Typed` functions, binary blobs in the sidecar are rejected —
+    /// use `register_js` for functions that need binary data.
+    ///
+    /// Always returns a tagged result:
+    /// - `TAG_JSON (0x00)` + JSON bytes for JSON returns
+    /// - `TAG_BINARY (0x01)` + raw bytes for binary returns
+    pub(crate) fn call(
+        &self,
+        name: &str,
+        args_json: String,
+        binaries: Option<Vec<u8>>,
+    ) -> crate::Result<Vec<u8>> {
+        let blobs = if let Some(bin_data) = binaries {
+            decode_binaries(&bin_data)?
+        } else {
+            Vec::new()
+        };
+
+        match self.functions.get(name) {
+            Some(HostFn::JsBridge(func)) => {
+                // JS bridge path: parse JSON and pass blobs directly.
+                let json_value: JsonValue = serde_json::from_str(&args_json)?;
+                match func(json_value, blobs)? {
+                    FnReturn::Json(json) => Ok(hyperlight_js_common::encode_json_return(&json)),
+                    FnReturn::Binary(bytes) => {
+                        Ok(hyperlight_js_common::encode_binary_return(&bytes))
+                    }
+                }
+            }
+            Some(HostFn::Typed(func)) => {
+                // Typed path: serde deserializes args from JSON. Binary
+                // data is not supported — reject if blobs are present.
+                if !blobs.is_empty() {
+                    return Err(crate::HyperlightError::Error(format!(
+                        "Function '{name}' received {} binary argument(s) but was registered \
+                         with `register` (typed JSON-only). Use `register_js` for functions \
+                         that accept Uint8Array/Buffer arguments.",
+                        blobs.len()
+                    )));
+                }
+                let result = func(args_json)?;
+                Ok(hyperlight_js_common::encode_json_return(&result))
+            }
+            None => Err(crate::HyperlightError::Error(format!(
+                "Function '{}' not found",
+                name
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn call_typed_no_binaries() {
+        let mut module = HostModule::default();
+        module.register("add", |a: i32, b: i32| a + b);
+
+        // count=0 sidecar
+        let sidecar = vec![0u8, 0, 0, 0];
+        let result = module
+            .call("add", "[3,4]".to_string(), Some(sidecar))
+            .unwrap();
+        assert_eq!(result[0], hyperlight_js_common::TAG_JSON);
+        assert_eq!(&result[1..], b"7");
+    }
+
+    #[test]
+    fn call_typed_rejects_binary_args() {
+        let mut module = HostModule::default();
+        module.register("add", |a: i32, b: i32| a + b);
+
+        // Sidecar with one blob — typed functions should reject this
+        let sidecar = hyperlight_js_common::encode_binaries(&[b"ABC" as &[u8]]);
+        let err = module
+            .call("add", "[1,2]".to_string(), Some(sidecar))
+            .unwrap_err();
+        assert!(err.to_string().contains("binary argument"));
+        assert!(err.to_string().contains("register_js"));
+    }
+
+    #[test]
+    fn call_not_found() {
+        let module = HostModule::default();
+        let err = module.call("nope", "[]".to_string(), None).unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 }

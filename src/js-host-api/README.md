@@ -285,15 +285,15 @@ sequenceDiagram
 
     Note over Guest,Host: Registration (before loadRuntime)
     Host->>Bridge: proto.hostModule('math').register('add', callback)
-    Bridge->>HL: register_raw('math', 'add', closure)
+    Bridge->>HL: Stores closure in HostModule
 
     Note over Guest,Host: Invocation (during callHandler)
     Guest->>HL: math.add(1, 2)
-    HL->>Bridge: closure("[1,2]")
-    Bridge->>Host: callback("[1,2]")
+    HL->>Bridge: Dispatch args + optional binary sidecar
+    Bridge->>Host: callback(1, 2)
     Note right of Host: sync: return immediately<br/>async: await Promise
-    Host-->>Bridge: "3"
-    Bridge-->>HL: Ok("3")
+    Host-->>Bridge: 3
+    Bridge-->>HL: Tagged result
     HL-->>Guest: 3
 ```
 
@@ -327,18 +327,26 @@ const result = await loaded.callHandler('handler', { a: 10, b: 32 });
 console.log(result); // { result: 42 }
 ```
 
-### The JSON Wire Protocol
+### The Wire Protocol
 
-All arguments and return values cross the sandbox boundary as **JSON strings**.
+Arguments and return values cross the sandbox boundary as **JSON strings**,
+except binary data (`Uint8Array`/`Buffer`) which are carried separately in a
+raw **binary sidecar**.
 With `register()`, this is handled automatically — your callback receives
 individual arguments (parsed from the JSON array) and the return value is
-automatically `JSON.stringify`'d.
+automatically `JSON.stringify`'d. Top-level `Buffer` arguments and returns
+are passed as raw bytes via the sidecar channel.
 
 ```javascript
 // Guest calls: math.add(1, 2)
 // Your callback receives: (1, 2) — individual args, already parsed
 // Your return value: 3 — automatically stringified to '3'
 math.register('add', (a, b) => a + b);
+
+// Guest calls: crypto.hash(new Uint8Array([1,2,3]))
+// Your callback receives: (Buffer) — a native Node.js Buffer
+// Return a Buffer → becomes Uint8Array on guest side
+crypto.register('hash', (data) => createHash('sha256').update(data).digest());
 
 // Guest calls: db.query("users")
 // Your callback receives: ("users") — the single string arg
@@ -367,9 +375,9 @@ const math = proto.hostModule('math');
 
 Throws `ERR_INVALID_ARG` if name is empty.
 
-#### `builder.register(name, callback)` → `HostModule`
+#### `builder.register(name, callback)` → `void`
 
-Registers a function within the module. Returns the builder for chaining.
+Registers a function within the module.
 Arguments are auto-parsed from the guest's JSON array and spread into your
 callback. The return value is automatically `JSON.stringify`'d.
 
@@ -421,6 +429,65 @@ Node.js code.
 > The NAPI bridge uses a `ThreadsafeFunction` to dispatch callbacks to the
 > Node.js main thread and waits for the result via a oneshot channel. This
 > allows both sync and async JS callbacks to work transparently.
+
+### Binary Data (Buffers)
+
+Host functions natively support `Uint8Array`/`Buffer` arguments and returns.
+Binary data travels through a dedicated sidecar channel, keeping overhead
+minimal. Top-level `Buffer` arguments and returns are passed as raw bytes
+with no encoding. Nested Buffers inside returned objects/arrays are
+serialized by napi-rs's default conversion.
+
+```javascript
+const { SandboxBuilder } = require('@hyperlight/js-host-api');
+const { createHash } = require('crypto');
+const zlib = require('zlib');
+
+const proto = await new SandboxBuilder().build();
+
+// Buffer arguments: guest Uint8Array → host Buffer
+proto.hostModule('crypto').register('sha256', (data) => {
+    // data is a Node.js Buffer
+    return createHash('sha256').update(data).digest();  // returns Buffer
+});
+
+// Mixed args: regular values and Buffers together
+proto.hostModule('io').register('compress', (algorithm, data) => {
+    // algorithm is a string, data is a Buffer
+    if (algorithm === 'gzip') return zlib.gzipSync(data);
+    return data;
+});
+
+const sandbox = await proto.loadRuntime();
+sandbox.addHandler('handler', `
+    import * as crypto from "host:crypto";
+    import * as io from "host:io";
+    function handler(event) {
+        const data = new Uint8Array([72, 101, 108, 108, 111]);
+        const hash = crypto.sha256(data);        // Uint8Array
+        const compressed = io.compress('gzip', data); // Uint8Array
+        return { hashLen: hash.length, compLen: compressed.length };
+    }
+`);
+
+const loaded = await sandbox.getLoadedSandbox();
+const result = await loaded.callHandler('handler', {});
+```
+
+**How it works under the hood:**
+
+1. Guest `Uint8Array` args are extracted from the QuickJS VM and packed
+   into a length-prefixed binary sidecar alongside JSON placeholders
+2. The sidecar crosses the hypervisor boundary as raw bytes (no encoding)
+3. On the host side, placeholders are replaced with native Node.js `Buffer`
+   objects via the NAPI API — your callback receives real Buffers
+4. `Buffer` returns are detected natively and sent back through the
+   sidecar channel, arriving as `Uint8Array` on the guest side
+
+> **Note:** If your callback returns an object/array containing nested
+> Buffers (e.g. `{ data: Buffer.from([1,2,3]) }`), the nested Buffers
+> will be serialized by napi-rs's default conversion (not as raw bytes).
+> For best performance, return Buffers as top-level values.
 
 ### Error Handling
 
@@ -523,8 +590,10 @@ spawn_blocking thread          Node.js main thread
 7. block_on(receiver)
    gets the Promise
 8. await Promise
-9. JSON stringify result
-10. Return to guest
+9. Return result to guest
+   (Buffer → binary tag,
+    other → JSON stringify)
+10. Guest receives value
 ```
 
 This design:

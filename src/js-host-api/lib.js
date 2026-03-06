@@ -180,17 +180,79 @@ ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModu
     });
 }
 
-// HostModule — register()
+// HostModule — register() with Buffer support
 {
     const origRegister = HostModule.prototype.register;
     if (!origRegister) throw new Error('Cannot wrap missing method: HostModule.register');
     HostModule.prototype.register = wrapSync(function (name, callback) {
-        // the rust code expects the host function to return a Promise, so we wrap the callback result in Promise.resolve().then(..) to allow sync functions as well
-        // note that Promise.resolve(callback(...args)) would not work because if callback throws that would not return a rejected promise, it would just throw before returning the promise.
+        // Wrap the callback to handle Buffer returns.
+        // Args: Rust now creates native Buffer objects directly via the
+        //       NAPI C API — no conversion needed on the JS side.
+        // Returns: Top-level Buffer/Uint8Array returns are passed through
+        //          to Rust where napi_is_buffer detects them natively.
+        //          Nested Buffers in objects/arrays must still be converted
+        //          to __buffer__ markers for JSON transport.
         return origRegister.call(this, name, (...args) =>
-            Promise.resolve().then(() => callback(...args))
+            Promise.resolve()
+                .then(() => callback(...args))
+                .then((result) => {
+                    // Top-level Buffer/Uint8Array: ensure it's a Buffer
+                    // so Rust's napi_is_buffer detects it (plain Uint8Array
+                    // is not detected by napi_is_buffer).
+                    if (Buffer.isBuffer(result) || result instanceof Uint8Array) {
+                        return Buffer.from(result);
+                    }
+                    // Non-Buffer: convert any nested Buffers to markers
+                    return convertResultBuffers(result);
+                })
         );
     });
+}
+
+/**
+ * Recursively converts Buffer objects to `{__buffer__: "base64..."}` markers.
+ *
+ * Only used for **nested** Buffers inside objects/arrays returned by host
+ * callbacks. Top-level Buffer returns are detected natively by Rust via
+ * `napi_is_buffer` and never hit this path.
+ *
+ * Limitations:
+ * - Circular references will cause a stack overflow (host callbacks should
+ *   not return circular structures — JSON.stringify would fail anyway).
+ * - Non-plain objects (Date, RegExp, etc.) are iterated as key/value pairs,
+ *   which may produce unexpected results. Return plain objects for best results.
+ *
+ * @param {any} value - The value to convert
+ * @returns {any} The converted value with markers
+ */
+const MAX_RESULT_DEPTH = 64;
+
+function convertResultBuffers(value, depth = 0) {
+    if (depth > MAX_RESULT_DEPTH) {
+        throw new Error(`Nested result depth exceeds maximum (${MAX_RESULT_DEPTH})`);
+    }
+    if (value === null || value === undefined) {
+        return value;
+    }
+    // Check for Buffer (or Uint8Array)
+    if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+        return { __buffer__: Buffer.from(value).toString('base64') };
+    }
+    if (typeof value === 'object') {
+        // Recursively process arrays
+        if (Array.isArray(value)) {
+            return value.map((v) => convertResultBuffers(v, depth + 1));
+        }
+        // Use null-prototype object to prevent prototype pollution —
+        // the result is immediately JSON-serialized so the lack of
+        // hasOwnProperty/toString is not an issue.
+        const result = Object.create(null);
+        for (const [key, val] of Object.entries(value)) {
+            result[key] = convertResultBuffers(val, depth + 1);
+        }
+        return result;
+    }
+    return value;
 }
 
 // SandboxBuilder — async build + sync setters

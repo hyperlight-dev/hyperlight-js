@@ -85,17 +85,39 @@ const jsSandbox = await protoSandbox.loadRuntime();
 
 ### JSSandbox
 
-A sandbox with the JavaScript runtime loaded, ready for handlers.
+A sandbox with the JavaScript runtime loaded, ready for handlers and modules.
 
-**Methods:**
+**Handler Methods:**
 - `addHandler(name: string, code: string)` — Adds a JavaScript handler function (sync)
-- `getLoadedSandbox()` → `Promise<LoadedJSSandbox>` — Gets the loaded sandbox ready to call handlers
-- `clearHandlers()` — Clears all registered handlers (sync)
 - `removeHandler(name: string)` — Removes a specific handler by name (sync)
+- `clearHandlers()` — Clears all registered handlers (sync)
+
+**Module Methods:**
+- `addModule(name: string, source: string, namespace?: string)` — Register a reusable ES module (sync). Default namespace is `"user"`, handlers import via `import { ... } from 'user:<name>'`
+- `removeModule(name: string, namespace?: string)` — Remove a registered module (sync)
+- `clearModules()` — Remove all registered modules (sync)
+
+**Other Methods:**
+- `getLoadedSandbox()` → `Promise<LoadedJSSandbox>` — Compiles all modules and handlers into the guest. Modules are registered first, then handlers.
 
 ```javascript
-// Add a handler (sync) — routing key can be any name, but the function must be named 'handler'
-sandbox.addHandler('myHandler', 'function handler(input) { return input; }');
+// Add a module (sync)
+sandbox.addModule('math', `
+    export function add(a, b) { return a + b; }
+`);
+
+// Add a handler that imports the module (sync)
+sandbox.addHandler('handler', `
+    import { add } from 'user:math';
+    function handler(event) {
+        event.result = add(event.a, event.b);
+        return event;
+    }
+`);
+
+// With custom namespace
+sandbox.addModule('utils', 'export function greet() { return "hi"; }', 'mylib');
+// Handler imports: import { greet } from 'mylib:utils';
 
 // Get loaded sandbox (async)
 const loaded = await sandbox.getLoadedSandbox();
@@ -533,6 +555,139 @@ This design:
 - Uses napi-rs `call_with_return_value` for simple async result handling
 - JSON serialization is handled automatically by the bridge
 
+## User Modules
+
+User modules let you register reusable ES modules that handlers (and other
+modules) can import. This is different from host functions — user modules
+run entirely inside the guest micro-VM, while host functions call back into
+Node.js.
+
+### Quick Start
+
+```javascript
+const sandbox = await proto.loadRuntime();
+
+// Register a module — uses the default 'user' namespace
+sandbox.addModule('math', `
+    export function add(a, b) { return a + b; }
+    export function multiply(a, b) { return a * b; }
+`);
+
+// Handler imports the module using 'user:<name>'
+sandbox.addHandler('handler', `
+    import { add, multiply } from 'user:math';
+    function handler(event) {
+        return { sum: add(event.a, event.b), product: multiply(event.a, event.b) };
+    }
+`);
+```
+
+### Namespace Convention
+
+Module imports use the format `<namespace>:<name>`:
+
+| Namespace | Created by | Example import |
+|-----------|-----------|----------------|
+| `user` | `addModule()` (default) | `import { add } from 'user:math'` |
+| Custom | `addModule(name, source, namespace)` | `import { greet } from 'mylib:utils'` |
+| `host` | `hostModule().register()` (reserved) | `import * as db from 'host:db'` |
+
+The `host` namespace is reserved — you cannot use it for user modules.
+
+### Inter-Module Dependencies
+
+User modules can import other user modules. Modules are compiled lazily
+when first imported, so registration order doesn't matter:
+
+```javascript
+// Register in any order — dependencies are resolved automatically
+sandbox.addModule('geometry', `
+    import { PI } from 'user:constants';
+    export function circleArea(r) { return PI * r * r; }
+`);
+
+sandbox.addModule('constants', `
+    export const PI = 3.14159;
+`);
+```
+
+### What Can User Modules Import?
+
+| Source | Allowed? | Example |
+|--------|----------|---------|
+| Other user modules | ✅ Yes | `import { PI } from 'user:constants'` |
+| Built-in modules | ✅ Yes | `import { createHmac } from 'crypto'` |
+| Host function modules | ✅ Yes | `import * as db from 'host:db'` |
+| Non-existent modules | ❌ Runtime error | `import { x } from 'user:nope'` → fails at `getLoadedSandbox()` |
+
+### State Retention
+
+Module-level state (variables, closures) persists between handler calls,
+just like handler-level state. Use `snapshot()`/`restore()` to reset:
+
+```javascript
+sandbox.addModule('counter', `
+    let count = 0;
+    export function increment() { return ++count; }
+`);
+// First call → 1, second call → 2, etc.
+```
+
+### Shared State Between Handlers
+
+ES modules are **singletons** — every handler that imports a module gets
+the **same** instance with the **same** mutable state. This means Handler A
+can write state that Handler B reads in a later call:
+
+```javascript
+// Shared mutable state module
+sandbox.addModule('counter', `
+    let count = 0;
+    export function increment() { return ++count; }
+    export function getCount() { return count; }
+`);
+
+// Handler A: mutates state
+sandbox.addHandler('writer', `
+    import { increment } from 'user:counter';
+    function handler(event) {
+        event.count = increment();
+        return event;
+    }
+`);
+
+// Handler B: reads state (does NOT call increment)
+sandbox.addHandler('reader', `
+    import { getCount } from 'user:counter';
+    function handler(event) {
+        event.count = getCount();
+        return event;
+    }
+`);
+
+const loaded = await sandbox.getLoadedSandbox();
+
+await loaded.callHandler('writer', {});  // → { count: 1 }
+await loaded.callHandler('reader', {});  // → { count: 1 } — sees writer's mutation
+await loaded.callHandler('writer', {});  // → { count: 2 }
+await loaded.callHandler('reader', {});  // → { count: 2 } — sees updated state
+```
+
+This works for any module-level state: counters, `Map`s, arrays, objects,
+closures, etc. The shared state:
+
+- **Persists** across `callHandler()` calls on the same `LoadedJSSandbox`
+- **Resets** when you call `snapshot()`/`restore()` or `unload()`
+
+### Lifecycle
+
+Modules are registered on the `JSSandbox`, alongside handlers. When
+`getLoadedSandbox()` is called, modules are registered in the guest
+**before** handlers, so handlers can import them immediately.
+
+After `unload()`, both handlers and modules are cleared — you can register
+new versions and call `getLoadedSandbox()` again.
+
 ## Examples
 
 See the `examples/` directory for complete examples:
@@ -556,6 +711,11 @@ Combined CPU + wall-clock monitoring — the recommended pattern for comprehensi
 Registering sync and async host functions that guest code can call. Demonstrates
 `hostModule().register()` with spread args, `async` callbacks, and the convenience
 `register()` API.
+
+### User Modules (`user-modules.js`)
+Registering reusable ES modules that handlers can import. Demonstrates inter-module
+dependencies, custom namespaces, multiple handlers sharing a module, and
+**cross-handler mutable state sharing** via a shared counter module.
 
 ## Requirements
 

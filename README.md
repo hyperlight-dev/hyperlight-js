@@ -8,7 +8,7 @@ Provides a capability to run JavaScript inside of Hyperlight using quickjs as th
 - [Observability](docs/observability.md) - Metrics and tracing
 - [Crashdumps](docs/create-and-analyse-guest-crashdumps.md) - Creating and analyzing guest crash dumps
 - [Debugging the guest runtime](docs/guest-runtime-debugging.md) - Debugging the guest runtime using GDB or LLDB
-- [JS Host API](src/js-host-api/README.md) - Node.js bindings
+- [JS Host API](src/js-host-api/README.md) - Node.js bindings (includes user modules and host functions)
 
 ## Build prerequisites  
 

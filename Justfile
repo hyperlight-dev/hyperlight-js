@@ -175,6 +175,8 @@ run-js-host-api-examples target=default-target features="": (build-js-host-api t
     @echo ""
     cd src/js-host-api && node examples/host-functions.js
     @echo ""
+    cd src/js-host-api && node examples/user-modules.js
+    @echo ""
     @echo "✅ All examples completed successfully!"
 
 test-all target=default-target features="": (test target features) (test-monitors target) (test-js-host-api target features)

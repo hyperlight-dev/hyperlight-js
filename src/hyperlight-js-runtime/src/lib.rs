@@ -27,6 +27,7 @@ pub(crate) mod utils;
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
+use core::cell::RefCell;
 
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
@@ -48,22 +49,68 @@ struct Handler<'a> {
     func: Persistent<Function<'a>>,
 }
 
+/// A module loader for user-registered modules.
+///
+/// Stores module source code keyed by qualified name (e.g. `user:utils`).
+/// Modules are compiled lazily when first imported — this avoids ordering
+/// issues between modules that depend on each other.
+///
+/// Implements both [`Resolver`] and [`Loader`] so it can be inserted into
+/// the rquickjs module loader chain alongside the host and native loaders.
+#[derive(Default, Clone)]
+struct UserModuleLoader {
+    modules: Rc<RefCell<HashMap<String, String>>>,
+}
+
+impl Resolver for UserModuleLoader {
+    fn resolve(&mut self, _ctx: &Ctx<'_>, base: &str, name: &str) -> Result<String> {
+        if self.modules.borrow().contains_key(name) {
+            Ok(name.to_string())
+        } else {
+            Err(rquickjs::Error::new_resolving(base, name))
+        }
+    }
+}
+
+impl Loader for UserModuleLoader {
+    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
+        let source = self
+            .modules
+            .borrow()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| rquickjs::Error::new_loading(name))?;
+        Module::declare(ctx.clone(), name, source)
+    }
+}
+
 /// This is the main entry point for the library.
 /// It manages the QuickJS runtime, as well as the registered handlers and host modules.
 pub struct JsRuntime {
     context: Context,
     handlers: HashMap<String, Handler<'static>>,
+    /// Lazily-loaded user modules, keyed by qualified name (e.g. `user:utils`).
+    user_modules: UserModuleLoader,
 }
 
 // SAFETY:
 // This is safe. The reason it is not automatically implemented by the compiler
-// is because `rquickjs::Context` is not `Send` because it holds a raw pointer.
+// is because `rquickjs::Context` is not `Send` (it holds a raw pointer) and
+// `UserModuleLoader` contains `Rc<RefCell<HashMap>>` which is `!Send`.
+//
 // Raw pointers in rust are not marked as `Send` as lint rather than an actual
 // safety concern (see https://doc.rust-lang.org/nomicon/send-and-sync.html).
 // Moreover, rquickjs DOES implement Send for Context when the "parallel" feature
 // is enabled, further indicating that it is safe for this to implement `Send`.
-// Moreover, every public method of `JsRuntime` takes `&mut self`, and so we can
-// be certain that there are no concurrent accesses to it.
+//
+// The `Rc<RefCell<>>` in `UserModuleLoader` is shared with the rquickjs loader
+// chain (cloned during `set_loader`). This is safe because:
+// 1. Every public method of `JsRuntime` takes `&mut self`, ensuring exclusive access.
+// 2. The guest runtime is single-threaded (`#![no_std]` micro-VM).
+// 3. The `Rc` clone only creates shared ownership within the same thread.
+//
+// If the runtime ever becomes multi-threaded, `Rc<RefCell<>>` would need to be
+// replaced with `Arc<Mutex<>>` or similar.
 unsafe impl Send for JsRuntime {}
 
 impl JsRuntime {
@@ -78,10 +125,25 @@ impl JsRuntime {
         // We need to do this before setting up the globals as many of the globals are implemented
         // as native modules, and so they need the module loader to be able to be loaded.
         let host_loader = HostModuleLoader::default();
+        let user_modules = UserModuleLoader::default();
         let native_loader = NativeModuleLoader;
         let module_loader = ModuleLoader::new(host);
 
-        let loader = (host_loader.clone(), native_loader, module_loader);
+        // User modules are second in the chain — after host modules but before
+        // native and filesystem loaders — so `user:X` is resolved before falling
+        // through to built-in or file-based resolution.
+        //
+        // NOTE: This means a user module with a qualified name matching a native
+        // module (e.g. `"crypto"`) would shadow the built-in. In practice this
+        // cannot happen accidentally because the host layer enforces the
+        // `namespace:name` format (e.g. `"user:crypto"`), which never collides
+        // with unqualified native module names.
+        let loader = (
+            host_loader.clone(),
+            user_modules.clone(),
+            native_loader,
+            module_loader,
+        );
         runtime.set_loader(loader.clone(), loader);
 
         context.with(|ctx| -> anyhow::Result<()> {
@@ -96,6 +158,7 @@ impl JsRuntime {
         Ok(Self {
             context,
             handlers: HashMap::new(),
+            user_modules,
         })
     }
 
@@ -187,6 +250,37 @@ impl JsRuntime {
         // Store the handler function in the `handlers` map, so it can be called later when the handler is triggered.
         self.handlers.insert(function_name, Handler { func });
 
+        Ok(())
+    }
+
+    /// Register a user module with the runtime.
+    ///
+    /// The module source is stored for lazy compilation — it will be compiled
+    /// and evaluated by QuickJS the first time it is imported by a handler or
+    /// another user module. This avoids ordering issues between interdependent
+    /// modules.
+    ///
+    /// The `module_name` should be the fully qualified name (e.g. `user:utils`)
+    /// that guest JavaScript will use in `import` statements.
+    ///
+    /// # Validation
+    ///
+    /// The name must not be empty. Primary validation (colons, reserved
+    /// namespaces, duplicates) is enforced by the host-side `JSSandbox` layer;
+    /// this check provides defense-in-depth at the guest boundary.
+    pub fn register_module(
+        &mut self,
+        module_name: impl Into<String>,
+        module_source: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        let module_name = module_name.into();
+        if module_name.is_empty() {
+            anyhow::bail!("Module name must not be empty");
+        }
+        self.user_modules
+            .modules
+            .borrow_mut()
+            .insert(module_name, module_source.into());
         Ok(())
     }
 

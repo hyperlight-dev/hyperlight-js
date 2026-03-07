@@ -25,10 +25,28 @@ use super::loaded_js_sandbox::LoadedJSSandbox;
 use crate::sandbox::metrics::SandboxMetricsGuard;
 use crate::Script;
 
+/// Default namespace for user modules when none is specified.
+///
+/// Guest JavaScript imports user modules as `import { ... } from "user:<name>"`.
+/// This namespace is used by [`JSSandbox::add_module`] when no custom namespace
+/// is provided.
+///
+/// Note: `"user"` is the default namespace but is **not** reserved — callers
+/// can pass it explicitly to [`JSSandbox::add_module_ns`] with the same effect
+/// as calling [`JSSandbox::add_module`].
+pub const DEFAULT_MODULE_NAMESPACE: &str = "user";
+
+/// Reserved namespaces that cannot be used for user modules.
+/// The `host` namespace is reserved for host-function modules registered via
+/// [`ProtoJSSandbox::host_module`].
+const RESERVED_NAMESPACES: &[&str] = &["host"];
+
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.
 pub struct JSSandbox {
     pub(super) inner: MultiUseSandbox,
     handlers: HashMap<String, Script>,
+    /// User modules keyed by qualified name (e.g. `user:utils`).
+    modules: HashMap<String, Script>,
     // Snapshot of state before any handlers are added.
     // This is used to restore state back to a neutral JSSandbox.
     snapshot: Arc<Snapshot>,
@@ -43,6 +61,7 @@ impl JSSandbox {
         Ok(Self {
             inner,
             handlers: HashMap::new(),
+            modules: HashMap::new(),
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
         })
@@ -57,6 +76,7 @@ impl JSSandbox {
         Ok(Self {
             inner: loaded,
             handlers: HashMap::new(),
+            modules: HashMap::new(),
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
         })
@@ -105,6 +125,149 @@ impl JSSandbox {
         self.handlers.clear();
     }
 
+    // ── Module management ────────────────────────────────────────────
+
+    /// Adds a module to the sandbox with the default namespace (`user`).
+    ///
+    /// The module will be available for import by handlers (and other modules)
+    /// using `import { ... } from 'user:<module_name>'`.
+    ///
+    /// Modules are compiled lazily when first imported, so inter-module
+    /// dependencies are resolved automatically regardless of registration order.
+    ///
+    /// # Shared state between handlers
+    ///
+    /// ES modules are singletons — all importers share the **same** module
+    /// instance. This means mutable module-level state (e.g. `let count = 0`)
+    /// is visible to every handler that imports the module. Handler A can
+    /// mutate module state, and Handler B will see those changes in
+    /// subsequent calls.
+    ///
+    /// Module state persists across [`LoadedJSSandbox::handle_event()`] calls
+    /// and is reset by [`LoadedJSSandbox::snapshot()`] / [`LoadedJSSandbox::restore()`]
+    /// or [`LoadedJSSandbox::unload()`].
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// // Register a utility module (pure functions)
+    /// sandbox.add_module("utils", Script::from_content(
+    ///     "export function greet(name) { return `hello ${name}`; }"
+    /// ))?;
+    /// // Handler can import it:
+    /// // import { greet } from 'user:utils';
+    ///
+    /// // Register a module with mutable shared state
+    /// sandbox.add_module("counter", Script::from_content(
+    ///     "let count = 0;\nexport function increment() { return ++count; }\nexport function getCount() { return count; }"
+    /// ))?;
+    /// // Multiple handlers import the same module and share its state:
+    /// // Handler A: import { increment } from 'user:counter';  → mutates count
+    /// // Handler B: import { getCount } from 'user:counter';   → reads count
+    /// ```
+    #[instrument(err(Debug), skip(self, script), level=Level::DEBUG)]
+    pub fn add_module<N: Into<String> + std::fmt::Debug>(
+        &mut self,
+        module_name: N,
+        script: Script,
+    ) -> Result<()> {
+        self.add_module_ns(module_name, script, DEFAULT_MODULE_NAMESPACE)
+    }
+
+    /// Adds a module to the sandbox with a custom namespace.
+    ///
+    /// The module will be available for import by handlers (and other modules)
+    /// using `import { ... } from '<namespace>:<module_name>'`.
+    ///
+    /// Like [`JSSandbox::add_module`], modules are ES module singletons —
+    /// mutable state is shared across all importing handlers. See
+    /// [`JSSandbox::add_module`] for details on state sharing and lifecycle.
+    ///
+    /// # Namespace restrictions
+    ///
+    /// - Must not be empty
+    /// - Must not contain `':'`
+    /// - Must not be a reserved namespace (e.g. `"host"`)
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// sandbox.add_module_ns("math", script, "mylib")?;
+    /// // Handler imports: import { add } from 'mylib:math';
+    /// ```
+    #[instrument(err(Debug), skip(self, script), level=Level::DEBUG)]
+    pub fn add_module_ns<N, NS>(
+        &mut self,
+        module_name: N,
+        script: Script,
+        namespace: NS,
+    ) -> Result<()>
+    where
+        N: Into<String> + std::fmt::Debug,
+        NS: Into<String> + std::fmt::Debug,
+    {
+        let module_name = module_name.into();
+        let namespace = namespace.into();
+
+        if module_name.is_empty() {
+            return Err(new_error!("Module name must not be empty"));
+        }
+        if namespace.is_empty() {
+            return Err(new_error!("Module namespace must not be empty"));
+        }
+        if module_name.contains(':') {
+            return Err(new_error!("Module name must not contain ':'"));
+        }
+        if namespace.contains(':') {
+            return Err(new_error!("Module namespace must not contain ':'"));
+        }
+        if RESERVED_NAMESPACES.contains(&namespace.as_str()) {
+            return Err(new_error!("Module namespace '{}' is reserved", namespace));
+        }
+
+        let qualified_name = format!("{}:{}", namespace, module_name);
+        if self.modules.contains_key(&qualified_name) {
+            return Err(new_error!("Module already exists: {}", qualified_name));
+        }
+
+        self.modules.insert(qualified_name, script);
+        Ok(())
+    }
+
+    /// Removes a module from the sandbox (using the default namespace).
+    #[instrument(err(Debug), skip(self), level=Level::DEBUG)]
+    pub fn remove_module(&mut self, module_name: &str) -> Result<()> {
+        self.remove_module_ns(module_name, DEFAULT_MODULE_NAMESPACE)
+    }
+
+    /// Removes a module from the sandbox (using a custom namespace).
+    #[instrument(err(Debug), skip(self), level=Level::DEBUG)]
+    pub fn remove_module_ns(&mut self, module_name: &str, namespace: &str) -> Result<()> {
+        if module_name.is_empty() {
+            return Err(new_error!("Module name must not be empty"));
+        }
+        if namespace.is_empty() {
+            return Err(new_error!("Module namespace must not be empty"));
+        }
+        if module_name.contains(':') {
+            return Err(new_error!("Module name must not contain ':'"));
+        }
+        if namespace.contains(':') {
+            return Err(new_error!("Module namespace must not contain ':'"));
+        }
+        let qualified_name = format!("{namespace}:{module_name}");
+        match self.modules.remove(&qualified_name) {
+            Some(_) => Ok(()),
+            None => Err(new_error!("Module does not exist: {}", qualified_name)),
+        }
+    }
+
+    /// Clears all modules from the sandbox.
+    #[instrument(skip_all, level=Level::TRACE)]
+    pub fn clear_modules(&mut self) {
+        self.modules.clear();
+    }
+
     /// Returns whether the sandbox is currently poisoned.
     ///
     /// A poisoned sandbox is in an inconsistent state due to the guest not running to completion.
@@ -120,15 +283,36 @@ impl JSSandbox {
         self.handlers.len()
     }
 
+    #[cfg(test)]
+    fn get_number_of_modules(&self) -> usize {
+        self.modules.len()
+    }
+
     /// Creates a new `LoadedJSSandbox` with the handlers that have been added to this `JSSandbox`.
+    ///
+    /// # Partial failure
+    ///
+    /// This method consumes `self`. If module registration succeeds but a handler
+    /// fails to register, the `JSSandbox` is lost and the caller receives an error.
+    /// To recover, create a new sandbox via `SandboxBuilder`. This is consistent with
+    /// the existing handler-only behaviour and the one-shot consumption pattern.
     #[instrument(err(Debug), skip_all, level=Level::TRACE)]
     pub fn get_loaded_sandbox(mut self) -> Result<LoadedJSSandbox> {
         if self.handlers.is_empty() {
             return Err(new_error!("No handlers have been added to the sandbox"));
         }
 
-        let handlers = self.handlers.clone();
-        for (function_name, script) in handlers {
+        // Register user modules first so that handlers can import them.
+        // NOTE: HashMap iteration order is non-deterministic, but this is safe
+        // because modules are lazily compiled by the UserModuleLoader when first
+        // imported — registration order does not affect resolution.
+        for (qualified_name, script) in std::mem::take(&mut self.modules) {
+            let content = script.content().to_owned();
+            self.inner
+                .call::<()>("register_module", (qualified_name, content))?;
+        }
+
+        for (function_name, script) in std::mem::take(&mut self.handlers) {
             let content = script.content().to_owned();
 
             let path = script
@@ -186,6 +370,7 @@ impl Debug for JSSandbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JSSandbox")
             .field("handlers", &self.handlers)
+            .field("modules", &self.modules)
             .finish()
     }
 }
@@ -247,5 +432,153 @@ mod tests {
 
         let res = sandbox.get_loaded_sandbox();
         assert!(res.is_ok());
+    }
+
+    // ── Module unit tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_add_module() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        sandbox
+            .add_module("utils", Script::from_content("export const x = 1;"))
+            .unwrap();
+        sandbox
+            .add_module("helpers", Script::from_content("export const y = 2;"))
+            .unwrap();
+
+        assert_eq!(sandbox.get_number_of_modules(), 2);
+    }
+
+    #[test]
+    fn test_add_module_with_custom_namespace() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        sandbox
+            .add_module_ns(
+                "math",
+                Script::from_content("export const PI = 3.14;"),
+                "mylib",
+            )
+            .unwrap();
+
+        assert_eq!(sandbox.get_number_of_modules(), 1);
+    }
+
+    #[test]
+    fn test_add_module_rejects_empty_name() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        let res = sandbox.add_module("", Script::from_content("export const x = 1;"));
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_add_module_rejects_empty_namespace() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        let res = sandbox.add_module_ns("utils", Script::from_content("export const x = 1;"), "");
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_add_module_rejects_colon_in_name() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        let res = sandbox.add_module("bad:name", Script::from_content("export const x = 1;"));
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("must not contain ':'"));
+    }
+
+    #[test]
+    fn test_add_module_rejects_colon_in_namespace() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        let res = sandbox.add_module_ns(
+            "utils",
+            Script::from_content("export const x = 1;"),
+            "bad:ns",
+        );
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("must not contain ':'"));
+    }
+
+    #[test]
+    fn test_add_module_rejects_reserved_namespace() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        let res =
+            sandbox.add_module_ns("utils", Script::from_content("export const x = 1;"), "host");
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("reserved"));
+    }
+
+    #[test]
+    fn test_add_module_rejects_duplicate() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        sandbox
+            .add_module("utils", Script::from_content("export const x = 1;"))
+            .unwrap();
+        let res = sandbox.add_module("utils", Script::from_content("export const y = 2;"));
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("already exists"));
+    }
+
+    #[test]
+    fn test_remove_module() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        sandbox
+            .add_module("utils", Script::from_content("export const x = 1;"))
+            .unwrap();
+        sandbox.remove_module("utils").unwrap();
+
+        assert_eq!(sandbox.get_number_of_modules(), 0);
+    }
+
+    #[test]
+    fn test_remove_module_with_custom_namespace() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        sandbox
+            .add_module_ns(
+                "math",
+                Script::from_content("export const PI = 3.14;"),
+                "mylib",
+            )
+            .unwrap();
+        sandbox.remove_module_ns("math", "mylib").unwrap();
+
+        assert_eq!(sandbox.get_number_of_modules(), 0);
+    }
+
+    #[test]
+    fn test_clear_modules() {
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+
+        sandbox
+            .add_module("a", Script::from_content("export const x = 1;"))
+            .unwrap();
+        sandbox
+            .add_module("b", Script::from_content("export const y = 2;"))
+            .unwrap();
+
+        sandbox.clear_modules();
+
+        assert_eq!(sandbox.get_number_of_modules(), 0);
     }
 }

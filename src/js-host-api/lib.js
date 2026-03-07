@@ -156,7 +156,15 @@ wrapGetter(LoadedJSSandbox, 'lastCallStats');
 // JSSandbox — async + sync methods + getters
 JSSandbox.prototype.getLoadedSandbox = wrapAsync(JSSandbox.prototype.getLoadedSandbox);
 
-for (const method of ['addHandler', 'removeHandler', 'clearHandlers', 'dispose']) {
+for (const method of [
+    'addHandler',
+    'removeHandler',
+    'clearHandlers',
+    'addModule',
+    'removeModule',
+    'clearModules',
+    'dispose',
+]) {
     const orig = JSSandbox.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: JSSandbox.${method}`);
     JSSandbox.prototype[method] = wrapSync(orig);

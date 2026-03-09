@@ -135,15 +135,23 @@ fn value_to_json_with_binaries<'js>(
     // QuickJS stores numbers as doubles internally but optimises small
     // integers into SMIs. We check as_int() first for integer fidelity,
     // falling back to as_float() for all other numeric values.
+    // For floats that represent whole numbers (e.g. 42.0 from JSON.parse),
+    // we emit them as integers to match JSON.stringify behaviour and
+    // preserve serde integer deserialization on the host side.
     if let Some(n) = value.as_int() {
         return Ok(serde_json::Value::Number(n.into()));
     }
     if let Some(n) = value.as_float() {
         // Handle NaN and Infinity as null (like JSON.stringify)
-        if n.is_finite()
-            && let Some(num) = serde_json::Number::from_f64(n)
-        {
-            return Ok(serde_json::Value::Number(num));
+        if n.is_finite() {
+            // If the float is a whole number that fits in i64, emit as integer
+            // to match JSON.stringify behaviour (42.0 → 42, not 42.0)
+            if n == (n as i64) as f64 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                return Ok(serde_json::Value::Number((n as i64).into()));
+            }
+            if let Some(num) = serde_json::Number::from_f64(n) {
+                return Ok(serde_json::Value::Number(num));
+            }
         }
         return Ok(serde_json::Value::Null);
     }

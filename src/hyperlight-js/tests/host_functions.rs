@@ -513,3 +513,195 @@ fn register_js_binary_in_nested_object() {
 
     assert_eq!(res, r#"{"result":"test-3"}"#);
 }
+
+// ── Numeric type tests ───────────────────────────────────────────────
+// QuickJS stores JSON-parsed numbers as doubles internally. The binary
+// host function path (extract_binaries → value_to_json_with_binaries)
+// must serialize whole-number floats as integers to preserve serde
+// deserialization on the host side.
+
+#[test]
+fn host_fn_with_i32_arg_from_event_data() {
+    // event.x is parsed from JSON → stored as f64 in QuickJS → must
+    // arrive at the host as an integer, not 42.0
+    let handler = Script::from_content(
+        r#"
+        import * as math from "math";
+        function handler(event) {
+            return { result: math.double(event.x) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto.register("math", "double", |x: i32| x * 2).unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event("handler", r#"{"x": 42}"#.to_string(), None)
+        .unwrap();
+    assert_eq!(res, r#"{"result":84}"#);
+}
+
+#[test]
+fn host_fn_with_i64_arg_from_event_data() {
+    let handler = Script::from_content(
+        r#"
+        import * as math from "math";
+        function handler(event) {
+            return { result: math.negate(event.x) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto.register("math", "negate", |x: i64| -x).unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event("handler", r#"{"x": 100}"#.to_string(), None)
+        .unwrap();
+    assert_eq!(res, r#"{"result":-100}"#);
+}
+
+#[test]
+fn host_fn_with_f64_arg_preserves_fractional() {
+    // Actual floats (3.14) must remain as floats, not be truncated
+    let handler = Script::from_content(
+        r#"
+        import * as math from "math";
+        function handler(event) {
+            return { result: math.half(event.x) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto.register("math", "half", |x: f64| x / 2.0).unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event("handler", r#"{"x": 3.14}"#.to_string(), None)
+        .unwrap();
+
+    let json: serde_json::Value = serde_json::from_str(&res).unwrap();
+    let result = json["result"].as_f64().unwrap();
+    assert!(
+        (result - 1.57).abs() < 0.001,
+        "Expected ~1.57, got {result}"
+    );
+}
+
+#[test]
+fn host_fn_with_bool_arg() {
+    let handler = Script::from_content(
+        r#"
+        import * as logic from "logic";
+        function handler(event) {
+            return { result: logic.flip(event.flag) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto.register("logic", "flip", |b: bool| !b).unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event("handler", r#"{"flag": true}"#.to_string(), None)
+        .unwrap();
+    assert_eq!(res, r#"{"result":false}"#);
+}
+
+#[test]
+fn host_fn_with_mixed_numeric_types() {
+    // i32 + f64 mix in the same call
+    let handler = Script::from_content(
+        r#"
+        import * as math from "math";
+        function handler(event) {
+            return { result: math.weighted_add(event.a, event.b, event.weight) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto
+        .register("math", "weighted_add", |a: i32, b: i32, w: f64| {
+            (a as f64 * w + b as f64 * (1.0 - w)) as i32
+        })
+        .unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event(
+            "handler",
+            r#"{"a": 100, "b": 200, "weight": 0.75}"#.to_string(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(res, r#"{"result":125}"#);
+}
+
+#[test]
+fn host_fn_with_negative_integer() {
+    let handler = Script::from_content(
+        r#"
+        import * as math from "math";
+        function handler(event) {
+            return { result: math.abs(event.x) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto.register("math", "abs", |x: i32| x.abs()).unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event("handler", r#"{"x": -42}"#.to_string(), None)
+        .unwrap();
+    assert_eq!(res, r#"{"result":42}"#);
+}
+
+#[test]
+fn host_fn_with_zero() {
+    let handler = Script::from_content(
+        r#"
+        import * as math from "math";
+        function handler(event) {
+            return { result: math.inc(event.x) };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new().build().unwrap();
+    proto.register("math", "inc", |x: i32| x + 1).unwrap();
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    let res = loaded
+        .handle_event("handler", r#"{"x": 0}"#.to_string(), None)
+        .unwrap();
+    assert_eq!(res, r#"{"result":1}"#);
+}

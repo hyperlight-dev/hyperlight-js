@@ -613,6 +613,20 @@ impl FromNapiValue for JsReturn {
                     "Failed to get buffer info",
                 ));
             }
+            // Handle empty buffers: napi_get_buffer_info returns data=null, len=0
+            // for empty buffers. slice::from_raw_parts requires non-null pointer
+            // even for zero-length slices, so we handle this case specially.
+            if len == 0 {
+                return Ok(JsReturn::Buffer(Vec::new()));
+            }
+            // Non-empty buffer: data must be valid and non-null.
+            // If it's null with len > 0, the buffer's backing store was likely
+            // garbage collected (e.g., a Buffer.subarray view whose parent died).
+            if data.is_null() {
+                return Err(napi::Error::from_reason(
+                    "Buffer has null data pointer with non-zero length - backing store may have been garbage collected"
+                ));
+            }
             // SAFETY: data points to len bytes of valid buffer memory.
             let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, len) }.to_vec();
             return Ok(JsReturn::Buffer(bytes));

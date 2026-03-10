@@ -627,6 +627,28 @@ describe('Binary data support', () => {
         expect(result).toEqual({ len: 0 });
     });
 
+    it('should handle host returning empty Buffer', async () => {
+        // Regression: napi_get_buffer_info returns data=null, len=0 for
+        // empty buffers. JsReturn::from_napi_value must not panic on the
+        // null pointer — it should return an empty Vec instead.
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('empty_response', () => {
+                    return Buffer.alloc(0);
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const data = host.empty_response();
+                return { len: data.length, isUint8: data instanceof Uint8Array };
+            }
+            `
+        );
+        const result = await loaded.callHandler('handler', {});
+        expect(result).toEqual({ len: 0, isUint8: true });
+    });
+
     it('should round-trip binary data (send and receive)', async () => {
         const loaded = await buildLoadedSandbox(
             (proto) => {

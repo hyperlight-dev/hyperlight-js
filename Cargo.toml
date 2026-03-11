@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src/hyperlight-js", "src/js-host-api", "src/hyperlight-js-runtime"]
+members = ["src/hyperlight-js", "src/js-host-api", "src/hyperlight-js-runtime", "src/hyperlight-js-common"]
 
 [workspace.package]
 version = "0.1.1"
@@ -16,6 +16,7 @@ hyperlight-guest-bin = { git = "https://github.com/hyperlight-dev/hyperlight", r
 hyperlight-guest = { git = "https://github.com/hyperlight-dev/hyperlight", rev = "620339aa95d508e8cbd1d38b4374f09090aade7b" }
 hyperlight-host = { git = "https://github.com/hyperlight-dev/hyperlight", rev = "620339aa95d508e8cbd1d38b4374f09090aade7b", default-features = false, features = ["executable_heap", "init-paging"] }
 hyperlight-js = { version = "0.1.1", path = "src/hyperlight-js" }
+hyperlight-js-common = { version = "0.1.1", path = "src/hyperlight-js-common" }
 hyperlight-js-runtime = { version = "0.1.1", path = "src/hyperlight-js-runtime" }
 
 [profile.dev]

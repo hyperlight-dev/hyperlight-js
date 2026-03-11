@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 hyperlight-js = { workspace = true, features = ["monitor-wall-clock", "monitor-cpu-time"] }
+hyperlight-js-common = { workspace = true }
 napi = { version = "3.8", features = ["tokio_rt", "serde-json"] }
 napi-derive = "3.5"
 serde_json = "1"

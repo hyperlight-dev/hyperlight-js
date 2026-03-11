@@ -51,7 +51,7 @@ When this job is done, a new [GitHub release](https://github.com/hyperlight-dev/
 
 This release contains the benchmark results and the source code for the release along with automatically generated release notes.
 
-In addition the hyperlight-js crates will be published to crates.io. You can verify this by going to the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js) and checking that the new version is listed.
+In addition the hyperlight-js crates will be published to crates.io in dependency order (`hyperlight-js-common` → `hyperlight-js-runtime` → `hyperlight-js`). You can verify this by going to the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js) and checking that the new version is listed.
 
 ## Patching a release
 

@@ -111,6 +111,11 @@ name = "runtime_debugging"
 path = "examples/runtime_debugging/main.rs"
 test = false
 
+[[example]]
+name = "user_modules"
+path = "examples/user_modules/main.rs"
+test = false
+
 [[bench]]
 name = "benchmarks"
 harness = false

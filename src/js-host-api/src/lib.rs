@@ -199,6 +199,55 @@ fn validate_module_name(name: &str) -> napi::Result<()> {
     Ok(())
 }
 
+/// Maximum allowed length for a module or namespace identifier.
+/// Guards against accidental multi-MB strings being passed as names.
+const MAX_MODULE_IDENTIFIER_LEN: usize = 256;
+
+/// Validates a user module identifier (name or namespace).
+///
+/// Rules:
+/// - Must not be empty (after trimming whitespace)
+/// - Must not contain `':'`
+/// - Must not contain control characters
+/// - Must not exceed [`MAX_MODULE_IDENTIFIER_LEN`] characters
+///
+/// The `label` parameter is used in error messages (e.g. "Module name", "Module namespace").
+///
+/// Validation is intentionally duplicated here and in the inner Rust layer (`JSSandbox`)
+/// for defense-in-depth. The NAPI layer validates first so that consumers get correct
+/// `ERR_INVALID_ARG` error codes rather than the generic `ERR_INTERNAL` that would result
+/// from the inner layer's `new_error!()`.
+fn validate_module_identifier(value: &str, label: &str) -> napi::Result<()> {
+    if value.is_empty() || value.trim().is_empty() {
+        return Err(invalid_arg_error(&format!("{label} must not be empty")));
+    }
+    if value.contains(':') {
+        return Err(invalid_arg_error(&format!("{label} must not contain ':'")));
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err(invalid_arg_error(&format!(
+            "{label} must not contain control characters"
+        )));
+    }
+    if value.len() > MAX_MODULE_IDENTIFIER_LEN {
+        return Err(invalid_arg_error(&format!(
+            "{label} must not exceed {MAX_MODULE_IDENTIFIER_LEN} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Validates that a namespace is not reserved (e.g. `"host"`).
+fn validate_namespace_not_reserved(namespace: &str) -> napi::Result<()> {
+    // Keep in sync with RESERVED_NAMESPACES in js_sandbox.rs
+    if namespace == "host" {
+        return Err(invalid_arg_error(&format!(
+            "Module namespace '{namespace}' is reserved"
+        )));
+    }
+    Ok(())
+}
+
 /// Creates an error when a Mutex is poisoned (Rust-level, not sandbox-level).
 fn lock_error() -> napi::Error {
     hl_error(
@@ -757,6 +806,88 @@ impl JSSandboxWrapper {
     pub fn clear_handlers(&self) -> napi::Result<()> {
         self.with_inner_mut(|sandbox| {
             sandbox.clear_handlers();
+            Ok(())
+        })
+    }
+
+    // ── Module registration ──────────────────────────────────────────
+
+    /// Register a named user module in the sandbox.
+    ///
+    /// The module source must use ES module syntax (`export`). Once registered,
+    /// handlers (and other modules) can import it using the qualified name
+    /// `<namespace>:<moduleName>`.
+    ///
+    /// If `namespace` is omitted, the default namespace `"user"` is used,
+    /// making the module importable as `import { ... } from 'user:<moduleName>'`.
+    ///
+    /// Modules are compiled lazily when first imported, so inter-module
+    /// dependencies are resolved automatically regardless of registration order.
+    ///
+    /// This is a synchronous operation (module registration is cheap).
+    ///
+    /// @param moduleName - Module identifier (must be non-empty, must not contain ':')
+    /// @param source - ES module JavaScript source (must use `export`)
+    /// @param namespace - Optional namespace prefix (defaults to `"user"`)
+    /// @throws If the name is empty, namespace is reserved, or if sandbox is consumed
+    #[napi]
+    pub fn add_module(
+        &self,
+        module_name: String,
+        source: String,
+        namespace: Option<String>,
+    ) -> napi::Result<()> {
+        validate_module_identifier(&module_name, "Module name")?;
+        if let Some(ref ns) = namespace {
+            validate_module_identifier(ns, "Module namespace")?;
+            validate_namespace_not_reserved(ns)?;
+        }
+        self.with_inner_mut(|sandbox| {
+            match namespace {
+                Some(ns) => sandbox.add_module_ns(module_name, Script::from_content(source), ns),
+                None => sandbox.add_module(module_name, Script::from_content(source)),
+            }
+            .map_err(to_napi_error)
+        })
+    }
+
+    /// Remove a previously registered module by name.
+    ///
+    /// If `namespace` is omitted, the default namespace `"user"` is used.
+    ///
+    /// This is a synchronous operation.
+    ///
+    /// @param moduleName - Module identifier to remove (must be non-empty)
+    /// @param namespace - Optional namespace prefix (defaults to `"user"`)
+    /// @throws If the module name is empty, or if the sandbox is consumed
+    #[napi]
+    pub fn remove_module(
+        &self,
+        module_name: String,
+        namespace: Option<String>,
+    ) -> napi::Result<()> {
+        validate_module_identifier(&module_name, "Module name")?;
+        if let Some(ref ns) = namespace {
+            validate_module_identifier(ns, "Module namespace")?;
+        }
+        self.with_inner_mut(|sandbox| {
+            match namespace {
+                Some(ns) => sandbox.remove_module_ns(&module_name, &ns),
+                None => sandbox.remove_module(&module_name),
+            }
+            .map_err(to_napi_error)
+        })
+    }
+
+    /// Remove all registered modules.
+    ///
+    /// This is a synchronous operation.
+    ///
+    /// @throws If the sandbox is consumed
+    #[napi]
+    pub fn clear_modules(&self) -> napi::Result<()> {
+        self.with_inner_mut(|sandbox| {
+            sandbox.clear_modules();
             Ok(())
         })
     }

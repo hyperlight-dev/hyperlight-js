@@ -92,6 +92,15 @@ fn register_handler(
     Ok(())
 }
 
+#[guest_function("register_module")]
+#[instrument(skip_all, level = "info")]
+fn register_module(module_name: String, module_source: String) -> Result<()> {
+    RUNTIME
+        .lock()
+        .register_module(module_name, module_source)?;
+    Ok(())
+}
+
 #[host_function("CallHostJsFunction")]
 fn call_host_js_function(module_name: String, func_name: String, args: String) -> Result<String>;
 

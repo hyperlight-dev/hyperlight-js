@@ -40,7 +40,7 @@ clap = { version = "4.5", features = ["derive"] }
 
 [target.'cfg(not(hyperlight))'.dev-dependencies]
 escargot = "0.5"
-tempfile = "3.26"
+tempfile = "3.27"
 
 [build-dependencies]
 bindgen = "0.72"

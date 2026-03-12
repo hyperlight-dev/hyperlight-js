@@ -13,16 +13,28 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-extern crate alloc;
+
+//! Hyperlight guest entry point and infrastructure.
+//!
+//! This module provides the guest-side plumbing needed to run the JS runtime
+//! inside a Hyperlight VM. It includes:
+//! - The `Host` implementation that calls out to hyperlight host functions
+//! - The `hyperlight_main` entry point
+//! - Guest function registrations (register_handler, RegisterHostModules)
+//! - The `guest_dispatch_function` fallback for handler calls
+//! - Libc stub implementations required by QuickJS
+//!
+//! This is all `cfg(hyperlight)` — compiled out entirely for native builds.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
 use hyperlight_guest_bin::error::{ErrorCode, HyperlightGuestError, Result};
 use hyperlight_guest_bin::{guest_function, host_function, main};
-use hyperlight_js_runtime::JsRuntime;
+use crate::JsRuntime;
 use spin::Mutex;
 use tracing::instrument;
 
@@ -30,7 +42,7 @@ mod stubs;
 
 struct Host;
 
-pub trait CatchGuestErrorExt {
+trait CatchGuestErrorExt {
     type Ok;
     fn catch(self) -> anyhow::Result<Self::Ok>;
 }
@@ -42,7 +54,7 @@ impl<T> CatchGuestErrorExt for Result<T> {
     }
 }
 
-impl hyperlight_js_runtime::host::Host for Host {
+impl crate::host::Host for Host {
     fn resolve_module(&self, base: String, name: String) -> anyhow::Result<String> {
         #[host_function("ResolveModule")]
         fn resolve_module(base: String, name: String) -> Result<String>;
@@ -62,17 +74,16 @@ impl hyperlight_js_runtime::host::Host for Host {
     }
 }
 
-static RUNTIME: spin::LazyLock<Mutex<JsRuntime>> = spin::LazyLock::new(|| {
-    Mutex::new(JsRuntime::new(Host).unwrap_or_else(|e| {
+static RUNTIME: spin::LazyLock<Mutex<crate::JsRuntime>> = spin::LazyLock::new(|| {
+    Mutex::new(crate::JsRuntime::new(Host).unwrap_or_else(|e| {
         panic!("Failed to initialize JS runtime: {e:#?}");
     }))
 });
 
 #[main]
 #[instrument(skip_all, level = "info")]
-fn main() {
-    // dereference RUNTIME to force its initialization
-    // of the LazyLock static
+pub extern "C" fn hyperlight_main() {
+    // Initialise the runtime (custom modules are registered lazily on first use)
     let _ = &*RUNTIME;
 }
 

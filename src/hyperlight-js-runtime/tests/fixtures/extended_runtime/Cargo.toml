@@ -1,0 +1,24 @@
+[package]
+name = "extended-runtime"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Prevent cargo from treating this as part of the parent workspace
+[workspace]
+
+[[bin]]
+name = "extended-runtime"
+path = "src/main.rs"
+
+[dependencies]
+hyperlight-js-runtime = { path = "../../.." }
+native-math = { path = "../native_math" }
+rquickjs = { version = "0.11", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
+
+# anyhow is only needed for the native CLI entry point, not the hyperlight guest
+[target.'cfg(not(hyperlight))'.dependencies]
+anyhow = "1.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(hyperlight)'] }

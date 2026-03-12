@@ -14,14 +14,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #![no_std]
-#![no_main]
 extern crate alloc;
 
 mod globals;
+/// Hyperlight guest entry point — provides `hyperlight_main`,
+/// `guest_dispatch_function`, and all guest plumbing.
+/// Only compiled when building for the Hyperlight VM target.
+#[cfg(hyperlight)]
+mod guest;
 pub mod host;
 mod host_fn;
 mod libc;
-mod modules;
+/// Native module infrastructure for the JS runtime.
+///
+/// Contains the built-in native modules (io, crypto, console, require)
+/// and the [`native_modules!`] macro for extending the runtime with
+/// custom native modules in downstream crates.
+pub mod modules;
 pub(crate) mod utils;
 
 use alloc::format;
@@ -30,6 +39,7 @@ use alloc::string::{String, ToString};
 
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
+use modules::NativeModuleLoader;
 use rquickjs::loader::{Loader, Resolver};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Context, Ctx, Function, Module, Persistent, Result, Runtime, Value};
@@ -39,7 +49,6 @@ use tracing::instrument;
 
 use crate::host::Host;
 use crate::host_fn::{HostFunction, HostModuleLoader};
-use crate::modules::NativeModuleLoader;
 
 /// A handler is a javascript function that takes a single `event` object parameter,
 /// and is registered to the static `Context` instance
@@ -68,7 +77,11 @@ unsafe impl Send for JsRuntime {}
 
 impl JsRuntime {
     /// Create a new `JsRuntime` with the given host.
-    /// The resulting runtime will have global objects registered.
+    ///
+    /// The runtime includes all built-in native modules (io, crypto, console,
+    /// require) plus any custom modules registered via
+    /// [`register_native_module`](modules::register_native_module) or the
+    /// [`native_modules!`] macro.
     #[instrument(skip_all, level = "info")]
     pub fn new<H: Host + 'static>(host: H) -> anyhow::Result<Self> {
         let runtime = Runtime::new().context("Unable to initialize JS_RUNTIME")?;

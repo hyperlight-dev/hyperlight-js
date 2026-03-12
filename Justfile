@@ -135,6 +135,8 @@ clean:
     cargo clean
     cd src/hyperlight-js-runtime && cargo clean
     cd src/js-host-api && cargo clean
+    -rm -rf src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target
+    -rm -rf src/hyperlight-js-runtime/tests/fixtures/native_math/target
     -rm -rf src/js-host-api/node_modules
     -rm -f src/js-host-api/*.node
     -rm -f src/js-host-api/index.js
@@ -150,14 +152,51 @@ test target=default-target features="": (build target)
     cd src/hyperlight-js && cargo test {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} handle_termination --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
     cd src/hyperlight-js && cargo test {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} test_metrics --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
     cargo test --manifest-path=./src/hyperlight-js-runtime/Cargo.toml --test=native_cli --profile={{ if target == "debug" {"dev"} else { target } }}
+    just test-native-modules {{ target }}
 
 # Test with monitor features enabled (wall-clock and CPU time monitors)
-# Note: We exclude test_metrics as it requires process isolation and is already run by `test` recipe
+# Note: We exclude test_metrics (requires process isolation, already run by `test`)
+# and native_modules (requires custom guest runtime, run by `test-native-modules`)
 test-monitors target=default-target:
-    cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics
+    cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics --skip custom_native_module --skip builtin_modules_work_with_custom --skip console_log_works_with_custom
 
 test-js-host-api target=default-target features="": (build-js-host-api target features)
     cd src/js-host-api && npm test
+
+# Test custom native modules:
+# 1. Runs the runtime crate's native_modules unit/pipeline tests (native binary)
+# 2. Builds the extended_runtime fixture for the hyperlight target
+# 3. Rebuilds hyperlight-js with the custom guest embedded via HYPERLIGHT_JS_RUNTIME_PATH
+# 4. Runs the ignored VM integration tests
+# 5. Rebuilds hyperlight-js with the default guest (unsets HYPERLIGHT_JS_RUNTIME_PATH)
+#
+# The build.rs in hyperlight-js has `cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH`
+# so setting/unsetting the env var triggers a rebuild automatically.
+
+# Base path to the extended runtime fixture target directory
+extended_runtime_target := replace(justfile_dir(), "\\", "/") + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target/x86_64-hyperlight-none"
+
+test-native-modules target=default-target: (ensure-tools) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-restore target)
+
+[private]
+_test-native-modules-unit target=default-target:
+    cargo test --manifest-path=./src/hyperlight-js-runtime/Cargo.toml --test=native_modules --profile={{ if target == "debug" {"dev"} else { target } }}
+
+[private]
+_test-native-modules-build-guest target=default-target:
+    cargo hyperlight build \
+        --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
+        --profile={{ if target == "debug" {"dev"} else { target } }} \
+        --target-dir src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target
+
+[private]
+_test-native-modules-vm target=default-target:
+    {{ set-env-command }}HYPERLIGHT_JS_RUNTIME_PATH="{{extended_runtime_target}}/{{ if target == "debug" {"debug"} else { target } }}/extended-runtime" {{ if os() == "windows" { ";" } else { "&&" } }} cargo test -p hyperlight-js --test native_modules --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
+
+[private]
+_test-native-modules-restore target=default-target:
+    @echo "Rebuilding hyperlight-js with default guest runtime..."
+    cd src/hyperlight-js && cargo build --profile={{ if target == "debug" {"dev"} else { target } }}
 
 # Run js-host-api examples (simple.js, calculator.js, unload.js, interrupt.js, cpu-timeout.js, host-functions.js)
 run-js-host-api-examples target=default-target features="": (build-js-host-api target features)

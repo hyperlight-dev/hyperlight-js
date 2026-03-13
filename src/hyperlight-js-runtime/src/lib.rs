@@ -155,10 +155,15 @@ impl JsRuntime {
         let handler_script = handler_script.into();
         let handler_pwd = handler_pwd.into();
 
-        // If the handler script doesn't already export the handler function, we export it for the user.
-        // This is a convenience for the common case where the handler script is just a single file that defines
-        // the handler function, without needing to explicitly export it.
-        let handler_script = if !handler_script.contains("export") {
+        // If the handler script doesn't already contain an ES export statement,
+        // append one for the user. This is a convenience for the common case where
+        // the handler script defines a handler function without explicitly exporting it.
+        //
+        // We check whether any line *starts* with `export` (after leading whitespace)
+        // rather than using a naive `.contains("export")`, which would false-positive
+        // on string literals (e.g. '<config mode="export">'), comments
+        // (e.g. // TODO: export data), or identifiers (e.g. exportPath).
+        let handler_script = if !has_export_statement(&handler_script) {
             format!("{}\nexport {{ handler }};", handler_script)
         } else {
             handler_script
@@ -313,6 +318,20 @@ fn make_handler_path(function_name: &str, handler_dir: &str) -> String {
     }
 
     handler_path
+}
+
+/// Returns `true` if the script contains an actual ES `export` statement
+/// (as opposed to the word "export" inside a string literal, comment, or
+/// identifier like `exportPath`).
+///
+/// The heuristic checks whether any source line begins with `export` (after
+/// optional leading whitespace). This avoids the false positives from a
+/// naive `.contains("export")` while staying `no_std`-compatible.
+fn has_export_statement(script: &str) -> bool {
+    script.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("export ") || trimmed.starts_with("export{")
+    })
 }
 
 // RAII guard that flushes the output buffer of libc when dropped.

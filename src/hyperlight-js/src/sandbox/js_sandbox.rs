@@ -248,4 +248,125 @@ mod tests {
         let res = sandbox.get_loaded_sandbox();
         assert!(res.is_ok());
     }
+
+    // ── Auto-export heuristic tests (issue #39) ──────────────────────────
+    // The auto-export logic must only detect actual ES export statements,
+    // not the word "export" inside string literals, comments, or identifiers.
+
+    #[test]
+    fn handler_with_export_in_string_literal() {
+        // "export" appears inside a string — auto-export should still fire
+        let handler = Script::from_content(
+            r#"
+        function handler(event) {
+            const xml = '<config mode="export">value</config>';
+            return { result: xml };
+        }
+        "#,
+        );
+
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox.add_handler("handler", handler).unwrap();
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        let res = loaded
+            .handle_event("handler", "{}".to_string(), None)
+            .unwrap();
+        assert_eq!(
+            res,
+            r#"{"result":"<config mode=\"export\">value</config>"}"#
+        );
+    }
+
+    #[test]
+    fn handler_with_export_in_comment() {
+        // "export" appears in a comment — auto-export should still fire
+        let handler = Script::from_content(
+            r#"
+        function handler(event) {
+            // TODO: export this data to CSV
+            return { result: 42 };
+        }
+        "#,
+        );
+
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox.add_handler("handler", handler).unwrap();
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        let res = loaded
+            .handle_event("handler", "{}".to_string(), None)
+            .unwrap();
+        assert_eq!(res, r#"{"result":42}"#);
+    }
+
+    #[test]
+    fn handler_with_export_in_identifier() {
+        // "export" is part of an identifier — auto-export should still fire
+        let handler = Script::from_content(
+            r#"
+        function handler(event) {
+            const exportPath = "/tmp/out.csv";
+            return { result: exportPath };
+        }
+        "#,
+        );
+
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox.add_handler("handler", handler).unwrap();
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        let res = loaded
+            .handle_event("handler", "{}".to_string(), None)
+            .unwrap();
+        assert_eq!(res, r#"{"result":"/tmp/out.csv"}"#);
+    }
+
+    #[test]
+    fn handler_with_explicit_export_is_not_doubled() {
+        // Script already has an export statement — auto-export should be skipped
+        let handler = Script::from_content(
+            r#"
+        function handler(event) {
+            return { result: "explicit" };
+        }
+        export { handler };
+        "#,
+        );
+
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox.add_handler("handler", handler).unwrap();
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        let res = loaded
+            .handle_event("handler", "{}".to_string(), None)
+            .unwrap();
+        assert_eq!(res, r#"{"result":"explicit"}"#);
+    }
+
+    #[test]
+    fn handler_with_export_default_function() {
+        // `export function` — auto-export should be skipped
+        let handler = Script::from_content(
+            r#"
+        export function handler(event) {
+            return { result: "inline-export" };
+        }
+        "#,
+        );
+
+        let proto = SandboxBuilder::new().build().unwrap();
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox.add_handler("handler", handler).unwrap();
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        let res = loaded
+            .handle_event("handler", "{}".to_string(), None)
+            .unwrap();
+        assert_eq!(res, r#"{"result":"inline-export"}"#);
+    }
 }

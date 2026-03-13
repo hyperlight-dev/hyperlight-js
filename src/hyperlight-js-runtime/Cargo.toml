@@ -36,7 +36,7 @@ hyperlight-guest-bin = { workspace = true }
 chrono = { version = "0.4", default-features = false }
 
 [target.'cfg(not(hyperlight))'.dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 
 [target.'cfg(not(hyperlight))'.dev-dependencies]
 escargot = "0.5"

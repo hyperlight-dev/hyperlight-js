@@ -7,11 +7,16 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 description = """
-hyperlight-js-runtime is a rust binary crate that provides the JavaScript runtime binary for hyperlight-js.
+hyperlight-js-runtime provides the JavaScript runtime for hyperlight-js, both as a library and binary.
 """
+
+[lib]
+name = "hyperlight_js_runtime"
+path = "src/lib.rs"
 
 [[bin]]
 name = "hyperlight-js-runtime"
+path = "src/main.rs"
 harness = false
 test = false
 

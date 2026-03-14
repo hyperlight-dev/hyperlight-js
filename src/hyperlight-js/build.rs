@@ -193,7 +193,17 @@ fn build_js_runtime() -> PathBuf {
 }
 
 fn bundle_runtime() {
-    let js_runtime_resource = build_js_runtime();
+    let js_runtime_resource = match env::var("HYPERLIGHT_JS_RUNTIME_PATH") {
+        Ok(path) => {
+            println!("cargo:warning=Using custom JS runtime: {}", path);
+            println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH");
+            println!("cargo:rerun-if-changed={}", path);
+            PathBuf::from(path)
+                .canonicalize()
+                .expect("HYPERLIGHT_JS_RUNTIME_PATH must point to a valid file")
+        }
+        Err(_) => build_js_runtime(),
+    };
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("host_resource.rs");

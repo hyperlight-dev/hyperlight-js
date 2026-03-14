@@ -1,0 +1,18 @@
+[package]
+name = "native-math"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "native_math"
+path = "src/lib.rs"
+
+# Prevent cargo from treating this as part of the parent workspace
+[workspace]
+
+[dependencies]
+rquickjs = { version = "0.11", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(hyperlight)'] }

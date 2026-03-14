@@ -112,6 +112,54 @@ hyperlight-js = { version = "0.17", features = ["monitor-wall-clock", "monitor-c
 |---------|--------------|-------------|
 | `monitor-wall-clock` | (none) | Wall-clock time monitor |
 | `monitor-cpu-time` | `libc` (Linux), `windows-sys` (Windows) | CPU time monitor with OS-native APIs |
+| `guest-call-stats` | (none) | Execution statistics (`last_call_stats()`) — see [Execution Statistics](#execution-statistics-) below |
+
+## Execution Statistics 📊
+
+When the `guest-call-stats` feature is enabled, `LoadedJSSandbox` records timing
+and termination information after every `handle_event` / `handle_event_with_monitor`
+call, accessible via `last_call_stats()`.
+
+```rust
+let _ = loaded.handle_event("handler", "{}".to_string(), None)?;
+if let Some(stats) = loaded.last_call_stats() {
+    println!("Wall clock: {:?}", stats.wall_clock);
+    println!("CPU time:   {:?}", stats.cpu_time);      // Some when monitor-cpu-time is also enabled
+    println!("Terminated: {:?}", stats.terminated_by);  // Some("wall-clock") or Some("cpu-time") when a monitor fired
+}
+```
+
+### `ExecutionStats` fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `wall_clock` | `Duration` | Wall-clock elapsed time of the guest call (always available) |
+| `cpu_time` | `Option<Duration>` | CPU time consumed by the calling thread during the guest call. `Some` only when `monitor-cpu-time` is also enabled |
+| `terminated_by` | `Option<&'static str>` | Name of the monitor that terminated execution (e.g. `"wall-clock"`, `"cpu-time"`), or `None` if the call completed normally |
+
+### Key behaviours
+
+- **Stats are per-call** — each call replaces the previous stats (not cumulative)
+- **Stats are captured even on error** — if the guest is killed by a monitor, timing is still recorded
+- **`None` before any call** — `last_call_stats()` returns `None` until the first `handle_event` or `handle_event_with_monitor` call
+- **Feature-gated** — the entire API (struct, field, getter) disappears when `guest-call-stats` is not enabled
+
+### Node.js (NAPI) usage
+
+In the Node.js bindings, stats are always available (the feature is enabled by default in `js-host-api`):
+
+```javascript
+await loaded.callHandler('handler', { data: 'value' });
+
+const stats = loaded.lastCallStats;
+if (stats) {
+    console.log(`Wall clock: ${stats.wallClockMs}ms`);
+    console.log(`CPU time: ${stats.cpuTimeMs}ms`);        // null if monitor-cpu-time not enabled
+    console.log(`Terminated by: ${stats.terminatedBy}`);   // null for normal completion
+}
+```
+
+See the [JS Host API README](../src/js-host-api/README.md) for full API details.
 
 ## Environment Variables
 
@@ -258,5 +306,6 @@ if result.is_err() && loaded_sandbox.poisoned() {
 ## See Also
 
 - [Examples README](../src/js-host-api/examples/README.md) - interrupt.js and cpu-timeout.js examples
-- [JS Host API README](../src/js-host-api/README.md) - Node.js bindings with `callHandler()`
+- [Rust execution_stats example](../src/hyperlight-js/examples/execution_stats/main.rs) - Demonstrates `last_call_stats()` API
+- [JS Host API README](../src/js-host-api/README.md) - Node.js bindings with `callHandler()` and `lastCallStats`
 - [Observability](./observability.md) - Metrics including `monitor_terminations_total`

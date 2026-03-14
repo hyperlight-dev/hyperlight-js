@@ -146,7 +146,7 @@ use crate::sandbox::metrics::{METRIC_MONITOR_TERMINATIONS, METRIC_MONITOR_TYPE_L
 ///
 /// Emits the `monitor_terminations_total` counter metric with the winning
 /// monitor's name as the `monitor_type` label, and logs a warning.
-fn record_monitor_triggered(triggered_by: &'static str) {
+pub(crate) fn record_monitor_triggered(triggered_by: &'static str) {
     metrics::counter!(
         METRIC_MONITOR_TERMINATIONS,
         METRIC_MONITOR_TYPE_LABEL => triggered_by
@@ -253,22 +253,21 @@ pub trait MonitorSet: private::Sealed + Send + Sync {
     ///
     /// Each sub-monitor's `get_monitor()` is called on the **calling thread**
     /// so monitors can capture thread-local state (e.g., CPU clock handles).
-    /// The returned future completes when the first monitor fires, emitting
-    /// the `monitor_terminations_total` metric and a warning log with the
-    /// winning monitor's name.
-    fn to_race(&self) -> Result<Pin<Box<dyn Future<Output = ()> + Send>>>;
+    /// The returned future completes when the first monitor fires, returning
+    /// the winning monitor's name for metrics, logging, and stats.
+    fn to_race(&self) -> Result<Pin<Box<dyn Future<Output = &'static str> + Send>>>;
 }
 
 // Every ExecutionMonitor is automatically a MonitorSet of one.
 impl<M: ExecutionMonitor> private::Sealed for M {}
 
 impl<M: ExecutionMonitor> MonitorSet for M {
-    fn to_race(&self) -> Result<Pin<Box<dyn Future<Output = ()> + Send>>> {
+    fn to_race(&self) -> Result<Pin<Box<dyn Future<Output = &'static str> + Send>>> {
         let future = self.get_monitor()?;
         let name = self.name();
         Ok(Box::pin(async move {
             future.await;
-            record_monitor_triggered(name);
+            name
         }))
     }
 }
@@ -288,7 +287,7 @@ macro_rules! impl_monitor_set_tuple {
         impl<$($P: ExecutionMonitor),+> private::Sealed for ($($P,)+) {}
 
         impl<$($P: ExecutionMonitor),+> MonitorSet for ($($P,)+) {
-            fn to_race(&self) -> Result<Pin<Box<dyn Future<Output = ()> + Send>>> {
+            fn to_race(&self) -> Result<Pin<Box<dyn Future<Output = &'static str> + Send>>> {
                 let ($($p,)+) = &self;
                 // Each get_monitor() runs here on the calling thread,
                 // preserving thread-local state (e.g. CPU clock handles).
@@ -296,10 +295,9 @@ macro_rules! impl_monitor_set_tuple {
 
                 Ok(Box::pin(async move {
                     // Race all monitors — first to complete wins.
-                    let winner = tokio::select! {
+                    tokio::select! {
                         $(_ = $p.0 => $p.1,)+
-                    };
-                    record_monitor_triggered(winner);
+                    }
                 }))
             }
         }
@@ -323,7 +321,7 @@ mod wall_clock;
 pub use wall_clock::WallClockMonitor;
 
 #[cfg(feature = "monitor-cpu-time")]
-mod cpu_time;
+pub(crate) mod cpu_time;
 #[cfg(feature = "monitor-cpu-time")]
 pub use cpu_time::CpuTimeMonitor;
 

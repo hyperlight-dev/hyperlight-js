@@ -198,6 +198,7 @@ node cpu-timeout.js
 - Uses `callHandler()` with **both** CPU + wall-clock timeout options
 - CPU monitor fires first for compute-bound work
 - Wall-clock acts as backstop for resource exhaustion attacks
+- Prints `lastCallStats` after each call (wall clock, CPU time, termination reason)
 
 Expected output:
 ```
@@ -205,11 +206,13 @@ Expected output:
 
 📊 Test 1: Fast Handler (completes before either timeout)
    ✅ SUCCESS: Handler completed!
+   📊 Stats: wall=105.2ms, cpu=104.8ms
 
 📊 Test 2: Slow Handler (CPU monitor fires first)
    💀 Handler killed after ~500ms
    ⚡ CPU time limit: 500ms (fired first for compute-bound work)
    ⏱️  Wall-clock limit: 5000ms (backstop, not reached)
+   📊 Stats: wall=502.1ms, cpu=501.3ms, terminated_by=cpu-time
    ✅ SUCCESS: Timeout enforced correctly!
 ```
 
@@ -263,6 +266,14 @@ async function main() {
 
     // Manual kill
     interruptHandle.kill();
+
+    // Check execution stats after any callHandler() call
+    const stats = loadedSandbox.lastCallStats;
+    if (stats) {
+        console.log(`Wall clock: ${stats.wallClockMs}ms`);
+        console.log(`CPU time: ${stats.cpuTimeMs}ms`);       // null if not available
+        console.log(`Terminated by: ${stats.terminatedBy}`);  // null for normal completion
+    }
 }
 main();
 ```

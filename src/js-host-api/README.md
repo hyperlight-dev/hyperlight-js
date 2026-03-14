@@ -120,6 +120,7 @@ A sandbox with handlers loaded, ready to process events.
 **Properties:**
 - `interruptHandle` → `InterruptHandle` — Gets a handle to interrupt/kill handler execution (getter, not a method)
 - `poisoned` → `boolean` — Whether the sandbox is in a poisoned (inconsistent) state
+- `lastCallStats` → `CallStats | null` — Execution statistics from the most recent `callHandler()` call (see [CallStats](#callstats-) below)
 
 ```javascript
 // Call a handler with event data — pass objects directly, get objects back
@@ -189,6 +190,35 @@ the handler runs without any monitors.
 | `gc` | `boolean?` | Whether to run GC after the handler call. Defaults to `true` |
 
 When both timeouts are set, monitors race with **OR semantics** — whichever fires first terminates execution. This is the **recommended** pattern for comprehensive protection.
+
+### CallStats 📊
+
+Execution statistics from the most recent `callHandler()` call. Retrieved via the `lastCallStats` getter property.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `wallClockMs` | `number` | Wall-clock elapsed time in milliseconds |
+| `cpuTimeMs` | `number \| null` | CPU time in milliseconds (`null` if `monitor-cpu-time` feature not enabled) |
+| `terminatedBy` | `string \| null` | Name of the monitor that fired (e.g. `"wall-clock"`, `"cpu-time"`), or `null` for normal completion |
+
+```javascript
+await loaded.callHandler('handler', { data: 'value' });
+
+const stats = loaded.lastCallStats;
+if (stats) {
+    console.log(`Wall clock: ${stats.wallClockMs.toFixed(1)}ms`);
+    if (stats.cpuTimeMs != null) {
+        console.log(`CPU time: ${stats.cpuTimeMs.toFixed(1)}ms`);
+    }
+    if (stats.terminatedBy) {
+        console.log(`Terminated by: ${stats.terminatedBy}`);
+    }
+}
+```
+
+- Stats are `null` before any call
+- Stats are replaced (not accumulated) on each call
+- Stats are available even when the call throws (e.g. monitor timeout)
 
 ### InterruptHandle ⏱️
 

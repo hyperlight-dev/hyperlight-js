@@ -310,9 +310,9 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cargo-hyperlight"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83f553259dba0c729c7e644d2529c34f4289e984e565f6d188a9b8aa1a4b8ba3"
+checksum = "f745c885e25dbf258ac37804773e60fbb7fce9b46c1db020760131d3faffe35c"
 dependencies = [
  "anyhow",
  "console",

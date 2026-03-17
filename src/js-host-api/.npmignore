@@ -30,3 +30,6 @@ test-examples.sh
 
 # Exclude artifacts directory (only used during CI)
 artifacts/
+
+# Exclude platform sub-packages (published separately as optionalDependencies)
+npm/

@@ -1,5 +1,5 @@
 {
-  "name": "@hyperlight/js-host-api-linux-x64-gnu",
+  "name": "@hyperlight/js-host-api-linux-x64-musl",
   "version": "0.17.0",
   "os": [
     "linux"
@@ -7,11 +7,11 @@
   "cpu": [
     "x64"
   ],
-  "main": "js-host-api.linux-x64-gnu.node",
+  "main": "js-host-api.linux-x64-musl.node",
   "files": [
-    "js-host-api.linux-x64-gnu.node"
+    "js-host-api.linux-x64-musl.node"
   ],
-  "description": "Node.js API bindings for Hyperlight JS - Linux x64 gnu",
+  "description": "Node.js API bindings for Hyperlight JS - Linux x64 musl",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -25,6 +25,6 @@
     "node": ">= 18"
   },
   "libc": [
-    "glibc"
+    "musl"
   ]
 }

@@ -79,11 +79,7 @@ jobs:
 
       - name: Set package version
         working-directory: ${{ env.WORKING_DIR }}
-        shell: bash
-        run: |
-          npm version "$VERSION" --no-git-tag-version --allow-same-version
-        env:
-          VERSION: ${{ inputs.version }}
+        run: npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
 
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
@@ -117,6 +113,11 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      - name: Validate version format
+        run: npx --yes semver "$VERSION" >/dev/null 2>&1 || { echo "Invalid version: $VERSION"; exit 1; }
+        env:
+          VERSION: ${{ inputs.version }}
 
       - name: Install dependencies
         working-directory: ${{ env.WORKING_DIR }}
@@ -189,7 +190,7 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           # napi prepublish generates index.js and index.d.ts from the .node artifacts
-          npx napi prepublish -t npm --skip-gh-release
+          npx --no-install napi prepublish -t npm --skip-gh-release
           ls -la index.js index.d.ts
 
       - name: Publish Linux GNU package

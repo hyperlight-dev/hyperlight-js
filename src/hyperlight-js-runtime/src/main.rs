@@ -22,6 +22,11 @@ limitations under the License.
 // See: docs/extending-runtime.md
 hyperlight_js_runtime::native_modules! {}
 
+// Provide the `init_custom_globals` symbol required by JsRuntime::new().
+// The upstream binary has no custom globals so this is empty.
+// Extender binaries list their custom globals setup functions here instead.
+hyperlight_js_runtime::custom_globals! {}
+
 // The hyperlight guest entry point (hyperlight_main, guest_dispatch_function,
 // etc.) is provided by the lib's `guest` module.
 // The binary only needs to provide the native CLI entry point.

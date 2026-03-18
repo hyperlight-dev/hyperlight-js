@@ -185,6 +185,18 @@ hyperlight_js_runtime::native_modules! {
     "test_math_macro" => js_test_math,
 }
 
+// ── custom_globals! macro ──────────────────────────────────────────────────
+
+fn setup_test_constant(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>("globalThis.TEST_CUSTOM_GLOBAL = 99;")?;
+    Ok(())
+}
+
+// The macro generates init_custom_globals() which calls each setup function
+hyperlight_js_runtime::custom_globals! {
+    setup_test_constant,
+}
+
 #[test]
 fn macro_generated_init_registers_modules() {
     init_native_modules();
@@ -444,4 +456,121 @@ fn full_pipeline_console_log_with_custom_modules() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.trim().lines().collect();
     assert_eq!(lines, ["computed: 54", "Handler result: 54"]);
+}
+
+// ── custom_globals! tests ──────────────────────────────────────────────────
+
+#[test]
+fn e2e_custom_globals_are_available_in_handlers() {
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler_script = r#"
+        export function handler(event) {
+            return TEST_CUSTOM_GLOBAL;
+        }
+    "#;
+
+    runtime
+        .register_handler("globals_handler", handler_script, ".")
+        .expect("Failed to register handler");
+
+    let result = runtime
+        .run_handler("globals_handler".to_string(), "{}".to_string(), false)
+        .expect("Failed to run handler");
+
+    assert_eq!(result, "99");
+}
+
+#[test]
+fn e2e_custom_globals_coexist_with_builtins() {
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler_script = r#"
+        export function handler(event) {
+            // Built-in console should still work
+            console.log("custom global value: " + TEST_CUSTOM_GLOBAL);
+            return TEST_CUSTOM_GLOBAL;
+        }
+    "#;
+
+    runtime
+        .register_handler("globals_coexist", handler_script, ".")
+        .expect("Failed to register handler");
+
+    let result = runtime
+        .run_handler("globals_coexist".to_string(), "{}".to_string(), false)
+        .expect("Failed to run handler");
+
+    assert_eq!(result, "99");
+}
+
+// ── Full pipeline custom globals tests ─────────────────────────────────────
+
+#[test]
+fn full_pipeline_custom_globals_available() {
+    let binary = &*EXTENDED_RUNTIME_BINARY;
+    let dir = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        dir.path().join("handler.js"),
+        r#"
+            function handler(event) {
+                return CUSTOM_GLOBAL_TEST;
+            }
+        "#,
+    )
+    .unwrap();
+
+    let output = Command::new(binary)
+        .arg(dir.path().join("handler.js"))
+        .arg("{}")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Handler result: 42"),
+        "Expected custom global to be 42, got: {stdout}"
+    );
+}
+
+#[test]
+fn full_pipeline_custom_globals_with_modules() {
+    let binary = &*EXTENDED_RUNTIME_BINARY;
+    let dir = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        dir.path().join("handler.js"),
+        r#"
+            import { add } from "math";
+            function handler(event) {
+                return add(CUSTOM_GLOBAL_TEST, event.x);
+            }
+        "#,
+    )
+    .unwrap();
+
+    let output = Command::new(binary)
+        .arg(dir.path().join("handler.js"))
+        .arg(r#"{"x":8}"#)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Handler result: 50"),
+        "Expected 42 + 8 = 50, got: {stdout}"
+    );
 }

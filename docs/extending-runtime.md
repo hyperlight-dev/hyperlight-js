@@ -207,3 +207,90 @@ Register a single custom native module by name. Typically called via the
 ```rust
 hyperlight_js_runtime::JsRuntime::new(host)
 ```
+
+## Custom Globals
+
+Register global objects (constructors, polyfills, constants) available
+to all JavaScript code without `import`:
+
+```rust
+fn setup_my_globals(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>("globalThis.MY_CONSTANT = 42;")?;
+    Ok(())
+}
+
+hyperlight_js_runtime::custom_globals! {
+    setup_my_globals,
+}
+```
+
+Custom globals are set up after built-in globals (console, require, print)
+during `JsRuntime::new()`. Both Rust-implemented classes (via
+`#[rquickjs::class]`) and JavaScript polyfills (via `ctx.eval()`) are
+supported.
+
+### Rust class example
+
+For things like `TextEncoder` / `TextDecoder` where you need a proper
+constructor accessible as `new TextEncoder()`:
+
+```rust
+use rquickjs::{Ctx, class::Trace, JsLifetime, TypedArray};
+
+#[rquickjs::class]
+#[derive(Trace, JsLifetime)]
+pub struct TextEncoder {}
+
+#[rquickjs::methods]
+impl TextEncoder {
+    #[qjs(constructor)]
+    pub fn new() -> Self { TextEncoder {} }
+
+    pub fn encode<'js>(&self, ctx: Ctx<'js>, input: String)
+        -> rquickjs::Result<TypedArray<'js, u8>> {
+        TypedArray::new(ctx, input.into_bytes())
+    }
+}
+
+fn setup_text_encoding(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    TextEncoder::register(ctx)?;
+    ctx.globals().set("TextEncoder", TextEncoder::constructor(ctx)?)?;
+    Ok(())
+}
+
+hyperlight_js_runtime::custom_globals! {
+    setup_text_encoding,
+}
+```
+
+### Combined with native modules
+
+Both macros can be used together — the binary just needs to invoke both:
+
+```rust
+hyperlight_js_runtime::native_modules! {
+    "math" => js_math,
+}
+
+hyperlight_js_runtime::custom_globals! {
+    setup_text_encoding,
+}
+```
+
+### `custom_globals!`
+
+```rust
+hyperlight_js_runtime::custom_globals! {
+    setup_fn_a,
+    setup_fn_b,
+}
+```
+
+Generates an `init_custom_globals(ctx)` function that calls each setup
+function in order. Called automatically by `JsRuntime::new()` after
+built-in globals are installed. Each setup function receives `&Ctx` and
+can register constructors, objects, or values on `ctx.globals()`.
+
+**Important:** Every binary that links `hyperlight-js-runtime` must invoke
+this macro (even if empty). The base runtime's `main.rs` already does this
+with `custom_globals! {}` — same pattern as `native_modules!`.

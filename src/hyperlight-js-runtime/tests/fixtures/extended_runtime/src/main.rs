@@ -32,6 +32,16 @@ hyperlight_js_runtime::native_modules! {
     "math" => js_math,
 }
 
+// Register custom globals for the extended runtime.
+fn setup_test_global(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>("globalThis.CUSTOM_GLOBAL_TEST = 42;")?;
+    Ok(())
+}
+
+hyperlight_js_runtime::custom_globals! {
+    setup_test_global,
+}
+
 // ── Native CLI entry point (for dev/testing) ───────────────────────────────
 
 #[cfg(not(hyperlight))]

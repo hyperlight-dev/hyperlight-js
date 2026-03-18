@@ -176,7 +176,11 @@ impl JsRuntime {
             host_loader.install(&ctx)?;
 
             // Setup the global objects in the context, so they are available to the handler scripts.
-            globals::setup(&ctx).catch(&ctx)
+            globals::setup(&ctx).catch(&ctx)?;
+
+            // Setup custom globals registered by extender crates via custom_globals! macro.
+            // Runs after built-in globals so custom setup can reference console, require, etc.
+            modules::setup_custom_globals(&ctx).catch(&ctx)
         })?;
 
         Ok(Self {

@@ -208,6 +208,30 @@ for (const method of [
     SandboxBuilder.prototype[method] = wrapSync(orig);
 }
 
+// setHostPrintFn needs a custom wrapper: the user's callback is wrapped in
+// try/catch before it reaches the native layer, because exceptions thrown
+// inside a Blocking ThreadsafeFunction escape as unhandled errors.
+{
+    const origSetHostPrintFn = SandboxBuilder.prototype.setHostPrintFn;
+    if (!origSetHostPrintFn) {
+        throw new Error('Cannot wrap missing method: SandboxBuilder.setHostPrintFn');
+    }
+    SandboxBuilder.prototype.setHostPrintFn = wrapSync(function (callback) {
+        if (typeof callback !== 'function') {
+            // Forward non-function values to the native method for consistent
+            // validation errors (the Rust layer rejects non-callable arguments).
+            return origSetHostPrintFn.call(this, callback);
+        }
+        return origSetHostPrintFn.call(this, (msg) => {
+            Promise.resolve()
+                .then(() => callback(msg))
+                .catch((e) => {
+                    console.error('Host print callback threw:', e);
+                });
+        });
+    });
+}
+
 // ── Re-export ────────────────────────────────────────────────────────
 
 module.exports = native;

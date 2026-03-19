@@ -19,10 +19,10 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        build: [windows-2022-debug, linux-kvm-debug, linux-hyperv3-debug, windows-2022-release, linux-kvm-release, linux-hyperv3-release]
+        build: [windows-2025-debug, linux-kvm-debug, linux-hyperv3-debug, windows-2025-release, linux-kvm-release, linux-hyperv3-release]
         include:
-          - build: windows-2022-debug
-            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+          - build: windows-2025-debug
+            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
             hypervisor: whp
             config: debug
           - build: linux-kvm-debug
@@ -33,8 +33,8 @@ jobs:
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
             hypervisor: hyperv3
             config: debug
-          - build: windows-2022-release
-            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+          - build: windows-2025-release
+            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
             hypervisor: whp
             config: release
           - build: linux-kvm-release

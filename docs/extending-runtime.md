@@ -189,9 +189,13 @@ modules into the global native module registry. Called automatically by the
 `NativeModuleLoader` on first use — you never need to call it yourself.
 Built-in modules are inherited automatically.
 
-**Restrictions:**
-- Custom module names **cannot** shadow built-in modules (`io`, `crypto`,
-  `console`, `require`). Attempting to register a built-in name panics.
+Custom modules with the same name as a built-in (`io`, `crypto`, `console`)
+take priority, allowing extender crates to replace built-in implementations
+when needed.
+
+**Restriction:** The `require` module cannot be overridden — it is part of
+the runtime's core module loading infrastructure. Attempting to register
+a module named `"require"` will panic.
 
 ### `register_native_module`
 

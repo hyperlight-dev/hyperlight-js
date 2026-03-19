@@ -16,14 +16,22 @@ limitations under the License.
 use rquickjs::Ctx;
 
 mod console;
+mod freeze;
 mod print;
 mod require;
 mod string;
 
+/// Setup built-in globals (writable — before custom_globals!).
 pub fn setup(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     string::setup(ctx)?;
     print::setup(ctx)?;
     console::setup(ctx)?;
     require::setup(ctx)?;
+    Ok(())
+}
+
+/// Freeze built-in globals (after custom_globals! has run).
+pub fn freeze(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    freeze::setup(ctx)?;
     Ok(())
 }

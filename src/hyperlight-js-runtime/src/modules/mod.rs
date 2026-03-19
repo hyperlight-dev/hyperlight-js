@@ -66,19 +66,22 @@ static CUSTOM_MODULES: LazyLock<Mutex<HashMap<&'static str, ModuleDeclarationFn>
 /// Register a custom native module by name.
 ///
 /// The module will be available to JavaScript via `import { ... } from "name"`.
-/// Custom modules cannot shadow built-in modules (io, crypto, console, require).
+/// Custom modules take priority over built-in modules with the same name,
+/// allowing extender crates to replace built-ins (e.g. `io`, `crypto`,
+/// `console`) with custom implementations.
+///
+/// The `require` module cannot be overridden — it is part of the runtime's
+/// core module loading infrastructure.
 ///
 /// This is typically called via the [`native_modules!`] macro rather than
 /// directly.
 ///
 /// # Panics
 ///
-/// Panics if `name` collides with a built-in module name.
+/// Panics if `name` is `"require"`.
 pub fn register_native_module(name: &'static str, decl: ModuleDeclarationFn) {
-    if BUILTIN_MODULES.contains_key(name) {
-        panic!(
-            "Cannot register custom native module '{name}': name conflicts with a built-in module"
-        );
+    if name == "require" {
+        panic!("Cannot override the 'require' module — it is part of the runtime's core infrastructure");
     }
     CUSTOM_MODULES.lock().insert(name, decl);
 }
@@ -162,8 +165,8 @@ impl Loader for NativeModuleLoader {
 /// }
 /// ```
 ///
-/// Custom module names **cannot** shadow built-in modules (`io`, `crypto`,
-/// `console`, `require`). Attempting to do so will panic at startup.
+/// Custom modules take priority over built-in modules with the same name,
+/// allowing extender crates to replace built-ins with custom implementations.
 #[macro_export]
 macro_rules! native_modules {
     ($($name:expr => $module:ty),* $(,)?) => {

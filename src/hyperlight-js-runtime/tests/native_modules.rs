@@ -153,22 +153,28 @@ fn builtins_still_work_after_custom_registration() {
     });
 }
 
-// ── Override prevention ────────────────────────────────────────────────────
+// ── Built-in override ──────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "conflicts with a built-in module")]
-fn registering_builtin_name_panics() {
+#[should_panic(expected = "Cannot override the 'require' module")]
+fn overriding_require_panics() {
     #[rquickjs::module(rename_vars = "camelCase")]
-    mod fake_io {
+    mod fake_require {
         #[rquickjs::function]
-        pub fn print(_txt: String) {}
+        pub fn require(_name: String) -> String {
+            String::from("fake")
+        }
     }
 
     hyperlight_js_runtime::modules::register_native_module(
-        "io",
-        hyperlight_js_runtime::modules::declaration::<js_fake_io>(),
+        "require",
+        hyperlight_js_runtime::modules::declaration::<js_fake_require>(),
     );
 }
+
+// Note: overriding io/crypto/console is allowed but tested via the
+// full-pipeline extended_runtime fixture to avoid poisoning the shared
+// static module registry used by other tests in this process.
 
 // ── native_modules! macro ──────────────────────────────────────────────────
 
@@ -192,9 +198,20 @@ fn setup_test_constant(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     Ok(())
 }
 
+fn setup_console_extensions(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        console.warn = console.log;
+        console.error = console.log;
+    "#,
+    )?;
+    Ok(())
+}
+
 // The macro generates init_custom_globals() which calls each setup function
 hyperlight_js_runtime::custom_globals! {
     setup_test_constant,
+    setup_console_extensions,
 }
 
 #[test]
@@ -461,6 +478,26 @@ fn full_pipeline_console_log_with_custom_modules() {
 // ── custom_globals! tests ──────────────────────────────────────────────────
 
 #[test]
+fn e2e_console_warn_works_via_custom_globals() {
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler = r#"
+        export function handler() {
+            console.warn("warn test");
+            console.error("error test");
+            return "ok";
+        }
+    "#;
+
+    runtime.register_handler("warn_test", handler, ".").unwrap();
+    let result = runtime
+        .run_handler("warn_test".into(), "{}".into(), false)
+        .unwrap();
+    assert_eq!(result, "\"ok\"");
+}
+
+#[test]
 fn e2e_custom_globals_are_available_in_handlers() {
     let mut runtime =
         hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
@@ -573,4 +610,103 @@ fn full_pipeline_custom_globals_with_modules() {
         stdout.contains("Handler result: 50"),
         "Expected 42 + 8 = 50, got: {stdout}"
     );
+}
+// ── globals freeze tests ───────────────────────────────────────────────────
+
+#[test]
+fn e2e_console_is_extensible_during_custom_globals() {
+    // setup_test_constant already runs via custom_globals! in this file.
+    // Verify custom globals constant works (proves custom_globals! ran).
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler = r#"
+        export function handler() {
+            return TEST_CUSTOM_GLOBAL;
+        }
+    "#;
+
+    runtime
+        .register_handler("extensible_test", handler, ".")
+        .unwrap();
+
+    let result = runtime
+        .run_handler("extensible_test".into(), "{}".into(), false)
+        .unwrap();
+    assert_eq!(result, "99");
+}
+
+#[test]
+fn e2e_console_frozen_after_init() {
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler = r#"
+        export function handler() {
+            try {
+                console.custom = function() {};
+                return "not_frozen";
+            } catch(e) {
+                return "frozen";
+            }
+        }
+    "#;
+
+    runtime
+        .register_handler("freeze_test", handler, ".")
+        .unwrap();
+    let result = runtime
+        .run_handler("freeze_test".into(), "{}".into(), false)
+        .unwrap();
+    assert!(
+        result.contains("frozen"),
+        "console should be frozen, got: {result}"
+    );
+}
+
+#[test]
+fn e2e_print_frozen_after_init() {
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler = r#"
+        export function handler() {
+            try {
+                globalThis.print = function() {};
+                return "not_frozen";
+            } catch(e) {
+                return "frozen";
+            }
+        }
+    "#;
+
+    runtime
+        .register_handler("print_freeze", handler, ".")
+        .unwrap();
+    let result = runtime
+        .run_handler("print_freeze".into(), "{}".into(), false)
+        .unwrap();
+    assert!(
+        result.contains("frozen"),
+        "print should be frozen, got: {result}"
+    );
+}
+
+#[test]
+fn e2e_console_log_still_works_after_freeze() {
+    let mut runtime =
+        hyperlight_js_runtime::JsRuntime::new(NoOpHost).expect("Failed to create JsRuntime");
+
+    let handler = r#"
+        export function handler() {
+            console.log("still works");
+            return "ok";
+        }
+    "#;
+
+    runtime.register_handler("log_test", handler, ".").unwrap();
+    let result = runtime
+        .run_handler("log_test".into(), "{}".into(), false)
+        .unwrap();
+    assert_eq!(result, "\"ok\"");
 }

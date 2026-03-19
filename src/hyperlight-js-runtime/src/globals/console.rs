@@ -13,15 +13,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-use rquickjs::object::Property;
-use rquickjs::{Ctx, Module, Object};
+use rquickjs::{Ctx, Function, Module, Object};
 
 pub fn setup(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let globals = ctx.globals();
 
-    // Setup `console`.
-    let console: Object = Module::import(ctx, "console")?.finish()?;
-    globals.prop("console", Property::from(console))?;
+    // Create console as a plain extensible Object (not the frozen module namespace).
+    // This allows custom_globals! consumers to add methods (warn, error, info, debug)
+    // before globals::freeze() locks it down.
+    let console_mod: Object = Module::import(ctx, "console")?.finish()?;
+    let console = Object::new(ctx.clone())?;
+    console.set("log", console_mod.get::<_, Function>("log")?)?;
+    globals.set("console", console)?;
 
     Ok(())
 }

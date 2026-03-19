@@ -13,15 +13,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-use rquickjs::object::Property;
 use rquickjs::{Ctx, Function, Module, Object};
 
 pub fn setup(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let globals = ctx.globals();
 
-    // Setup `print` function.
+    // Setup `print` as a writable global.
+    // Allows custom_globals! to override (e.g. for output capture).
+    // Frozen by globals::freeze() after custom_globals! runs.
     let io: Object = Module::import(ctx, "io")?.finish()?;
-    globals.prop("print", Property::from(io.get::<_, Function>("print")?))?;
+    globals.set("print", io.get::<_, Function>("print")?)?;
 
     Ok(())
 }

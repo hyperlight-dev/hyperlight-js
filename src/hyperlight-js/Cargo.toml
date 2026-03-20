@@ -54,7 +54,7 @@ metrics-exporter-prometheus = "0.18"
 metrics-util = "0.20.1"
 opentelemetry = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "grpc-tonic"] }
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.31"
 plotters = { version = "0.3.5", default-features = false, features = ["svg_backend"] }
 rand = "0.10.0"

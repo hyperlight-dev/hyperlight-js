@@ -39,7 +39,7 @@ jobs:
 
       # Ensures just is installed using setup wokflow to ensure just version consistency
       - name: Hyperlight setup
-        uses: hyperlight-dev/ci-setup-workflow@v1.8.0
+        uses: hyperlight-dev/ci-setup-workflow@v1.9.0
         with:
           rust-toolchain: "1.89"
 

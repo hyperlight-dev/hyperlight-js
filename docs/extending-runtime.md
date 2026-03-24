@@ -74,15 +74,20 @@ libc stubs) — no copying files or build scripts needed.
 
 ### 3. Build and embed in hyperlight-js
 
-Build your custom runtime for the Hyperlight target and embed it:
+Set `HYPERLIGHT_CFLAGS` before building. The hyperlight target has no libc —
+QuickJS needs the stub headers from `hyperlight-js-runtime/include/` and
+`-D__wasi__=1` to disable pthreads.
 
 ```bash
-# Build for the hyperlight target
-cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml
+export HYPERLIGHT_CFLAGS=$(node -e "
+  var m=JSON.parse(require('child_process').execSync(
+    'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
+    {encoding:'utf8',stdio:['pipe','pipe','pipe']}));
+  var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
+  console.log('-I'+require('path').join(require('path').dirname(p.manifest_path),'include')+' -D__wasi__=1');
+")
 
-# Build hyperlight-js with your custom runtime embedded
-HYPERLIGHT_JS_RUNTIME_PATH=/path/to/my-custom-runtime \
-    cargo build -p hyperlight-js
+cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml
 ```
 
 ### 4. Use from the host

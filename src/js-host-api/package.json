@@ -13,7 +13,7 @@
     "@napi-rs/cli": "^3.5.1",
     "eslint": "^10.0.3",
     "prettier": "^3.8.1",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.1"
   },
   "engines": {
     "node": ">= 18"

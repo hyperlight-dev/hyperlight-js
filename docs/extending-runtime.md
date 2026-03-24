@@ -74,20 +74,30 @@ libc stubs) — no copying files or build scripts needed.
 
 ### 3. Build and embed in hyperlight-js
 
-Set `HYPERLIGHT_CFLAGS` before building. The hyperlight target has no libc —
-QuickJS needs the stub headers from `hyperlight-js-runtime/include/` and
-`-D__wasi__=1` to disable pthreads.
+The hyperlight target has no libc, so QuickJS needs stub headers from
+`hyperlight-js-runtime/include/` and `-D__wasi__=1` to disable pthreads.
+Set `HYPERLIGHT_CFLAGS` before building — the one-liner below uses
+`cargo metadata` to resolve the include path from your dependency tree:
 
 ```bash
+# Resolve CFLAGS from hyperlight-js-runtime's include/ directory
 export HYPERLIGHT_CFLAGS=$(node -e "
   var m=JSON.parse(require('child_process').execSync(
     'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
-    {encoding:'utf8',stdio:['pipe','pipe','pipe']}));
+    {encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:20*1024*1024}));
   var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
-  console.log('-I'+require('path').join(require('path').dirname(p.manifest_path),'include')+' -D__wasi__=1');
+  if(p)console.log('-I'+require('path').join(
+    require('path').dirname(p.manifest_path),'include')+' -D__wasi__=1');
 ")
 
-cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml
+# Build the custom runtime for the hyperlight target
+cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml --release
+
+# Tell hyperlight-js to embed the custom runtime (not the default one)
+export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/x86_64-hyperlight-none/release/my-custom-runtime
+
+# Rebuild hyperlight-js so the embedded runtime is updated
+cargo build -p hyperlight-js --release
 ```
 
 ### 4. Use from the host
@@ -177,6 +187,93 @@ for a working example with end-to-end tests.
 
 Run `just test-native-modules` to build the fixture for the Hyperlight
 target and run the full integration tests.
+
+## Using js-host-api from a Downstream Node.js Project
+
+If your downstream project depends on `@hyperlight/js-host-api` (the
+Node.js NAPI addon) and uses a custom runtime, you **cannot** use a
+published version of the addon — the published binary has the default
+runtime baked in via `include_bytes!()`. You need to build the NAPI
+addon from source with your custom runtime embedded.
+
+### Why not just `npm install`?
+
+The `js-host-api` NAPI addon links against the `hyperlight-js` Rust crate,
+which embeds the runtime binary at compile time. A published npm package
+would contain a `.node` binary with the **default** runtime — your custom
+native modules wouldn't be present.
+
+### The pattern: reuse Cargo's git checkout
+
+Your custom runtime crate already has a Cargo dependency on
+`hyperlight-js-runtime`, which causes Cargo to clone the full
+`hyperlight-js` workspace into `~/.cargo/git/checkouts/`. The
+`js-host-api` NAPI source is included in that checkout — no separate
+git clone needed.
+
+#### 1. Discover the checkout path
+
+Use `cargo metadata` to find where Cargo placed the hyperlight-js
+workspace:
+
+```bash
+HYPERLIGHT_DIR=$(node -e "
+  var m=JSON.parse(require('child_process').execSync(
+    'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
+    {encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:20*1024*1024}));
+  var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
+  if(p)console.log(require('path').resolve(
+    require('path').dirname(p.manifest_path),'..','..'));
+")
+echo "$HYPERLIGHT_DIR"
+# e.g. /home/you/.cargo/git/checkouts/hyperlight-js-abc123/def456
+```
+
+#### 2. Build the NAPI addon with your custom runtime
+
+```bash
+# Set HYPERLIGHT_CFLAGS for the guest build
+export HYPERLIGHT_CFLAGS=$(node -e "
+  var m=JSON.parse(require('child_process').execSync(
+    'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
+    {encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:20*1024*1024}));
+  var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
+  if(p)console.log('-I'+require('path').join(
+    require('path').dirname(p.manifest_path),'include')+' -D__wasi__=1');
+")
+
+# Build your custom runtime for the hyperlight target
+cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml --release
+
+# Point hyperlight-js at your custom runtime binary
+export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/x86_64-hyperlight-none/release/my-custom-runtime
+
+# Clean stale builds so build.rs re-embeds the runtime
+cd "${HYPERLIGHT_DIR}/src/hyperlight-js" && cargo clean -p hyperlight-js
+
+# Build the NAPI addon from the Cargo checkout
+cd "${HYPERLIGHT_DIR}" && just build release
+```
+
+#### 3. Symlink for npm dependency resolution
+
+Create a symlink so npm can resolve the addon via a stable path:
+
+```bash
+mkdir -p deps
+ln -sfn "${HYPERLIGHT_DIR}/src/js-host-api" deps/js-host-api
+```
+
+In your package.json, point to js-host-api via the symlink:
+
+```json
+{
+  "dependencies": {
+    "@hyperlight/js-host-api": "file:deps/js-host-api"
+  }
+}
+```
+Make sure to add `deps` to your `.gitignore` since it's a symlink to a local Cargo checkout.
 
 ## API Reference
 

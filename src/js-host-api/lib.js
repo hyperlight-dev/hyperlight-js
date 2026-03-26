@@ -144,18 +144,19 @@ function wrapGetter(cls, prop) {
 }
 
 // LoadedJSSandbox — async methods
-// Note: `poisoned` (AtomicBool read) and `interruptHandle` (Arc clone)
-// are infallible getters — no wrapping needed.
-for (const method of ['callHandler', 'unload', 'snapshot', 'restore']) {
+for (const method of ['callHandler', 'unload', 'snapshot', 'restore', 'dispose']) {
     const orig = LoadedJSSandbox.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: LoadedJSSandbox.${method}`);
     LoadedJSSandbox.prototype[method] = wrapAsync(orig);
 }
+wrapGetter(LoadedJSSandbox, 'poisoned');
+wrapGetter(LoadedJSSandbox, 'interruptHandle');
+wrapGetter(LoadedJSSandbox, 'lastCallStats');
 
 // JSSandbox — async + sync methods + getters
 JSSandbox.prototype.getLoadedSandbox = wrapAsync(JSSandbox.prototype.getLoadedSandbox);
 
-for (const method of ['addHandler', 'removeHandler', 'clearHandlers']) {
+for (const method of ['addHandler', 'removeHandler', 'clearHandlers', 'dispose']) {
     const orig = JSSandbox.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: JSSandbox.${method}`);
     JSSandbox.prototype[method] = wrapSync(orig);

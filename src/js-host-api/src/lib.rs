@@ -790,6 +790,7 @@ impl JSSandboxWrapper {
             interrupt,
             poisoned_flag,
             last_call_stats: Arc::new(ArcSwapOption::empty()),
+            disposed_flag: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -800,6 +801,20 @@ impl JSSandboxWrapper {
     #[napi(getter)]
     pub fn poisoned(&self) -> napi::Result<bool> {
         self.with_inner_ref(|sandbox| Ok(sandbox.poisoned()))
+    }
+
+    /// Eagerly release the underlying sandbox resources.
+    ///
+    /// After calling `dispose()`, the sandbox is consumed and all
+    /// subsequent method calls will throw an `ERR_CONSUMED` error.
+    /// This is useful when you want deterministic cleanup rather than
+    /// waiting for garbage collection.
+    ///
+    /// Calling `dispose()` on an already-consumed sandbox is a no-op.
+    #[napi]
+    pub fn dispose(&self) -> napi::Result<()> {
+        let _ = self.inner.lock().map_err(|_| lock_error())?.take();
+        Ok(())
     }
 }
 
@@ -853,6 +868,11 @@ pub struct LoadedJSSandboxWrapper {
     /// closures (which require `'static + Send`). `ArcSwapOption` alone is
     /// not `Clone` — the `Arc` provides cheap shared ownership across threads.
     last_call_stats: Arc<ArcSwapOption<CallStats>>,
+
+    /// Tracks whether this wrapper has been consumed (via `dispose()` or
+    /// `unload()`), for lock-free checks in sync getters that don't
+    /// consult the inner Mutex.
+    disposed_flag: Arc<AtomicBool>,
 }
 
 #[napi]
@@ -1013,11 +1033,13 @@ impl LoadedJSSandboxWrapper {
     #[napi]
     pub async fn unload(&self) -> napi::Result<JSSandboxWrapper> {
         let inner = self.inner.clone();
+        let disposed = self.disposed_flag.clone();
         let js_sandbox = tokio::task::spawn_blocking(move || {
             let mut guard = inner.lock().map_err(|_| lock_error())?;
             let loaded = guard
                 .take()
                 .ok_or_else(|| consumed_error("LoadedJSSandbox"))?;
+            disposed.store(true, Ordering::Release);
             loaded.unload().map_err(to_napi_error)
         })
         .await
@@ -1043,11 +1065,15 @@ impl LoadedJSSandboxWrapper {
     /// the sandbox lock — it is always available instantly.
     ///
     /// @returns An `InterruptHandle` with a `kill()` method
+    /// @throws `ERR_CONSUMED` if the sandbox has been consumed via `dispose()` or `unload()`
     #[napi(getter)]
-    pub fn interrupt_handle(&self) -> InterruptHandleWrapper {
-        InterruptHandleWrapper {
-            inner: self.interrupt.clone(),
+    pub fn interrupt_handle(&self) -> napi::Result<InterruptHandleWrapper> {
+        if self.disposed_flag.load(Ordering::Acquire) {
+            return Err(consumed_error("LoadedJSSandbox"));
         }
+        Ok(InterruptHandleWrapper {
+            inner: self.interrupt.clone(),
+        })
     }
 
     /// Whether the sandbox is in a poisoned (inconsistent) state.
@@ -1063,9 +1089,14 @@ impl LoadedJSSandboxWrapper {
     /// Recovery options:
     /// - `restore(snapshot)` — revert to a captured state
     /// - `unload()` — discard handlers and start fresh
+    ///
+    /// @throws `ERR_CONSUMED` if the sandbox has been consumed via `dispose()` or `unload()`
     #[napi(getter)]
-    pub fn poisoned(&self) -> bool {
-        self.poisoned_flag.load(Ordering::Acquire)
+    pub fn poisoned(&self) -> napi::Result<bool> {
+        if self.disposed_flag.load(Ordering::Acquire) {
+            return Err(consumed_error("LoadedJSSandbox"));
+        }
+        Ok(self.poisoned_flag.load(Ordering::Acquire))
     }
 
     /// Execution statistics from the most recent `callHandler()` call.
@@ -1089,12 +1120,18 @@ impl LoadedJSSandboxWrapper {
     ///     if (stats.terminatedBy) console.log(`Killed by: ${stats.terminatedBy}`);
     /// }
     /// ```
+    ///
+    /// @throws `ERR_CONSUMED` if the sandbox has been consumed via `dispose()` or `unload()`
     #[napi(getter)]
-    pub fn last_call_stats(&self) -> Option<CallStats> {
-        self.last_call_stats
+    pub fn last_call_stats(&self) -> napi::Result<Option<CallStats>> {
+        if self.disposed_flag.load(Ordering::Acquire) {
+            return Err(consumed_error("LoadedJSSandbox"));
+        }
+        Ok(self
+            .last_call_stats
             .load()
             .as_ref()
-            .map(|arc| (**arc).clone())
+            .map(|arc| (**arc).clone()))
     }
 
     /// Capture the current sandbox state as a snapshot.
@@ -1146,6 +1183,30 @@ impl LoadedJSSandboxWrapper {
             let result = sandbox.restore(snap).map_err(to_napi_error);
             poisoned_flag.store(sandbox.poisoned(), Ordering::Release);
             result
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    /// Eagerly release the underlying sandbox resources.
+    ///
+    /// After calling `dispose()`, the sandbox is consumed and all
+    /// subsequent method calls will throw an `ERR_CONSUMED` error.
+    /// This is useful when you want deterministic cleanup rather than
+    /// waiting for garbage collection.
+    ///
+    /// Calling `dispose()` on an already-consumed sandbox is a no-op.
+    #[napi]
+    pub async fn dispose(&self) -> napi::Result<()> {
+        if self.disposed_flag.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let inner = self.inner.clone();
+        let disposed = self.disposed_flag.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = inner.lock().map_err(|_| lock_error())?.take();
+            disposed.store(true, Ordering::Release);
+            Ok(())
         })
         .await
         .map_err(join_error)?

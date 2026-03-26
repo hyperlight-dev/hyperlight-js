@@ -308,3 +308,140 @@ describe('Calculator example', () => {
         expect(result.result).toBe(4);
     });
 });
+
+// ── dispose() ────────────────────────────────────────────────────────
+
+describe('JSSandbox.dispose()', () => {
+    it('should make subsequent method calls throw ERR_CONSUMED', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+
+        sandbox.dispose();
+
+        expectThrowsWithCode(
+            () => sandbox.addHandler('h', 'function handler() {}'),
+            'ERR_CONSUMED'
+        );
+    });
+
+    it('should be a no-op when called twice', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+
+        sandbox.dispose();
+        sandbox.dispose(); // should not throw
+    });
+
+    it('should make poisoned getter throw ERR_CONSUMED', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+
+        sandbox.dispose();
+
+        expectThrowsWithCode(() => sandbox.poisoned, 'ERR_CONSUMED');
+    });
+});
+
+describe('LoadedJSSandbox.dispose()', () => {
+    it('should make subsequent callHandler reject with ERR_CONSUMED', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return { ok: true }; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.dispose();
+
+        await expectRejectsWithCode(loaded.callHandler('handler', {}), 'ERR_CONSUMED');
+    });
+
+    it('should be a no-op when called twice', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.dispose();
+        await loaded.dispose(); // should not throw
+    });
+
+    it('should make poisoned getter throw ERR_CONSUMED', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.dispose();
+
+        expectThrowsWithCode(() => loaded.poisoned, 'ERR_CONSUMED');
+    });
+
+    it('should make interruptHandle getter throw ERR_CONSUMED', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.dispose();
+
+        expectThrowsWithCode(() => loaded.interruptHandle, 'ERR_CONSUMED');
+    });
+
+    it('should make lastCallStats getter throw ERR_CONSUMED', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.dispose();
+
+        expectThrowsWithCode(() => loaded.lastCallStats, 'ERR_CONSUMED');
+    });
+});
+
+// ── unload() consumption ─────────────────────────────────────────────
+
+describe('LoadedJSSandbox.unload()', () => {
+    it('should make poisoned getter throw ERR_CONSUMED after unload', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.unload();
+
+        expectThrowsWithCode(() => loaded.poisoned, 'ERR_CONSUMED');
+    });
+
+    it('should make interruptHandle getter throw ERR_CONSUMED after unload', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.unload();
+
+        expectThrowsWithCode(() => loaded.interruptHandle, 'ERR_CONSUMED');
+    });
+
+    it('should make lastCallStats getter throw ERR_CONSUMED after unload', async () => {
+        const builder = new SandboxBuilder();
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler() { return {}; }');
+        const loaded = await sandbox.getLoadedSandbox();
+
+        await loaded.unload();
+
+        expectThrowsWithCode(() => loaded.lastCallStats, 'ERR_CONSUMED');
+    });
+});

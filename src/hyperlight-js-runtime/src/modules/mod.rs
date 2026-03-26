@@ -22,10 +22,14 @@ use rquickjs::{Ctx, Module, Result};
 use spin::LazyLock;
 use spin::Mutex;
 
-pub(crate) mod console;
-pub(crate) mod crypto;
-pub(crate) mod io;
-pub(crate) mod require;
+#[doc(hidden)]
+pub mod console;
+#[doc(hidden)]
+pub mod crypto;
+#[doc(hidden)]
+pub mod io;
+#[doc(hidden)]
+pub mod require;
 
 /// A function pointer type for declaring a native module.
 #[doc(hidden)]
@@ -120,7 +124,9 @@ impl Resolver for NativeModuleLoader {
         _attributes: Option<ImportAttributes<'_>>,
     ) -> Result<String> {
         ensure_custom_modules_init();
-        if CUSTOM_MODULES.lock().contains_key(name) || BUILTIN_MODULES.contains_key(name) {
+        // Copy result out before dropping the lock to avoid holding it during resolution
+        let found_custom = CUSTOM_MODULES.lock().contains_key(name);
+        if found_custom || BUILTIN_MODULES.contains_key(name) {
             Ok(name.to_string())
         } else {
             Err(rquickjs::Error::new_resolving(base, name))
@@ -136,8 +142,12 @@ impl Loader for NativeModuleLoader {
         _attributes: Option<ImportAttributes<'js>>,
     ) -> Result<Module<'js>> {
         ensure_custom_modules_init();
-        // Check custom modules first
-        if let Some(decl) = CUSTOM_MODULES.lock().get(name) {
+        // Copy the fn pointer out while holding the lock, then drop the guard
+        // before calling the declaration. This avoids deadlock if decl()
+        // triggers a nested module load that tries to lock CUSTOM_MODULES
+        // (spin::Mutex is not re-entrant).
+        let custom_decl = CUSTOM_MODULES.lock().get(name).copied();
+        if let Some(decl) = custom_decl {
             return decl(ctx.clone(), name);
         }
         // Fall back to built-in modules

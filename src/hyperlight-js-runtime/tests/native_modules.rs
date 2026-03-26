@@ -20,7 +20,7 @@ limitations under the License.
 //! - `register_native_module` adds custom modules to the loader
 //! - Built-in modules always work
 //! - Custom modules can be imported from JS handlers
-//! - Built-in module names cannot be overridden (panics)
+//! - Overriding most built-in module names works; overriding `require` panics
 //! - The `native_modules!` macro generates correct `init_native_modules`
 //! - Full pipeline tests with the extended_runtime fixture binary
 
@@ -345,8 +345,30 @@ const EXTENDED_RUNTIME_MANIFEST: &str = concat!(
 );
 
 static EXTENDED_RUNTIME_BINARY: LazyLock<PathBuf> = LazyLock::new(|| {
+    let fixture_dir = PathBuf::from(EXTENDED_RUNTIME_MANIFEST)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let target_dir = fixture_dir.join("target");
+
+    // Match the profile of the outer test build so the fixture binary
+    // lands in the same subdirectory we look for it in.
+    let profile = if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    };
+
     let output = Command::new("cargo")
-        .args(["build", "--manifest-path", EXTENDED_RUNTIME_MANIFEST])
+        .args([
+            "build",
+            "--locked",
+            "--manifest-path",
+            EXTENDED_RUNTIME_MANIFEST,
+            "--target-dir",
+        ])
+        .arg(&target_dir)
+        .args(["--profile", profile])
         .output()
         .expect("Failed to run cargo build for extended-runtime fixture");
 
@@ -356,16 +378,14 @@ static EXTENDED_RUNTIME_BINARY: LazyLock<PathBuf> = LazyLock::new(|| {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let fixture_dir = PathBuf::from(EXTENDED_RUNTIME_MANIFEST)
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    // Cargo outputs "dev" profile binaries to "debug" directory
+    let profile_dir = if profile == "dev" { "debug" } else { profile };
     let binary_name = if cfg!(windows) {
         "extended-runtime.exe"
     } else {
         "extended-runtime"
     };
-    let binary = fixture_dir.join("target/debug").join(binary_name);
+    let binary = target_dir.join(profile_dir).join(binary_name);
     assert!(binary.exists(), "Binary not found at {binary:?}");
     binary
 });

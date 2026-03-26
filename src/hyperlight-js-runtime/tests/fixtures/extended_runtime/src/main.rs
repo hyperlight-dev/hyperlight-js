@@ -50,6 +50,13 @@ fn main() -> anyhow::Result<()> {
     use std::{env, fs};
 
     let args: Vec<String> = env::args().collect();
+    if args.len() < 3 {
+        let program = args.first().map(|s| s.as_str()).unwrap_or("extended_runtime");
+        eprintln!("Usage: {program} <handler_file> <event_json>");
+        return Err(anyhow::anyhow!(
+            "missing required arguments: <handler_file> and <event_json>"
+        ));
+    }
     let file = std::path::PathBuf::from(&args[1]);
     let event = &args[2];
 
@@ -77,3 +84,13 @@ fn main() -> anyhow::Result<()> {
 
 // For hyperlight builds: the lib's `guest` module provides hyperlight_main,
 // guest_dispatch_function, and all plumbing. Nothing else needed here.
+
+// Force the guest module to be linked for hyperlight builds.
+#[cfg(hyperlight)]
+unsafe extern "C" {
+    fn hyperlight_main();
+}
+
+#[cfg(hyperlight)]
+#[used]
+static _FORCE_GUEST_LINK: unsafe extern "C" fn() = hyperlight_main;

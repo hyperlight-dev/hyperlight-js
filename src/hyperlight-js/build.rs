@@ -207,14 +207,25 @@ fn build_js_runtime() -> PathBuf {
 }
 
 fn bundle_runtime() {
+    // Always rerun if the environment variable changes, even if it's currently unset.
+    println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH");
+
     let js_runtime_resource = match env::var("HYPERLIGHT_JS_RUNTIME_PATH") {
         Ok(path) => {
-            println!("cargo:warning=Using custom JS runtime: {}", path);
-            println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH");
-            println!("cargo:rerun-if-changed={}", path);
-            PathBuf::from(path)
+            let canonical = PathBuf::from(&path)
                 .canonicalize()
-                .expect("HYPERLIGHT_JS_RUNTIME_PATH must point to a valid file")
+                .expect("HYPERLIGHT_JS_RUNTIME_PATH must point to a valid file");
+            assert!(
+                canonical.is_file(),
+                "HYPERLIGHT_JS_RUNTIME_PATH must point to a file, not a directory: {}",
+                canonical.display()
+            );
+            println!(
+                "cargo:warning=Using custom JS runtime: {}",
+                canonical.display()
+            );
+            println!("cargo:rerun-if-changed={}", canonical.display());
+            canonical
         }
         Err(_) => build_js_runtime(),
     };

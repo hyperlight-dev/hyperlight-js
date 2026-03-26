@@ -28,24 +28,56 @@ function send(proc, message) {
     proc.stdin.write(JSON.stringify(message) + '\n');
 }
 
+// Shared per-process NDJSON line reader state.
+const ndjsonState = new WeakMap();
+
+function getNdjsonState(proc) {
+    let state = ndjsonState.get(proc);
+    if (state) return state;
+
+    state = {
+        buffer: '',
+        queue: [],
+        waiting: [],
+    };
+
+    const onData = (chunk) => {
+        state.buffer += chunk.toString();
+        let idx;
+        // Extract all complete lines currently in the buffer.
+        while ((idx = state.buffer.indexOf('\n')) !== -1) {
+            let line = state.buffer.slice(0, idx).replace(/\r$/, '');
+            state.buffer = state.buffer.slice(idx + 1);
+            if (line.length === 0) continue;
+            state.queue.push(line);
+        }
+        dispatchNdjson(state);
+    };
+
+    proc.stdout.on('data', onData);
+    ndjsonState.set(proc, state);
+    return state;
+}
+
+function dispatchNdjson(state) {
+    // Pair up queued lines with waiting promises in FIFO order.
+    while (state.queue.length > 0 && state.waiting.length > 0) {
+        const line = state.queue.shift();
+        const { resolve, reject } = state.waiting.shift();
+        try {
+            resolve(JSON.parse(line));
+        } catch (_err) {
+            reject(new Error(`Invalid JSON from server: ${line}`));
+        }
+    }
+}
+
 function waitForResponse(proc) {
+    const state = getNdjsonState(proc);
     return new Promise((resolve, reject) => {
-        let buffer = '';
-        const onData = (chunk) => {
-            buffer += chunk.toString();
-            const idx = buffer.indexOf('\n');
-            if (idx === -1) return;
-            const line = buffer.slice(0, idx).replace(/\r$/, '');
-            buffer = buffer.slice(idx + 1);
-            proc.stdout.off('data', onData);
-            if (line.length === 0) return;
-            try {
-                resolve(JSON.parse(line));
-            } catch (_err) {
-                reject(new Error(`Invalid JSON from server: ${line}`));
-            }
-        };
-        proc.stdout.on('data', onData);
+        state.waiting.push({ resolve, reject });
+        // In case lines were already queued before this call.
+        dispatchNdjson(state);
     });
 }
 
@@ -266,7 +298,7 @@ describe('Timing Log (HYPERLIGHT_TIMING_LOG)', () => {
         const latest = records[records.length - 1];
 
         // executeMs should be measurable (> 0) for real computation
-        expect(latest.executeMs).toBeGreaterThanOrEqual(0);
+        expect(latest.executeMs).toBeGreaterThan(0);
         // totalMs should always be >= executeMs
         expect(latest.totalMs).toBeGreaterThanOrEqual(latest.executeMs);
     });

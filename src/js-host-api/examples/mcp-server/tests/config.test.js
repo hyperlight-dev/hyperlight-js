@@ -1,7 +1,7 @@
 // ── Hyperlight JS MCP Server — Configuration Tests ──────────────────
 //
 // Validates that sandbox limits (CPU timeout, wall-clock timeout, heap
-// size, stack size) are configurable via environment variables, that
+// size, scratch size) are configurable via environment variables, that
 // invalid values fall back to defaults gracefully, and that the tool
 // description dynamically reflects the configured limits.
 //
@@ -28,24 +28,84 @@ function send(proc, message) {
     proc.stdin.write(JSON.stringify(message) + '\n');
 }
 
+/**
+ * Shared per-process stdout state to correctly handle NDJSON streams.
+ * Ensures that multiple messages in a single chunk are not dropped and
+ * that leftover buffered data is preserved across waitForResponse calls.
+ */
+const stdoutState = new WeakMap();
+
+function getStdoutState(proc) {
+    let state = stdoutState.get(proc);
+    if (state) return state;
+
+    state = {
+        buffer: '',
+        pendingLines: [],
+        waiters: [],
+        listening: false,
+        listener: null,
+    };
+
+    const listener = (chunk) => {
+        state.buffer += chunk.toString();
+
+        while (true) {
+            const idx = state.buffer.indexOf('\n');
+            if (idx === -1) break;
+
+            let line = state.buffer.slice(0, idx);
+            state.buffer = state.buffer.slice(idx + 1);
+
+            // Normalize Windows line endings and skip empty lines.
+            line = line.replace(/\r$/, '');
+            if (line.length === 0) continue;
+
+            if (state.waiters.length > 0) {
+                const { resolve, reject } = state.waiters.shift();
+                try {
+                    resolve(JSON.parse(line));
+                } catch (_err) {
+                    reject(new Error(`Invalid JSON from server: ${line}`));
+                }
+            } else {
+                state.pendingLines.push(line);
+            }
+        }
+    };
+
+    state.listener = listener;
+    stdoutState.set(proc, state);
+    return state;
+}
+
 function waitForResponse(proc) {
+    const state = getStdoutState(proc);
+
     return new Promise((resolve, reject) => {
-        let buffer = '';
-        const onData = (chunk) => {
-            buffer += chunk.toString();
-            const idx = buffer.indexOf('\n');
-            if (idx === -1) return;
-            const line = buffer.slice(0, idx).replace(/\r$/, '');
-            buffer = buffer.slice(idx + 1);
-            proc.stdout.off('data', onData);
-            if (line.length === 0) return;
+        const deliverFromLine = (line) => {
             try {
                 resolve(JSON.parse(line));
             } catch (_err) {
                 reject(new Error(`Invalid JSON from server: ${line}`));
             }
         };
-        proc.stdout.on('data', onData);
+
+        // If we already have a complete line buffered, use it immediately.
+        if (state.pendingLines.length > 0) {
+            const line = state.pendingLines.shift();
+            deliverFromLine(line);
+            return;
+        }
+
+        // Otherwise, enqueue this waiter and let the shared listener fulfill it.
+        state.waiters.push({ resolve, reject });
+
+        // Attach the shared listener once per process.
+        if (!state.listening) {
+            proc.stdout.on('data', state.listener);
+            state.listening = true;
+        }
     });
 }
 
@@ -135,14 +195,8 @@ describe('Custom CPU timeout (HYPERLIGHT_CPU_TIMEOUT_MS)', () => {
     });
 
     it('should timeout a computation that exceeds the custom limit', async () => {
-        // This loop burns ~500ms of CPU — well over our 100ms limit.
-        // With the default 1000ms it would succeed; with 100ms it
-        // should be killed.
-        const code = `
-            let sum = 0;
-            for (let i = 0; i < 50000000; i++) sum += i;
-            return { sum };
-        `;
+        // Infinite loop — deterministic timeout trigger, no machine-speed dependency.
+        const code = `while (true) {}`;
 
         const response = await ctx.callTool(code);
         expect(response.result.isError).toBe(true);
@@ -169,7 +223,7 @@ describe('Tool description reflects configured limits', () => {
             HYPERLIGHT_CPU_TIMEOUT_MS: '2000',
             HYPERLIGHT_WALL_TIMEOUT_MS: '8000',
             HYPERLIGHT_HEAP_SIZE_MB: '32',
-            HYPERLIGHT_STACK_SIZE_MB: '2',
+            HYPERLIGHT_SCRATCH_SIZE_MB: '2',
         });
     });
 
@@ -196,7 +250,7 @@ describe('Tool description reflects configured limits', () => {
         expect(jsTool.description).toContain('32MB');
     });
 
-    it('should include custom stack size in tool description', async () => {
+    it('should include custom scratch size in tool description', async () => {
         const response = await ctx.listTools();
         const jsTool = response.result.tools.find((t) => t.name === 'execute_javascript');
         expect(jsTool.description).toContain('2MB');
@@ -214,7 +268,7 @@ describe('Invalid env vars fall back to defaults', () => {
             HYPERLIGHT_CPU_TIMEOUT_MS: 'banana',
             HYPERLIGHT_WALL_TIMEOUT_MS: '-999',
             HYPERLIGHT_HEAP_SIZE_MB: '0',
-            HYPERLIGHT_STACK_SIZE_MB: '3.14',
+            HYPERLIGHT_SCRATCH_SIZE_MB: '3.14',
         });
     });
 

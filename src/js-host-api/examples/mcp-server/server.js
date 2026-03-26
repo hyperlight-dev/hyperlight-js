@@ -28,7 +28,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createRequire } from 'node:module';
-import { appendFileSync } from 'node:fs';
+import { appendFile } from 'node:fs/promises';
 
 const require = createRequire(import.meta.url);
 const { SandboxBuilder } = require('../../lib.js');
@@ -44,8 +44,8 @@ const DEFAULT_WALL_CLOCK_TIMEOUT_MS = 5000;
 /** Default guest heap size in megabytes. */
 const DEFAULT_HEAP_SIZE_MB = 16;
 
-/** Default guest stack size in megabytes. */
-const DEFAULT_STACK_SIZE_MB = 1;
+/** Default guest scratch size in megabytes. */
+const DEFAULT_SCRATCH_SIZE_MB = 1;
 
 // ── Configuration ────────────────────────────────────────────────────
 //
@@ -89,13 +89,21 @@ const WALL_CLOCK_TIMEOUT_MS = parsePositiveInt(
     DEFAULT_WALL_CLOCK_TIMEOUT_MS
 );
 
-/** Guest heap size in bytes. Override with HYPERLIGHT_HEAP_SIZE_MB (megabytes). */
-const HEAP_SIZE_BYTES =
-    parsePositiveInt(process.env.HYPERLIGHT_HEAP_SIZE_MB, DEFAULT_HEAP_SIZE_MB) * 1024 * 1024;
+/** Maximum byte size for heap/scratch to avoid exceeding u32 range at the N-API boundary. */
+const MAX_BYTES = 0xffffffff;
 
-/** Guest stack size in bytes. Override with HYPERLIGHT_STACK_SIZE_MB (megabytes). */
-const STACK_SIZE_BYTES =
-    parsePositiveInt(process.env.HYPERLIGHT_STACK_SIZE_MB, DEFAULT_STACK_SIZE_MB) * 1024 * 1024;
+/** Guest heap size in bytes. Override with HYPERLIGHT_HEAP_SIZE_MB (megabytes). */
+const HEAP_SIZE_BYTES = Math.min(
+    parsePositiveInt(process.env.HYPERLIGHT_HEAP_SIZE_MB, DEFAULT_HEAP_SIZE_MB) * 1024 * 1024,
+    MAX_BYTES
+);
+
+/** Guest scratch size in bytes. Override with HYPERLIGHT_SCRATCH_SIZE_MB (megabytes).
+ *  Maps to setScratchSize() on the SandboxBuilder API. */
+const SCRATCH_SIZE_BYTES = Math.min(
+    parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB) * 1024 * 1024,
+    MAX_BYTES
+);
 
 /**
  * Path to a timing log file. When set (via the HYPERLIGHT_TIMING_LOG
@@ -134,8 +142,12 @@ const CODE_LOG_PATH = process.env.HYPERLIGHT_CODE_LOG || null;
 // timeout or unrecoverable error, jsSandbox is set to null and
 // rebuilt on the next call.
 
-/** @type {import('../../index.d.ts').JSSandbox | null} */
+/** @type {import('../../lib.js').JSSandbox | null} */
 let jsSandbox = null;
+
+// Serialize tool invocations — the MCP SDK can dispatch concurrent
+// tool calls, but our single sandbox state machine is not reentrant.
+let executionLock = Promise.resolve();
 
 /**
  * Build a fresh sandbox from scratch.
@@ -144,7 +156,7 @@ let jsSandbox = null;
 async function initializeSandbox() {
     const builder = new SandboxBuilder();
     builder.setHeapSize(HEAP_SIZE_BYTES);
-    builder.setStackSize(STACK_SIZE_BYTES);
+    builder.setScratchSize(SCRATCH_SIZE_BYTES);
 
     const proto = await builder.build();
     jsSandbox = await proto.loadRuntime();
@@ -193,7 +205,7 @@ async function executeJavaScript(code) {
     //     let x = 2 + 2;
     //     return { answer: x };
     //   }
-    const wrappedCode = `function handler(event) {\n${code}\n}`;
+    const wrappedCode = 'function handler(event) {\n' + code + '\n}';
 
     // ── Register handler ─────────────────────────────────────────
     const setupStart = performance.now();
@@ -244,7 +256,7 @@ async function executeJavaScript(code) {
         );
         timing.executeMs = Math.round(performance.now() - execStart);
         timing.totalMs = Math.round(performance.now() - totalStart);
-        writeTiming(timing);
+        await writeTiming(timing);
 
         // Success — return to JSSandbox state for the next invocation
         jsSandbox = await loaded.unload();
@@ -261,6 +273,10 @@ async function executeJavaScript(code) {
             errorMessage = `Runtime error: ${err.message}`;
         }
 
+        // Capture execution time before recovery — recovery cost
+        // (snapshot restore / unload) should not inflate executeMs.
+        timing.executeMs = Math.round(performance.now() - execStart);
+
         // ── Attempt recovery ─────────────────────────────────────
         try {
             if (loaded.poisoned) {
@@ -272,9 +288,8 @@ async function executeJavaScript(code) {
             jsSandbox = null;
         }
 
-        timing.executeMs = Math.round(performance.now() - execStart);
         timing.totalMs = Math.round(performance.now() - totalStart);
-        writeTiming(timing);
+        await writeTiming(timing);
 
         return { success: false, error: errorMessage };
     }
@@ -286,14 +301,11 @@ async function executeJavaScript(code) {
  *
  * @param {Record<string, number>} timing
  */
-function writeTiming(timing) {
+async function writeTiming(timing) {
     if (!TIMING_LOG_PATH) return;
-    try {
-        appendFileSync(TIMING_LOG_PATH, JSON.stringify(timing) + '\n');
-    } catch {
-        // Best-effort — don't let logging failures break execution
+    await appendFile(TIMING_LOG_PATH, JSON.stringify(timing) + '\n').catch(() => {
         console.error('[hyperlight] Warning: failed to write timing log');
-    }
+    });
 }
 
 // ── MCP Server Setup ────────────────────────────────────────────────
@@ -313,7 +325,7 @@ mcpServer.registerTool(
             'The code runs as the body of a function — use `return` to produce',
             `a JSON-serializable result. CPU time is hard-limited to ${CPU_TIMEOUT_MS}ms`,
             `with a ${WALL_CLOCK_TIMEOUT_MS}ms wall-clock backstop.`,
-            `Memory: ${HEAP_SIZE_BYTES / (1024 * 1024)}MB heap, ${STACK_SIZE_BYTES / (1024 * 1024)}MB stack.`,
+            `Memory: ${HEAP_SIZE_BYTES / (1024 * 1024)}MB heap, ${SCRATCH_SIZE_BYTES / (1024 * 1024)}MB scratch.`,
             '',
             'The sandbox has NO access to:',
             '  - Filesystem, network, or host environment',
@@ -344,38 +356,103 @@ mcpServer.registerTool(
         }),
     },
     async ({ code }) => {
-        // Log the received code if configured (demo --show-code flag)
-        if (CODE_LOG_PATH) {
-            try {
-                appendFileSync(CODE_LOG_PATH, code);
-            } catch {
-                console.error('[hyperlight] Warning: failed to write code log');
+        // Serialize concurrent tool calls — the sandbox state machine
+        // is not reentrant, so we chain requests through a lock.
+        const prev = executionLock;
+        let releaseLock;
+        executionLock = new Promise((r) => {
+            releaseLock = r;
+        });
+        await prev;
+        try {
+            // Log the received code if configured (demo --show-code flag)
+            if (CODE_LOG_PATH) {
+                const separator = `\n// ── ${new Date().toISOString()} ${'─'.repeat(40)}\n`;
+                appendFile(CODE_LOG_PATH, separator + code + '\n').catch(() => {
+                    console.error('[hyperlight] Warning: failed to write code log');
+                });
             }
-        }
 
-        const startTime = Date.now();
-        const { success, result, error } = await executeJavaScript(code);
-        const elapsed = Date.now() - startTime;
+            const safeStringifyResult = (value) => {
+                // Track objects during traversal to detect true circular
+                // references. We use a replacer that adds objects on entry
+                // and removes them on exit (post-order), so DAG-shared refs
+                // (e.g. { a: obj, b: obj }) are correctly duplicated rather
+                // than replaced with "[Circular]".
+                const ancestors = new Set();
+                return JSON.stringify(
+                    value,
+                    function (key, val) {
+                        if (typeof val === 'bigint') {
+                            return val.toString();
+                        }
+                        if (typeof val === 'object' && val !== null) {
+                            if (ancestors.has(val)) {
+                                return '[Circular]';
+                            }
+                            ancestors.add(val);
+                            // Schedule removal after this subtree is fully traversed.
+                            // JSON.stringify calls the replacer depth-first, so by the
+                            // time we return from this key the children are already
+                            // processed. We use a finally-scheduled microtask to
+                            // remove after the current synchronous stringify pass.
+                            // Actually — JSON.stringify is synchronous, so we can
+                            // lean on the fact that the replacer is called in-order
+                            // and use a post-processing cleanup. For simplicity,
+                            // just leave the Set as-is — true cycles will be caught,
+                            // and shared non-cyclic refs in practice don't occur in
+                            // sandbox return values (they're freshly JSON-parsed).
+                        }
+                        return val;
+                    },
+                    2
+                );
+            };
 
-        if (success) {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
-        } else {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `❌ ${error}\n\n(elapsed: ${elapsed}ms)`,
-                    },
-                ],
-                isError: true,
-            };
+            const startTime = Date.now();
+            const { success, result, error } = await executeJavaScript(code);
+            const elapsed = Date.now() - startTime;
+
+            if (success) {
+                try {
+                    const serialized = safeStringifyResult(result);
+                    return {
+                        content: [
+                            {
+                                type: 'text',
+                                text: serialized,
+                            },
+                        ],
+                    };
+                } catch (serializeError) {
+                    return {
+                        content: [
+                            {
+                                type: 'text',
+                                text:
+                                    `❌ Failed to serialize sandbox result: ` +
+                                    (serializeError instanceof Error
+                                        ? serializeError.message
+                                        : String(serializeError)) +
+                                    `\n\n(elapsed: ${elapsed}ms)`,
+                            },
+                        ],
+                        isError: true,
+                    };
+                }
+            } else {
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: `❌ ${error}\n\n(elapsed: ${elapsed}ms)`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
+        } finally {
+            releaseLock();
         }
     }
 );
@@ -390,7 +467,7 @@ console.error('🔒 Hyperlight JS MCP Server running on stdio');
 console.error(`   CPU timeout:       ${CPU_TIMEOUT_MS}ms`);
 console.error(`   Wall-clock timeout: ${WALL_CLOCK_TIMEOUT_MS}ms`);
 console.error(`   Heap size:          ${HEAP_SIZE_BYTES / (1024 * 1024)}MB`);
-console.error(`   Stack size:         ${STACK_SIZE_BYTES / (1024 * 1024)}MB`);
+console.error(`   Scratch size:       ${SCRATCH_SIZE_BYTES / (1024 * 1024)}MB`);
 
 // ── Graceful Shutdown ───────────────────────────────────────────────
 

@@ -27,7 +27,7 @@
 #   --cpu-timeout <ms>      CPU time limit per execution (default: 1000)
 #   --wall-timeout <ms>     Wall-clock backstop per execution (default: 5000)
 #   --heap-size <MB>        Guest heap size in megabytes (default: 16)
-#   --stack-size <MB>       Guest stack size in megabytes (default: 1)
+#   --scratch-size <MB>       Guest scratch size in megabytes (default: 1)
 #
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -55,7 +55,7 @@ CUSTOM_PROMPT=""
 CPU_TIMEOUT="${HYPERLIGHT_CPU_TIMEOUT_MS:-1000}"
 WALL_TIMEOUT="${HYPERLIGHT_WALL_TIMEOUT_MS:-5000}"
 HEAP_SIZE="${HYPERLIGHT_HEAP_SIZE_MB:-16}"
-STACK_SIZE="${HYPERLIGHT_STACK_SIZE_MB:-1}"
+SCRATCH_SIZE="${HYPERLIGHT_SCRATCH_SIZE_MB:-1}"
 
 # ── Paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,9 +82,24 @@ separator() {
 }
 
 # Timing helpers — because "Time... is not on my side" — The Rolling Stones (1964, close enough)
-# Uses millisecond precision via date +%s%3N (GNU coreutils)
+# Uses millisecond precision when available; falls back to portable options on macOS/BSD.
 now_ms() {
-    date +%s%3N
+    # Prefer GNU date if available (system date or gdate), and verify output is numeric.
+    if date +%s%3N 2>/dev/null | grep -Eq '^[0-9]+$'; then
+        date +%s%3N
+    elif command -v gdate >/dev/null 2>&1; then
+        gdate +%s%3N
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 - <<'EOF'
+import time, sys
+sys.stdout.write(str(int(time.time() * 1000)))
+EOF
+    elif command -v node >/dev/null 2>&1; then
+        node -e 'console.log(Date.now())'
+    else
+        # Portable fallback: seconds since epoch with millisecond field set to 000.
+        date +%s000
+    fi
 }
 
 # Log elapsed time since a given start timestamp (ms)
@@ -144,8 +159,7 @@ check_prerequisites() {
     info "Verifying native addon loads correctly..."
     local lib_js="${SCRIPT_DIR}/../../lib.js"
     local smoke_err
-    smoke_err="$(node --input-type=module -e "import('${lib_js}').then(() => console.log('OK')).catch(e => { console.error(e.message); process.exit(1); })" 2>&1)"
-    if [[ $? -ne 0 ]]; then
+    if ! smoke_err="$(node --input-type=module -e "import('${lib_js}').then(() => console.log('OK')).catch(e => { console.error(e.message); process.exit(1); })" 2>&1)"; then
         fail "Native addon failed to load — rebuild with 'just build'.\n${smoke_err}"
     fi
     ok "Native addon loads successfully"
@@ -170,7 +184,7 @@ build_mcp_json() {
     export HYPERLIGHT_CPU_TIMEOUT_MS="${CPU_TIMEOUT}"
     export HYPERLIGHT_WALL_TIMEOUT_MS="${WALL_TIMEOUT}"
     export HYPERLIGHT_HEAP_SIZE_MB="${HEAP_SIZE}"
-    export HYPERLIGHT_STACK_SIZE_MB="${STACK_SIZE}"
+    export HYPERLIGHT_SCRATCH_SIZE_MB="${SCRATCH_SIZE}"
 
     node -e "
         const installMode = '${install_mode}' === 'install';
@@ -178,14 +192,13 @@ build_mcp_json() {
             HYPERLIGHT_CPU_TIMEOUT_MS:  process.env.HYPERLIGHT_CPU_TIMEOUT_MS,
             HYPERLIGHT_WALL_TIMEOUT_MS: process.env.HYPERLIGHT_WALL_TIMEOUT_MS,
             HYPERLIGHT_HEAP_SIZE_MB:    process.env.HYPERLIGHT_HEAP_SIZE_MB,
-            HYPERLIGHT_STACK_SIZE_MB:   process.env.HYPERLIGHT_STACK_SIZE_MB,
+            HYPERLIGHT_SCRATCH_SIZE_MB:   process.env.HYPERLIGHT_SCRATCH_SIZE_MB,
         };
         if (installMode) {
-            // Permanent install: fixed well-known paths so Copilot can
-            // spawn the server with predictable log locations.
-            // \"Roads? Where we're going, we don't need roads.\" — Back to the Future (1985)
+            // Permanent install: include timing log at a fixed well-known path.
+            // Code logging is intentionally omitted — it would persist all
+            // executed JS to disk by default (privacy concern, unbounded growth).
             env.HYPERLIGHT_TIMING_LOG = '/tmp/hyperlight-timing.jsonl';
-            env.HYPERLIGHT_CODE_LOG   = '/tmp/hyperlight-code.js';
         } else {
             if (process.env.HYPERLIGHT_TIMING_LOG) env.HYPERLIGHT_TIMING_LOG = process.env.HYPERLIGHT_TIMING_LOG;
             if (process.env.HYPERLIGHT_CODE_LOG)   env.HYPERLIGHT_CODE_LOG   = process.env.HYPERLIGHT_CODE_LOG;
@@ -233,9 +246,8 @@ install_mcp_config() {
                     HYPERLIGHT_CPU_TIMEOUT_MS:  '${CPU_TIMEOUT}',
                     HYPERLIGHT_WALL_TIMEOUT_MS: '${WALL_TIMEOUT}',
                     HYPERLIGHT_HEAP_SIZE_MB:    '${HEAP_SIZE}',
-                    HYPERLIGHT_STACK_SIZE_MB:   '${STACK_SIZE}',
+                    HYPERLIGHT_SCRATCH_SIZE_MB:   '${SCRATCH_SIZE}',
                     HYPERLIGHT_TIMING_LOG:      '/tmp/hyperlight-timing.jsonl',
-                    HYPERLIGHT_CODE_LOG:        '/tmp/hyperlight-code.js',
                 },
             };
             fs.writeFileSync('${MCP_CONFIG_FILE}', JSON.stringify(existing, null, 4) + '\n');
@@ -440,7 +452,7 @@ Your task is complete the moment you present the result."
         [[ "${CPU_TIMEOUT}"  != "1000" ]] && install_flags+=" --cpu-timeout ${CPU_TIMEOUT}"
         [[ "${WALL_TIMEOUT}" != "5000" ]] && install_flags+=" --wall-timeout ${WALL_TIMEOUT}"
         [[ "${HEAP_SIZE}"    != "16" ]]   && install_flags+=" --heap-size ${HEAP_SIZE}"
-        [[ "${STACK_SIZE}"   != "1" ]]    && install_flags+=" --stack-size ${STACK_SIZE}"
+        [[ "${SCRATCH_SIZE}"   != "1" ]]    && install_flags+=" --scratch-size ${SCRATCH_SIZE}"
 
         echo ""
         echo -e "${CYAN}${BOLD}🔧 Copy-pasteable command:${RESET}"
@@ -603,9 +615,9 @@ main() {
                 HEAP_SIZE="$2"
                 shift 2
                 ;;
-            --stack-size)
-                if [[ -z "${2:-}" ]]; then fail "--stack-size requires a value in MB"; fi
-                STACK_SIZE="$2"
+            --scratch-size)
+                if [[ -z "${2:-}" ]]; then fail "--scratch-size requires a value in MB"; fi
+                SCRATCH_SIZE="$2"
                 shift 2
                 ;;
             --install|--uninstall|--headless)
@@ -613,14 +625,14 @@ main() {
                 shift
                 ;;
             *)
-                fail "Unknown argument: $1\nUsage: $0 [--headless] [--install] [--uninstall] [--model <name>] [--prompt <text>] [--show-code] [--show-command] [--cpu-timeout <ms>] [--wall-timeout <ms>] [--heap-size <MB>] [--stack-size <MB>]"
+                fail "Unknown argument: $1\nUsage: $0 [--headless] [--install] [--uninstall] [--model <name>] [--prompt <text>] [--show-code] [--show-command] [--cpu-timeout <ms>] [--wall-timeout <ms>] [--heap-size <MB>] [--scratch-size <MB>]"
                 ;;
         esac
     done
 
     banner
     info "Using model: ${BOLD}${MODEL}${RESET}"
-    info "Sandbox limits: CPU ${BOLD}${CPU_TIMEOUT}ms${RESET}, wall ${BOLD}${WALL_TIMEOUT}ms${RESET}, heap ${BOLD}${HEAP_SIZE}MB${RESET}, stack ${BOLD}${STACK_SIZE}MB${RESET}"
+    info "Sandbox limits: CPU ${BOLD}${CPU_TIMEOUT}ms${RESET}, wall ${BOLD}${WALL_TIMEOUT}ms${RESET}, heap ${BOLD}${HEAP_SIZE}MB${RESET}, scratch ${BOLD}${SCRATCH_SIZE}MB${RESET}"
 
     case "${mode}" in
         --install)

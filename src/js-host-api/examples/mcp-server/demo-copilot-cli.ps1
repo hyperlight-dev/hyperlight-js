@@ -39,8 +39,8 @@
 .PARAMETER HeapSize
     Guest heap size in megabytes (default: 16).
 
-.PARAMETER StackSize
-    Guest stack size in megabytes (default: 1).
+.PARAMETER ScratchSize
+    Guest scratch size in megabytes (default: 1).
 
 .EXAMPLE
     .\demo-copilot-cli.ps1
@@ -94,7 +94,7 @@ param(
     [int]$HeapSize = $(if ($env:HYPERLIGHT_HEAP_SIZE_MB) { [int]$env:HYPERLIGHT_HEAP_SIZE_MB } else { 16 }),
 
     [ValidateRange(1, [int]::MaxValue)]
-    [int]$StackSize = $(if ($env:HYPERLIGHT_STACK_SIZE_MB) { [int]$env:HYPERLIGHT_STACK_SIZE_MB } else { 1 })
+    [int]$ScratchSize = $(if ($env:HYPERLIGHT_SCRATCH_SIZE_MB) { [int]$env:HYPERLIGHT_SCRATCH_SIZE_MB } else { 1 })
 )
 
 # ── Strict Mode ──────────────────────────────────────────────────────
@@ -251,7 +251,7 @@ function Build-McpJson {
     $env:HYPERLIGHT_CPU_TIMEOUT_MS  = $CpuTimeout
     $env:HYPERLIGHT_WALL_TIMEOUT_MS = $WallTimeout
     $env:HYPERLIGHT_HEAP_SIZE_MB    = $HeapSize
-    $env:HYPERLIGHT_STACK_SIZE_MB   = $StackSize
+    $env:HYPERLIGHT_SCRATCH_SIZE_MB   = $ScratchSize
 
     $config = [ordered]@{
         mcpServers = [ordered]@{
@@ -277,16 +277,17 @@ function Build-McpServerEntry {
         HYPERLIGHT_CPU_TIMEOUT_MS  = [string]$CpuTimeout
         HYPERLIGHT_WALL_TIMEOUT_MS = [string]$WallTimeout
         HYPERLIGHT_HEAP_SIZE_MB    = [string]$HeapSize
-        HYPERLIGHT_STACK_SIZE_MB   = [string]$StackSize
+        HYPERLIGHT_SCRATCH_SIZE_MB   = [string]$ScratchSize
     }
 
     if ($ForInstall) {
-        # Permanent install: use fixed well-known paths so Copilot can
-        # spawn the server with predictable log locations.
+        # Permanent install: include timing log at a fixed well-known path.
+        # Code logging is intentionally omitted from permanent installs —
+        # it would persist all executed JS to disk by default, which is a
+        # privacy concern and can grow unbounded.
         # "Roads? Where we're going, we don't need roads." — Back to the Future (1985)
         $tempDir = [System.IO.Path]::GetTempPath()
         $envHash['HYPERLIGHT_TIMING_LOG'] = (Join-Path $tempDir 'hyperlight-timing.jsonl') -replace '\\', '/'
-        $envHash['HYPERLIGHT_CODE_LOG']   = (Join-Path $tempDir 'hyperlight-code.js') -replace '\\', '/'
     } else {
         # Per-session: use the current env vars (random per-session paths
         # set by the script to avoid clobbering between concurrent runs).
@@ -457,29 +458,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
 
     # Write the prompt to a temp file and pass via @file to avoid PS7's
     # native-command argument mangling with multi-line here-strings.
-    # The copilot CLI reads -p @file the same as -p "string".
-    # "Nobody puts Baby in a corner." — Dirty Dancing (1987)
-    $promptFile = Join-Path ([System.IO.Path]::GetTempPath()) "hyperlight-prompt-$PID-$(Get-Random).txt"
-    $fullPrompt | Set-Content -Path $promptFile -Encoding utf8NoBOM
-
-    # Build the command args list for copilot CLI.
-    # We assemble it as an array so we can display it with -ShowCommand
-    # before actually executing it.
-    $copilotArgs = @(
-        '-p', $fullPrompt,
-        '-s',
-        '--additional-mcp-config', "@$mcpTmp",
-        '--allow-all-tools',
-        '--deny-tool', 'shell',
-        '--deny-tool', 'write',
-        '--deny-tool', 'read',
-        '--deny-tool', 'fetch',
-        '--no-custom-instructions',
-        '--no-ask-user',
-        '--disable-builtin-mcps',
-        '--model', $Model
-    )
-
     # Emit the command if -ShowCommand was requested.
     # "Show me the money!" — Jerry Maguire (1996... close enough to the 80s)
     if ($ShowCommand) {
@@ -497,7 +475,7 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
         if ($CpuTimeout  -ne 1000) { $installFlags += " -CpuTimeout $CpuTimeout" }
         if ($WallTimeout -ne 5000) { $installFlags += " -WallTimeout $WallTimeout" }
         if ($HeapSize    -ne 16)   { $installFlags += " -HeapSize $HeapSize" }
-        if ($StackSize   -ne 1)    { $installFlags += " -StackSize $StackSize" }
+        if ($ScratchSize   -ne 1)    { $installFlags += " -ScratchSize $ScratchSize" }
 
         Write-Host ''
         Write-Host '🔧 Copy-pasteable command:' -ForegroundColor Cyan
@@ -687,7 +665,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
     # Clean up temp files
     Remove-Item $mcpTmp      -ErrorAction SilentlyContinue
     Remove-Item $timingLog   -ErrorAction SilentlyContinue
-    Remove-Item $promptFile  -ErrorAction SilentlyContinue
     if ($codeLog) { Remove-Item $codeLog -ErrorAction SilentlyContinue }
 
     return $success
@@ -697,7 +674,7 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
 
 Write-Banner
 Write-Info "Using model: $Model"
-Write-Info "Sandbox limits: CPU ${CpuTimeout}ms, wall ${WallTimeout}ms, heap ${HeapSize}MB, stack ${StackSize}MB"
+Write-Info "Sandbox limits: CPU ${CpuTimeout}ms, wall ${WallTimeout}ms, heap ${HeapSize}MB, scratch ${ScratchSize}MB"
 
 switch ($Mode) {
     'Install' {

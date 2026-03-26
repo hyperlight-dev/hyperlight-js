@@ -42,39 +42,71 @@ function send(proc, message) {
     proc.stdin.write(JSON.stringify(message) + '\n');
 }
 
+// Shared per-process line reader state: buffer, queued lines, and waiters.
+// Uses a WeakMap so the reader survives across multiple waitForResponse calls
+// without dropping lines that arrived in the same stdout chunk.
+const procLineState = new WeakMap();
+
+function ensureLineReader(proc) {
+    let state = procLineState.get(proc);
+    if (state) return state;
+
+    state = {
+        buffer: '',
+        lines: [],
+        waiters: [],
+    };
+
+    const onData = (chunk) => {
+        state.buffer += chunk.toString();
+        let idx;
+        while ((idx = state.buffer.indexOf('\n')) !== -1) {
+            let line = state.buffer.slice(0, idx).replace(/\r$/, '');
+            state.buffer = state.buffer.slice(idx + 1);
+            if (line.length === 0) {
+                continue;
+            }
+
+            if (state.waiters.length > 0) {
+                const { resolve, reject } = state.waiters.shift();
+                try {
+                    resolve(JSON.parse(line));
+                } catch (_err) {
+                    reject(new Error(`Invalid JSON from server: ${line}`));
+                }
+            } else {
+                state.lines.push(line);
+            }
+        }
+    };
+
+    proc.stdout.on('data', onData);
+    procLineState.set(proc, state);
+    return state;
+}
+
 /**
  * Wait for the next JSON-RPC response from the server's stdout.
- * Reads newline-delimited JSON.
+ * Reads newline-delimited JSON via a persistent per-process line buffer.
  *
  * @param {import('node:child_process').ChildProcess} proc
  * @returns {Promise<object>} — parsed JSON-RPC response
  */
 function waitForResponse(proc) {
     return new Promise((resolve, reject) => {
-        let buffer = '';
+        const state = ensureLineReader(proc);
 
-        const onData = (chunk) => {
-            buffer += chunk.toString();
-
-            // Look for a complete line (NDJSON delimiter)
-            const newlineIdx = buffer.indexOf('\n');
-            if (newlineIdx === -1) return; // need more data
-
-            const line = buffer.slice(0, newlineIdx).replace(/\r$/, '');
-            buffer = buffer.slice(newlineIdx + 1);
-
-            proc.stdout.off('data', onData);
-
-            if (line.length === 0) return; // skip empty lines
-
+        if (state.lines.length > 0) {
+            const line = state.lines.shift();
             try {
                 resolve(JSON.parse(line));
             } catch (_err) {
                 reject(new Error(`Invalid JSON from server: ${line}`));
             }
-        };
+            return;
+        }
 
-        proc.stdout.on('data', onData);
+        state.waiters.push({ resolve, reject });
     });
 }
 

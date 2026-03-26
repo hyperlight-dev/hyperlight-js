@@ -298,7 +298,7 @@ cd src\js-host-api\examples\mcp-server
 | `--cpu-timeout <ms>`| `-CpuTimeout <ms>`  | CPU time limit per execution (default: 1000ms)           |
 | `--wall-timeout <ms>`| `-WallTimeout <ms>`| Wall-clock backstop per execution (default: 5000ms)      |
 | `--heap-size <MB>`  | `-HeapSize <MB>`    | Guest heap size (default: 16MB)                          |
-| `--stack-size <MB>` | `-StackSize <MB>`   | Guest stack size (default: 1MB)                          |
+| `--scratch-size <MB>` | `-ScratchSize <MB>`   | Guest scratch size (default: 1MB)                          |
 
 **What the script does:**
 
@@ -496,7 +496,7 @@ and return the result.
 
 ### 🔢 Mathematics
 
-> **"Calculate π to 50 decimal places using the Bailey–Borwein–Plouffe formula"**
+> **"Calculate π to 50 decimal places using Machin's formula"**
 >
 > Tests: BigInt arithmetic, series computation, precision handling
 
@@ -540,7 +540,7 @@ and return the result.
 >
 > Tests: Complex number arithmetic, nested loops, character mapping
 
-> **"Generate a maze using recursive backtracking on an 21×21 grid and render it as ASCII"**
+> **"Generate a maze using recursive backtracking on a 21×21 grid and render it as ASCII"**
 >
 > Tests: Graph traversal, random selection, 2D grid manipulation
 
@@ -634,7 +634,7 @@ The Hyperlight sandbox provides **hardware-level isolation**:
 - 🌐 **No network access** — can't make HTTP requests
 - 🖥️ **No host access** — can't access environment variables, processes, or system calls
 - ⏱️ **CPU bounded** — configurable limit (default 1000ms), enforced by the hypervisor
-- 💾 **Memory bounded** — configurable (default 16MB heap, 1MB stack)
+- 💾 **Memory bounded** — configurable (default 16MB heap, 1MB scratch)
 - 🔄 **Automatic recovery** — sandbox rebuilds after failures
 
 This makes it safe to execute untrusted, AI-generated code.
@@ -646,7 +646,7 @@ This makes it safe to execute untrusted, AI-generated code.
 | `HYPERLIGHT_CPU_TIMEOUT_MS`    | `1000`   | Maximum CPU time per execution (milliseconds). The hypervisor hard-kills the guest when exceeded. |
 | `HYPERLIGHT_WALL_TIMEOUT_MS`   | `5000`   | Maximum wall-clock time per execution (milliseconds). Backstop for edge cases where CPU time alone doesn't catch the issue. |
 | `HYPERLIGHT_HEAP_SIZE_MB`      | `16`     | Guest heap size in megabytes. Increase for memory-heavy computations (large arrays, BigInt work). |
-| `HYPERLIGHT_STACK_SIZE_MB`     | `1`      | Guest stack size in megabytes. Increase for deeply recursive algorithms. |
+| `HYPERLIGHT_SCRATCH_SIZE_MB`     | `1`      | Guest scratch size in megabytes. Increase for deeply recursive algorithms. |
 | `HYPERLIGHT_TIMING_LOG`        | —        | Path to a file. When set, the server appends one JSON line per tool call with a timing breakdown (init, setup, compile, snapshot, execute, total). Used by the demo script to show model vs. tool time. |
 | `HYPERLIGHT_CODE_LOG`          | —        | Path to a file. When set, the server writes the received JavaScript source code on each tool call. Used by the demo script's `--show-code` flag. |
 
@@ -700,7 +700,7 @@ The code exceeded the CPU time limit (default: 1000ms). Options:
 
 Check that:
 
-1. Node.js >= 18 is installed
+1. Node.js >= 20 is installed
 2. The native module is built (`ls src/js-host-api/js-host-api.*.node`)
 3. Dependencies are installed (`cd examples/mcp-server && npm install`)
 

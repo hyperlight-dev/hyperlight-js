@@ -24,24 +24,62 @@ function send(proc, message) {
     proc.stdin.write(JSON.stringify(message) + '\n');
 }
 
+// Shared per-process line reader state: buffer, queued lines, and waiters.
+const procLineState = new WeakMap();
+
+function ensureLineReader(proc) {
+    let state = procLineState.get(proc);
+    if (state) return state;
+
+    state = {
+        buffer: '',
+        lines: [],
+        waiters: [],
+    };
+
+    const onData = (chunk) => {
+        state.buffer += chunk.toString();
+        let idx;
+        while ((idx = state.buffer.indexOf('\n')) !== -1) {
+            let line = state.buffer.slice(0, idx).replace(/\r$/, '');
+            state.buffer = state.buffer.slice(idx + 1);
+            if (line.length === 0) {
+                continue;
+            }
+
+            if (state.waiters.length > 0) {
+                const { resolve, reject } = state.waiters.shift();
+                try {
+                    resolve(JSON.parse(line));
+                } catch (_err) {
+                    reject(new Error(`Invalid JSON from server: ${line}`));
+                }
+            } else {
+                state.lines.push(line);
+            }
+        }
+    };
+
+    proc.stdout.on('data', onData);
+    procLineState.set(proc, state);
+    return state;
+}
+
 function waitForResponse(proc) {
     return new Promise((resolve, reject) => {
-        let buffer = '';
-        const onData = (chunk) => {
-            buffer += chunk.toString();
-            const idx = buffer.indexOf('\n');
-            if (idx === -1) return;
-            const line = buffer.slice(0, idx).replace(/\r$/, '');
-            buffer = buffer.slice(idx + 1);
-            proc.stdout.off('data', onData);
-            if (line.length === 0) return;
+        const state = ensureLineReader(proc);
+
+        if (state.lines.length > 0) {
+            const line = state.lines.shift();
             try {
                 resolve(JSON.parse(line));
             } catch (_err) {
                 reject(new Error(`Invalid JSON from server: ${line}`));
             }
-        };
-        proc.stdout.on('data', onData);
+            return;
+        }
+
+        state.waiters.push({ resolve, reject });
     });
 }
 
@@ -53,7 +91,7 @@ function waitForResponse(proc) {
 
 // ── Mathematics ─────────────────────────────────────────────────────
 
-/** Prompt: "Calculate π to 50 decimal places using the Bailey–Borwein–Plouffe formula" */
+/** Prompt: "Calculate π to 50 decimal places using Machin's formula" */
 const PI_50_DIGITS_CODE = `
 // Machin's formula: π/4 = 4·arctan(1/5) - arctan(1/239)
 // (BBP naturally produces hex digits; Machin is better for decimal output)
@@ -708,7 +746,9 @@ describe('README Example Prompts', () => {
         it('Monte Carlo estimation of π (100K throws)', async () => {
             const result = await executeAndParse(MONTE_CARLO_CODE);
             expect(result.throws).toBe(100000);
-            // π estimate should be within 0.1 of actual π (reasonable for 100K throws)
+            // With 100K samples, the standard error of the π estimate is
+            // ~0.0016. These bounds (3.0–3.3) are >90 standard deviations
+            // wide — the probability of failure is effectively zero.
             expect(result.pi).toBeGreaterThan(3.0);
             expect(result.pi).toBeLessThan(3.3);
             expect(result.error).toBeLessThan(0.1);
@@ -848,6 +888,10 @@ describe('README Example Prompts', () => {
             expect(result.timesteps).toBe(1000);
             expect(result.boxSize).toBe(100);
             expect(result.allInBounds).toBe(true);
+            // 100 particles with random velocities over 1000 steps will
+            // always produce bounces — the probability of zero bounces
+            // is vanishingly small (each particle has ~50% chance of
+            // bouncing per axis per step).
             expect(result.totalBounces).toBeGreaterThan(0);
             expect(result.samplePositions).toHaveLength(5);
         });

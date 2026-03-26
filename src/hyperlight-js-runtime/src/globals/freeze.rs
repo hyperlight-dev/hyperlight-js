@@ -20,7 +20,8 @@ use rquickjs::Ctx;
 /// Called AFTER custom_globals! so extender crates can modify/extend
 /// globals first (e.g. adding console.warn/error/info/debug).
 ///
-/// Frozen: console (Object.freeze), print (non-writable).
+/// Frozen: console (Object.freeze + non-writable/non-configurable binding),
+///         print (non-writable/non-configurable binding).
 /// Already frozen: require (non-configurable from setup),
 ///                 String.bytesFrom (on frozen String constructor).
 pub fn setup(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
@@ -28,6 +29,12 @@ pub fn setup(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
         r#"
         if (typeof globalThis.console === 'object') {
             Object.freeze(globalThis.console);
+        }
+        if ('console' in globalThis) {
+            Object.defineProperty(globalThis, 'console', {
+                writable: false,
+                configurable: false
+            });
         }
         if (typeof globalThis.print === 'function') {
             Object.defineProperty(globalThis, 'print', {

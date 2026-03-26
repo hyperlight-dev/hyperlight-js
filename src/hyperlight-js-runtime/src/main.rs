@@ -31,5 +31,17 @@ hyperlight_js_runtime::custom_globals! {}
 // etc.) is provided by the lib's `guest` module.
 // The binary only needs to provide the native CLI entry point.
 
+// Force the guest module to be linked into the final hyperlight binary.
+// Without this, the linker may drop the guest module's object since nothing
+// in main.rs references the guest entrypoints directly.
+#[cfg(hyperlight)]
+unsafe extern "C" {
+    fn hyperlight_main();
+}
+
+#[cfg(hyperlight)]
+#[used]
+static _FORCE_GUEST_LINK: unsafe extern "C" fn() = hyperlight_main;
+
 #[cfg(not(hyperlight))]
 include!("main/native.rs");

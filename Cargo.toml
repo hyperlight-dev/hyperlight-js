@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["src/hyperlight-js", "src/js-host-api", "src/hyperlight-js-runtime"]
-exclude = ["src/hyperlight-js-runtime/tests/fixtures/extended_runtime"]
+exclude = ["src/hyperlight-js-runtime/tests/fixtures"]
 
 [workspace.package]
 version = "0.2.5"

@@ -198,7 +198,7 @@ impl JsRuntime {
 
     /// Register a binary-capable host function in the specified module.
     ///
-    /// This variant supports `Uint8Array`/`ArrayBuffer` arguments and returns.
+    /// This variant supports `Uint8Array` arguments and returns.
     /// Binary data is passed via a sidecar channel instead of JSON encoding,
     /// avoiding base64 overhead.
     ///

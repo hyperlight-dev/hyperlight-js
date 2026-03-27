@@ -487,8 +487,9 @@ Node.js code.
 Host functions natively support `Uint8Array`/`Buffer` arguments and returns.
 Binary data travels through a dedicated sidecar channel, keeping overhead
 minimal. Top-level `Buffer` arguments and returns are passed as raw bytes
-with no encoding. Nested Buffers inside returned objects/arrays are
-serialized by napi-rs's default conversion.
+with no encoding. Nested `Buffer`/`Uint8Array` values inside returned objects
+and arrays are also extracted into the binary sidecar and restored on the
+guest side.
 
 ```javascript
 const { SandboxBuilder } = require('@hyperlight/js-host-api');

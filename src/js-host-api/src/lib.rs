@@ -1318,7 +1318,9 @@ unsafe fn napi_to_json_with_buffer_extraction(
             }
             Ok(serde_json::Value::Object(obj))
         }
-        // Symbols, functions, bigints, external — produce null like JSON.stringify.
+        // Symbols, functions, bigints, external — currently coerced to JSON null for host
+        // return values. Note: this intentionally differs from JSON.stringify, which e.g.
+        // throws on BigInt and omits certain properties instead of serializing them to null.
         _ => Ok(serde_json::Value::Null),
     }
 }

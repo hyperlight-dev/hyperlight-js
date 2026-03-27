@@ -169,6 +169,13 @@ fn value_to_json_with_binaries<'js>(
 
     // Handle objects
     if let Some(obj) = value.as_object() {
+        // Check for toJSON() method — matches JSON.stringify behaviour
+        // (e.g., Date.toJSON() returns an ISO string, not {}).
+        if let Ok(to_json) = obj.get::<_, Function>("toJSON") {
+            let result: Value = to_json.call((rquickjs::function::This(obj.clone()),))?;
+            return value_to_json_with_binaries(ctx, result, binaries, depth + 1);
+        }
+
         let mut json_obj = serde_json::Map::new();
         for entry in obj.props::<String, Value>() {
             let (key, val) = entry?;

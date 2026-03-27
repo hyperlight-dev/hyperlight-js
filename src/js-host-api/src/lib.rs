@@ -229,18 +229,16 @@ const MAX_MODULE_IDENTIFIER_LEN: usize = 256;
 /// surface them properly. The inner layer's validation still runs as a
 /// safety net, but would produce generic `ERR_INTERNAL` codes.
 fn validate_napi_module_identifier(value: &str, label: &str) -> napi::Result<()> {
-    // Delegate core validation (empty, colons) to the shared implementation.
-    // Map through invalid_arg_error to preserve ERR_INVALID_ARG codes —
-    // Check length first to short-circuit expensive validation on
-    // accidentally large strings (DoS / multi-MB input guard).
+    // First enforce a hard length limit to short‑circuit expensive validation on
+    // accidentally large strings (DoS / multi‑MB input guard). Then delegate core
+    // validation (e.g., emptiness, colons) to the shared implementation, mapping
+    // its errors through invalid_arg_error so callers consistently receive
+    // ERR_INVALID_ARG rather than generic ERR_INTERNAL codes.
     if value.len() > MAX_MODULE_IDENTIFIER_LEN {
         return Err(invalid_arg_error(&format!(
             "{label} must not exceed {MAX_MODULE_IDENTIFIER_LEN} bytes"
         )));
     }
-    // Delegate core validation (empty, colons) to the shared implementation.
-    // Map through invalid_arg_error to preserve ERR_INVALID_ARG codes —
-    // to_napi_error would produce ERR_INTERNAL for these validation errors.
     hyperlight_js::validate_module_identifier(value, label)
         .map_err(|e| invalid_arg_error(&e.to_string()))?;
     if value.chars().any(|c| c.is_control()) {

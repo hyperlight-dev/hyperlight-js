@@ -149,7 +149,16 @@ impl ProtoJSSandbox {
                 let module = host_modules
                     .get(&module_name)
                     .ok_or_else(|| new_error!("Host module '{}' not found", module_name))?;
-                module.call(&func_name, args_json, Some(binaries))
+                module
+                    .call(&func_name, args_json, Some(binaries))
+                    .map_err(|e| {
+                        new_error!(
+                            "Error calling host function '{}' in module '{}': {}",
+                            func_name,
+                            module_name,
+                            e
+                        )
+                    })
             },
         )?;
 

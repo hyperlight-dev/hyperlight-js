@@ -180,9 +180,7 @@ async function main() {
     const r2 = await loaded2.callHandler('reader', {});
     console.log(`   Reader sees   → count=${r2.count}  (should be 2)`);
 
-    console.log(
-        '\n✅ User modules example complete! — "Life moves pretty fast. If you don\'t stop and share state once in a while, you could miss it."'
-    );
+    console.log('\n✅ User modules example complete! All handlers executed successfully.');
 }
 
 main().catch((err) => {

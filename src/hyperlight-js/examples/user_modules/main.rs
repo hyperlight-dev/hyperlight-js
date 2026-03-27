@@ -264,6 +264,6 @@ fn main() -> Result<()> {
     let store_all = loaded.handle_event("store_get", r#"{"key": "year"}"#.to_string(), None)?;
     println!("   Get(year): {store_all}");
 
-    println!("\n✅ User modules example complete! — \"Life moves pretty fast. If you don't stop and share state once in a while, you could miss it.\"");
+    println!("\n✅ User modules example complete!");
     Ok(())
 }

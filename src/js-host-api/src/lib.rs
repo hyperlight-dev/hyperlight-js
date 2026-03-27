@@ -1119,16 +1119,21 @@ unsafe fn napi_to_json_with_buffer_extraction(
             if is_typedarray {
                 // Probe the typed array type — only extract Uint8Array.
                 let mut array_type = napi::sys::TypedarrayType::int8_array;
+                // N-API requires valid pointers for all out-parameters.
+                let mut length: usize = 0;
+                let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+                let mut arraybuffer: napi_value = std::ptr::null_mut();
+                let mut byte_offset: usize = 0;
                 // SAFETY: env and val are valid, val is a typed array.
                 let status = unsafe {
                     napi::sys::napi_get_typedarray_info(
                         env,
                         val,
                         &mut array_type,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
+                        &mut length,
+                        &mut data,
+                        &mut arraybuffer,
+                        &mut byte_offset,
                     )
                 };
                 if status != napi::sys::Status::napi_ok {

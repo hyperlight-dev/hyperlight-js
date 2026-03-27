@@ -27,7 +27,7 @@ use rquickjs::Ctx;
 pub fn setup(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     ctx.eval::<(), _>(
         r#"
-        if (typeof globalThis.console === 'object') {
+        if (typeof globalThis.console === 'object' || typeof globalThis.console === 'function') {
             Object.freeze(globalThis.console);
         }
         if ('console' in globalThis) {

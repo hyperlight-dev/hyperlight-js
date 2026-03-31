@@ -99,7 +99,7 @@ lint-js-fix: check-npm
     cd src/js-host-api && npm install
     cd src/js-host-api && npm run lint:fix
 
-build target=default-target features="": (build-rust target features) (build-js-host-api target features) (build-native-runtime)
+build target=default-target features="": (build-rust target features) (build-js-host-api target features) (build-native-runtime target)
 build-trace target=default-target features="": (build-rust-trace target features)
 
 build-native-runtime target=default-target:

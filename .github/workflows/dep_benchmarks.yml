@@ -40,7 +40,14 @@ jobs:
             - build: linux-hyperv3-release
               os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
               hypervisor: hyperv3
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ fromJson(
+      format('["self-hosted", "{0}", "X64", "1ES.Pool=hld-{1}-amd", "JobId=benchmark-{2}-{3}-{4}-{5}"]',
+        matrix.hypervisor == 'whp' && 'Windows' || 'Linux',
+        matrix.hypervisor == 'whp' && 'win2025' || matrix.hypervisor == 'hyperv3' && 'azlinux3-mshv' || 'kvm',
+        matrix.build,
+        github.run_id,
+        github.run_number,
+        github.run_attempt)) }}
 
     steps:
       - uses: actions/checkout@v6

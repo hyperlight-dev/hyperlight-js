@@ -193,6 +193,10 @@ jobs:
           npx --no-install napi prepublish -t npm --skip-gh-release
           ls -la index.js index.d.ts
 
+      - name: Validate packages
+        working-directory: ${{ env.WORKING_DIR }}
+        run: ./test-pack.sh
+
       - name: Publish Linux GNU package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu

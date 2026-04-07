@@ -202,28 +202,28 @@ jobs:
       - name: Publish Linux GNU package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu
-        run: npm publish --access public
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish Linux musl package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-musl
-        run: npm publish --access public
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish Windows package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/win32-x64-msvc
-        run: npm publish --access public
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm publish --access public
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

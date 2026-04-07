@@ -1,6 +1,6 @@
 {
   "name": "@hyperlight/js-host-api",
-  "version": "0.17.0",
+  "version": "0.2.0",
   "description": "Node.js API bindings for Hyperlight JS",
   "main": "lib.js",
   "types": "index.d.ts",
@@ -22,9 +22,9 @@
   },
   "license": "Apache-2.0",
   "optionalDependencies": {
-    "@hyperlight/js-host-api-linux-x64-gnu": "0.17.0",
-    "@hyperlight/js-host-api-linux-x64-musl": "0.17.0",
-    "@hyperlight/js-host-api-win32-x64-msvc": "0.17.0"
+    "@hyperlight/js-host-api-linux-x64-gnu": "0.2.0",
+    "@hyperlight/js-host-api-linux-x64-musl": "0.2.0",
+    "@hyperlight/js-host-api-win32-x64-msvc": "0.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

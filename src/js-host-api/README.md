@@ -645,7 +645,7 @@ You can also trigger the npm publish workflow manually:
 
 1. Go to **Actions** → **Publish npm packages**
 2. Click **Run workflow**
-3. Enter the version (e.g., `0.17.0`)
+3. Enter the version (e.g., `0.2.0`)
 4. Optionally enable **dry-run** to test without publishing
 
 ### Setup Requirements

@@ -62,7 +62,7 @@ jobs:
           fetch-depth: 0
 
       - name: Hyperlight setup
-        uses: hyperlight-dev/ci-setup-workflow@v1.8.0
+        uses: hyperlight-dev/ci-setup-workflow@v1.9.0
         with:
           rust-toolchain: "1.89"
 
@@ -79,7 +79,9 @@ jobs:
 
       - name: Set package version
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ inputs.version }}
 
       - name: Install musl tools
         if: contains(matrix.target, 'musl')

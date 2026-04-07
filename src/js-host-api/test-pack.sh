@@ -2,7 +2,10 @@
 # Validate npm packages by packing to /tmp and installing into a clean project.
 # Simulates what a consumer would experience after `npm install @hyperlight/js-host-api`.
 #
-# Prerequisites: run `npm run build` first to produce the .node binary.
+# Prerequisites:
+#   - Native .node binary must exist (via `npm run build`)
+#   - Generated bindings (index.js, index.d.ts) must be present
+#     (via `npx napi prepublish -t npm` or the CI workflow)
 
 set -euo pipefail
 
@@ -22,30 +25,32 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-if ! ls ./*.node 1>/dev/null 2>&1; then
-    echo "❌ Error: No .node binary found. Run 'npm run build' first." >&2
+# In CI the .node binary is already in npm/linux-x64-gnu/; locally it's in the project root.
+if ls npm/linux-x64-gnu/*.node 1>/dev/null 2>&1; then
+    echo "📦 Platform binary already present in npm/linux-x64-gnu/"
+elif ls ./*.node 1>/dev/null 2>&1; then
+    NATIVE_BINARY=$(ls ./*.node | head -1)
+    BINARY_NAME=$(basename "${NATIVE_BINARY}")
+    echo "📦 Copying ${BINARY_NAME} into platform package..."
+    cp "${NATIVE_BINARY}" npm/linux-x64-gnu/"${BINARY_NAME}"
+else
+    echo "❌ Error: No .node binary found. Run 'npm run build' first, or ensure CI artifacts are staged." >&2
     exit 1
 fi
 
-# ── Step 1: Copy the .node binary into the platform package ─────────
-echo "📦 Preparing platform package..."
-NATIVE_BINARY=$(ls ./*.node | head -1)
-BINARY_NAME=$(basename "${NATIVE_BINARY}")
-cp "${NATIVE_BINARY}" npm/linux-x64-gnu/"${BINARY_NAME}"
-
-# ── Step 2: Pack platform package ───────────────────────────────────
+# ── Step 1: Pack platform package ───────────────────────────────────
 echo "📦 Packing platform package (linux-x64-gnu)..."
 PLATFORM_TGZ=$(npm pack ./npm/linux-x64-gnu --pack-destination "${PACK_DIR}" 2>/dev/null)
 PLATFORM_TGZ_PATH="${PACK_DIR}/${PLATFORM_TGZ}"
 echo "   → ${PLATFORM_TGZ_PATH}"
 
-# ── Step 3: Pack main package ───────────────────────────────────────
+# ── Step 2: Pack main package ───────────────────────────────────────
 echo "📦 Packing main package..."
 MAIN_TGZ=$(npm pack --pack-destination "${PACK_DIR}" 2>/dev/null)
 MAIN_TGZ_PATH="${PACK_DIR}/${MAIN_TGZ}"
 echo "   → ${MAIN_TGZ_PATH}"
 
-# ── Step 4: Inspect tarball contents ────────────────────────────────
+# ── Step 3: Inspect tarball contents ────────────────────────────────
 echo ""
 echo "🔍 Platform package contents:"
 tar tzf "${PLATFORM_TGZ_PATH}" | sed 's/^/   /'
@@ -54,7 +59,7 @@ echo ""
 echo "🔍 Main package contents:"
 tar tzf "${MAIN_TGZ_PATH}" | sed 's/^/   /'
 
-# ── Step 5: Validate main package contents ──────────────────────────
+# ── Step 4: Validate main package contents ──────────────────────────
 echo ""
 echo "✅ Validating main package contents..."
 MAIN_FILES=$(tar tzf "${MAIN_TGZ_PATH}")
@@ -79,7 +84,14 @@ for p in "${BANNED_PATTERNS[@]}"; do
     fi
 done
 
-# ── Step 6: Validate platform package contents ──────────────────────
+if echo "${MAIN_FILES}" | grep -q '\.node$'; then
+    echo "   ❌ LEAKED: .node binary in main package (should only be in platform packages)" >&2
+    exit 1
+else
+    echo "   ✅ No leak: *.node"
+fi
+
+# ── Step 5: Validate platform package contents ──────────────────────
 echo ""
 echo "✅ Validating platform package contents..."
 PLATFORM_FILES=$(tar tzf "${PLATFORM_TGZ_PATH}")
@@ -91,7 +103,7 @@ else
     exit 1
 fi
 
-# ── Step 7: Install from tarballs into a clean directory ────────────
+# ── Step 6: Install from tarballs into a clean directory ────────────
 echo ""
 echo "📥 Installing from tarballs into ${INSTALL_DIR}..."
 cd "${INSTALL_DIR}"
@@ -101,7 +113,7 @@ npm init -y --silent >/dev/null 2>&1
 npm install "${PLATFORM_TGZ_PATH}" --no-save 2>&1 | sed 's/^/   /'
 npm install "${MAIN_TGZ_PATH}" --no-save 2>&1 | sed 's/^/   /'
 
-# ── Step 8: Smoke test — require and check exports ──────────────────
+# ── Step 7: Smoke test — require and check exports ──────────────────
 echo ""
 echo "🧪 Smoke test: require('@hyperlight/js-host-api')..."
 EXPORTS=$(node -e "
@@ -115,7 +127,7 @@ EXPORTS=$(node -e "
 ")
 echo "   ${EXPORTS}"
 
-# ── Step 9: Hello World — end-to-end sandbox test ───────────────────
+# ── Step 8: Hello World — end-to-end sandbox test ───────────────────
 echo ""
 echo "🧪 Hello World: create sandbox, load handler, call it..."
 node -e "
@@ -143,9 +155,6 @@ node -e "
 
     main().catch(err => { console.error('   ❌', err.message); process.exit(1); });
 "
-
-# ── Cleanup temp .node from platform dir ────────────────────────────
-rm -f "${SCRIPT_DIR}/npm/linux-x64-gnu/${BINARY_NAME}"
 
 # ── Done ────────────────────────────────────────────────────────────
 echo ""

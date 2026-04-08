@@ -13,6 +13,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
+// this is benchmarks, assert macros are fine
+#![allow(clippy::disallowed_macros)]
+
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
@@ -284,6 +288,63 @@ fn handle_events_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+fn full_lifecycle_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("full_lifecycle");
+
+    let handler = Script::from_content(
+        r#"
+        function handler(event) {
+            event.request.uri = "/redirected.html";
+            return event
+        }"#,
+    );
+
+    let event = r#"
+    {
+        "request": {
+            "uri": "/index.html"
+        }
+    }"#;
+
+    group.bench_function("build_and_load_runtime", |b: &mut Bencher<'_>| {
+        b.iter(|| {
+            SandboxBuilder::new()
+                .build()
+                .unwrap()
+                .load_runtime()
+                .unwrap()
+        });
+    });
+
+    group.bench_function("add_load_handle_unload", |b: &mut Bencher<'_>| {
+        b.iter_custom(|iterations| {
+            let mut js_sandbox = SandboxBuilder::new()
+                .build()
+                .unwrap()
+                .load_runtime()
+                .unwrap();
+
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let start = Instant::now();
+                js_sandbox.add_handler("handler", handler.clone()).unwrap();
+                let mut loaded = js_sandbox.get_loaded_sandbox().unwrap();
+                let result = loaded
+                    .handle_event("handler", event.to_string(), Some(true))
+                    .unwrap();
+                js_sandbox = loaded.unload().unwrap();
+                elapsed += start.elapsed();
+
+                let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+                assert_eq!(parsed["request"]["uri"], "/redirected.html");
+            }
+            elapsed
+        });
+    });
+
+    group.finish();
+}
+
 // =============================================================================
 // Monitor overhead benchmark
 // =============================================================================
@@ -389,7 +450,7 @@ fn monitor_overhead_benchmark(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().measurement_time(Duration::from_secs(20));
-    targets = js_load_handler_benchmark, handle_events_benchmark
+    targets = js_load_handler_benchmark, handle_events_benchmark, full_lifecycle_benchmark
 }
 
 #[cfg(all(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]

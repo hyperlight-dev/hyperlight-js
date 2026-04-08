@@ -117,7 +117,7 @@ jobs:
           cache-dependency-path: 'src/js-host-api/package-lock.json'
 
       - name: Validate version format
-        run: npx --yes semver "$VERSION" >/dev/null 2>&1 || { echo "Invalid version: $VERSION"; exit 1; }
+        run: npx --yes semver "$VERSION"
         env:
           VERSION: ${{ inputs.version }}
 

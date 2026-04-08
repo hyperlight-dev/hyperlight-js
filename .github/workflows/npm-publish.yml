@@ -79,9 +79,7 @@ jobs:
 
       - name: Set package version
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
-        env:
-          VERSION: ${{ inputs.version }}
+        run: npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Install musl tools
         if: contains(matrix.target, 'musl')

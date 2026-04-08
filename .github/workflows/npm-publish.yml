@@ -190,7 +190,7 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           # napi prepublish generates index.js and index.d.ts from the .node artifacts
-          npx --no-install napi prepublish -t npm --skip-gh-release
+          npx napi prepublish -t npm --skip-optional-publish
           ls -la index.js index.d.ts
 
       - name: Validate packages

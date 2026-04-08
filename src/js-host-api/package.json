@@ -45,7 +45,7 @@
     "lint:fix": "eslint lib.js tests/ examples/ --fix",
     "fmt": "prettier --write \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"*.config.{js,mjs}\"",
     "fmt:check": "prettier --check \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"*.config.{js,mjs}\"",
-    "prepublishOnly": "napi prepublish -t npm",
+    "prepublishOnly": "napi prepublish -t npm --skip-optional-publish",
     "artifacts": "napi artifacts",
     "version": "napi version"
   }

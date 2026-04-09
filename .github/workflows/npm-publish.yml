@@ -194,7 +194,7 @@ jobs:
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             for (const dep of Object.keys(pkg.optionalDependencies || {})) {
-              if (dep.startsWith('@hyperlight/js-host-api-')) {
+              if (dep.startsWith('@hyperlight-dev/js-host-api-')) {
                 pkg.optionalDependencies[dep] = process.env.VERSION;
               }
             }
@@ -252,14 +252,14 @@ jobs:
         run: |
           echo "=== DRY RUN - Would publish the following packages ==="
           echo ""
-          echo "--- @hyperlight/js-host-api-linux-x64-gnu ---"
+          echo "--- @hyperlight-dev/js-host-api-linux-x64-gnu ---"
           npm pack ./npm/linux-x64-gnu --dry-run
           echo ""
-          echo "--- @hyperlight/js-host-api-linux-x64-musl ---"
+          echo "--- @hyperlight-dev/js-host-api-linux-x64-musl ---"
           npm pack ./npm/linux-x64-musl --dry-run
           echo ""
-          echo "--- @hyperlight/js-host-api-win32-x64-msvc ---"
+          echo "--- @hyperlight-dev/js-host-api-win32-x64-msvc ---"
           npm pack ./npm/win32-x64-msvc --dry-run
           echo ""
-          echo "--- @hyperlight/js-host-api ---"
+          echo "--- @hyperlight-dev/js-host-api ---"
           npm pack --dry-run

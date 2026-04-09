@@ -1,6 +1,6 @@
 #!/bin/bash
 # Validate npm packages by packing to /tmp and installing into a clean project.
-# Simulates what a consumer would experience after `npm install @hyperlight/js-host-api`.
+# Simulates what a consumer would experience after `npm install @hyperlight-dev/js-host-api`.
 #
 # Prerequisites:
 #   - Native .node binary must exist (via `npm run build`)
@@ -115,9 +115,9 @@ npm install "${MAIN_TGZ_PATH}" --no-save 2>&1 | sed 's/^/   /'
 
 # ── Step 7: Smoke test — require and check exports ──────────────────
 echo ""
-echo "🧪 Smoke test: require('@hyperlight/js-host-api')..."
+echo "🧪 Smoke test: require('@hyperlight-dev/js-host-api')..."
 EXPORTS=$(node -e "
-    const h = require('@hyperlight/js-host-api');
+    const h = require('@hyperlight-dev/js-host-api');
     const keys = Object.keys(h);
     if (keys.length === 0) {
         console.error('ERROR: No exports found');
@@ -131,7 +131,7 @@ echo "   ${EXPORTS}"
 echo ""
 echo "🧪 Hello World: create sandbox, load handler, call it..."
 node -e "
-    const { SandboxBuilder } = require('@hyperlight/js-host-api');
+    const { SandboxBuilder } = require('@hyperlight-dev/js-host-api');
 
     async function main() {
         const builder = new SandboxBuilder();

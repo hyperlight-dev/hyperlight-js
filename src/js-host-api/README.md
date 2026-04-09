@@ -5,13 +5,13 @@ Node.js bindings for hyperlight-js
 ## Installation
 
 ```bash
-npm install @hyperlight/js-host-api
+npm install @hyperlight-dev/js-host-api
 ```
 
 ## Quick Start
 
 ```javascript
-import { SandboxBuilder } from '@hyperlight/js-host-api';
+import { SandboxBuilder } from '@hyperlight-dev/js-host-api';
 
 // Create and build a sandbox
 const builder = new SandboxBuilder();
@@ -334,7 +334,7 @@ sequenceDiagram
 ### Quick Start
 
 ```javascript
-const { SandboxBuilder } = require('@hyperlight/js-host-api');
+const { SandboxBuilder } = require('@hyperlight-dev/js-host-api');
 
 const proto = await new SandboxBuilder().build();
 
@@ -633,7 +633,7 @@ just test-all release
 
 ## Publishing to npm
 
-The package is published to npmjs.com as `@hyperlight/js-host-api` with platform-specific binary packages.
+The package is published to npmjs.com as `@hyperlight-dev/js-host-api` with platform-specific binary packages.
 
 ### Automated Release
 
@@ -668,10 +668,10 @@ The npm release consists of the following packages:
 
 | Package | Description |
 |---------|-------------|
-| `@hyperlight/js-host-api` | Main package (installs correct binary automatically) |
-| `@hyperlight/js-host-api-linux-x64-gnu` | Linux x86_64 (glibc) native binary |
-| `@hyperlight/js-host-api-linux-x64-musl` | Linux x86_64 (musl/Alpine) native binary |
-| `@hyperlight/js-host-api-win32-x64-msvc` | Windows x86_64 native binary |
+| `@hyperlight-dev/js-host-api` | Main package (installs correct binary automatically) |
+| `@hyperlight-dev/js-host-api-linux-x64-gnu` | Linux x86_64 (glibc) native binary |
+| `@hyperlight-dev/js-host-api-linux-x64-musl` | Linux x86_64 (musl/Alpine) native binary |
+| `@hyperlight-dev/js-host-api-win32-x64-msvc` | Windows x86_64 native binary |
 
 ### How Platform Selection Works
 

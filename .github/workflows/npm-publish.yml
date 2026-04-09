@@ -53,7 +53,7 @@ jobs:
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
             build_name: linux-x64-musl
           - target: x86_64-pc-windows-msvc
-            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2022-amd"]
+            os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
             build_name: win32-x64-msvc
     runs-on: ${{ matrix.os }}
     steps:

@@ -3,7 +3,20 @@
   "version": "0.2.0",
   "description": "Node.js API bindings for Hyperlight JS",
   "main": "lib.js",
+  "module": "lib.mjs",
   "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.ts",
+        "default": "./lib.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./lib.js"
+      }
+    }
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hyperlight-dev/hyperlight-js.git"

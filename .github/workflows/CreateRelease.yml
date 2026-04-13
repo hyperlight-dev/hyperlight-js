@@ -106,5 +106,3 @@ jobs:
     with:
       version: ${{ needs.publish-hyperlight-js-packages-and-create-release.outputs.version }}
       dry-run: false
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

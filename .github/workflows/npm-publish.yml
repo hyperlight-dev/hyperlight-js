@@ -14,6 +14,11 @@ on:
         required: false
         type: boolean
         default: false
+  # IMPORTANT: Trusted publishing (OIDC) is configured on npmjs.com with
+  # workflow filename 'CreateRelease.yml'. npm checks the *calling* workflow
+  # for workflow_call, not the reusable workflow that runs npm publish.
+  # Calling this workflow from a different parent workflow will fail OIDC auth.
+  # See: https://docs.npmjs.com/trusted-publishers#troubleshooting
   workflow_call:
     inputs:
       version:
@@ -25,9 +30,6 @@ on:
         required: false
         type: boolean
         default: false
-    secrets:
-      NPM_TOKEN:
-        required: true
 
 permissions:
   contents: read
@@ -114,7 +116,10 @@ jobs:
 
   publish:
     needs: build
-    runs-on: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
+    # Trusted publishing (OIDC) requires GitHub-hosted runners.
+    # The publish job only downloads pre-built artifacts and runs npm publish,
+    # so it does not need self-hosted runners with KVM/Hyperlight.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -125,6 +130,10 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      # Trusted publishing requires npm 11.5.1+ (Node 22 ships with npm 10.x)
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11 && npm --version
 
       - name: Validate version format
         run: npx --yes semver "$VERSION"
@@ -218,33 +227,91 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: ./test-pack.sh
 
+      # ── Authentication strategy ────────────────────────────────────
+      # Production releases via CreateRelease.yml use trusted publishing
+      # (OIDC) — npm auto-detects the id-token and exchanges it for a
+      # short-lived publish credential. Provenance attestations are
+      # generated automatically. The --provenance flag is added explicitly
+      # so the build fails loudly if OIDC is misconfigured.
+      #
+      # Manual workflow_dispatch requires an NPM_TOKEN repo secret because
+      # trusted publishing is configured for CreateRelease.yml only.
+      # Provenance is NOT available for token-based publishing.
+      # You should almost never need to publish manually — if you do,
+      # see docs/release.md for the full (deliberately painful) steps.
+      - name: Validate NPM_TOKEN for manual dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs['dry-run'] }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::NPM_TOKEN repo secret is required for manual workflow_dispatch publishing."
+            echo "::error::See docs/release.md 'Manual npm publishing (emergency only)' for instructions."
+            exit 1
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Set provenance flag once — OIDC path gets --provenance (fails loud
+      # if misconfigured), token path skips it (not supported).
+      - name: Set publish flags
+        id: publish-flags
+        run: |
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "provenance=--provenance" >> "$GITHUB_OUTPUT"
+          else
+            echo "provenance=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish Linux GNU package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Linux musl package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-musl
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Windows package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}/npm/win32-x64-msvc
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Publish main package
         if: ${{ !inputs['dry-run'] }}
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
+
+      - name: Verify all packages published
+        if: ${{ !inputs['dry-run'] }}
+        run: |
+          echo "Waiting for registry propagation..."
+          sleep 15
+          FAILED=0
+          for pkg in "@hyperlight-dev/js-host-api" \
+                     "@hyperlight-dev/js-host-api-linux-x64-gnu" \
+                     "@hyperlight-dev/js-host-api-linux-x64-musl" \
+                     "@hyperlight-dev/js-host-api-win32-x64-msvc"; do
+            if npm view "$pkg@$VERSION" version > /dev/null 2>&1; then
+              echo "✅ $pkg@$VERSION published"
+            else
+              echo "::error::❌ $pkg@$VERSION NOT found on registry!"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Some packages failed to publish. Check above for details."
+            exit 1
+          fi
+        env:
+          VERSION: ${{ inputs.version }}
 
       - name: Dry run - show what would be published
         if: ${{ inputs['dry-run'] }}

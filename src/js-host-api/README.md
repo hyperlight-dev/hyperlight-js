@@ -590,93 +590,12 @@ Registering sync and async host functions that guest code can call. Demonstrates
 ## Requirements
 
 - **Node.js** >= 18
+- **Linux** (x86_64, glibc or musl) or **Windows** (x86_64)
 
-## Building from Source
+## License
 
-### Build Commands
+Apache-2.0 — see [LICENSE](../../LICENSE.txt).
 
-```bash
-# Install dependencies
-npm install
+## Contributing
 
-# Release builds (optimized)
-npm run build
-
-# Debug builds (with symbols)
-npm run build:debug
-
-# Run tests
-npm test
-```
-
-### Using Just (Build Automation)
-
-From the repository root:
-
-```bash
-# Build js-host-api
-just build-js-host-api release
-
-# Build with debug symbols
-just build-js-host-api debug
-
-# Run js-host-api examples
-just run-js-host-api-examples release
-
-# Run js-host-api tests
-just test-js-host-api release
-
-# Build and test everything (all runtimes and targets)
-just build-all
-just test-all release
-```
-
-## Publishing to npm
-
-The package is published to npmjs.com as `@hyperlight-dev/js-host-api` with platform-specific binary packages.
-
-### Automated Release
-
-Publishing happens automatically when a release is created via the `CreateRelease` workflow on a `release/vX.Y.Z` branch.
-
-### Manual Publishing
-
-You can also trigger the npm publish workflow manually:
-
-1. Go to **Actions** → **Publish npm packages**
-2. Click **Run workflow**
-3. Enter the version (e.g., `0.2.0`)
-4. Optionally enable **dry-run** to test without publishing
-
-### Setup Requirements
-
-The following secret must be configured in the repository:
-
-| Secret | Description |
-|--------|-------------|
-| `NPM_TOKEN` | npm access token with publish permissions for the `@hyperlight` scope |
-
-To create an npm token:
-1. Log in to [npmjs.com](https://www.npmjs.com/)
-2. Go to **Access Tokens** → **Generate New Token**
-3. Select **Automation** token type (for CI/CD)
-4. Add the token as a repository secret named `NPM_TOKEN`
-
-### Package Structure
-
-The npm release consists of the following packages:
-
-| Package | Description |
-|---------|-------------|
-| `@hyperlight-dev/js-host-api` | Main package (installs correct binary automatically) |
-| `@hyperlight-dev/js-host-api-linux-x64-gnu` | Linux x86_64 (glibc) native binary |
-| `@hyperlight-dev/js-host-api-linux-x64-musl` | Linux x86_64 (musl/Alpine) native binary |
-| `@hyperlight-dev/js-host-api-win32-x64-msvc` | Windows x86_64 native binary |
-
-### How Platform Selection Works
-
-This project uses the [napi-rs](https://napi.rs/docs/deep-dive/release#3-the-native-addon-for-different-platforms-is-distributed-through-different-npm-packages) approach for distributing native addons across platforms. Each platform-specific binary is published as a separate npm package and listed as an `optionalDependency` of the main package.
-
-**At install time:** npm uses the `os`, `cpu`, and `libc` fields in each platform sub-package's `package.json` to determine which optional dependency to install. Packages that don't match the user's platform are silently skipped. The main package itself does **not** have `os`/`cpu` fields because it contains only JavaScript — restricting it would prevent installation on unsupported platforms even for type-checking or development purposes.
-
-**At runtime:** The napi-rs generated `index.js` detects the platform (including glibc vs musl on Linux) and loads the correct `.node` binary.
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for build, test, and publishing instructions.

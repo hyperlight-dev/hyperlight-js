@@ -53,8 +53,67 @@ This release contains the benchmark results and the source code for the release 
 
 In addition the hyperlight-js crates will be published to crates.io. You can verify this by going to the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js) and checking that the new version is listed.
 
+The npm packages (`@hyperlight-dev/js-host-api` and platform-specific binaries) are also published automatically as part of this workflow. Publishing uses [npm trusted publishing (OIDC)](https://docs.npmjs.com/trusted-publishers) — no `NPM_TOKEN` secret is needed for the `CreateRelease` workflow. Provenance attestations are generated automatically.
+
+You can verify the npm publish by checking the [npmjs.com package page](https://www.npmjs.com/package/@hyperlight-dev/js-host-api).
+
+### npm trusted publishing setup
+
+Trusted publishing is configured on [npmjs.com](https://www.npmjs.com/) for each package. If you add a new platform package, you must configure its trusted publisher:
+
+1. Go to the package on npmjs.com → Settings → Trusted Publisher
+2. Select **GitHub Actions**
+3. Set **Organization**: `hyperlight-dev`, **Repository**: `hyperlight-js`, **Workflow**: `CreateRelease.yml`
+4. Save
+
+This must be done for all 4 packages:
+- `@hyperlight-dev/js-host-api`
+- `@hyperlight-dev/js-host-api-linux-x64-gnu`
+- `@hyperlight-dev/js-host-api-linux-x64-musl`
+- `@hyperlight-dev/js-host-api-win32-x64-msvc`
+
+> **Note:** Trusted publishing only works via `CreateRelease.yml` (the production release path). Manual publishing is deliberately discouraged — see [Manual npm publishing (emergency only)](#manual-npm-publishing-emergency-only) below.
+
 ## Patching a release
 
 If you need to update a previously released version of hyperlight-js then you should open a Pull Request against the release branch you want to patch, for example if you wish to patch the release `v0.18.0` then you should open a PR against the `release/v0.18.0` branch.
 
 Once the PR is merged, then you should follow the instructions above. In this instance the version number of the tag should be a patch version, for example if you are patching the `release/v0.18.0` branch and this is the first patch release to that branch then the tag should be `v0.18.1`. If you are patching a patch release then the tag should be `v0.18.2` and the target branch should be `release/v0.18.1` and so on.
+
+## Manual npm publishing (emergency only)
+
+> ⚠️ **Do not use this for regular releases.** Use the `CreateRelease` workflow instead. Manual publishing bypasses OIDC trusted publishing and will **not** generate provenance attestations — meaning publish will show up without the "Published via trusted publishing" badge on npmjs.com. Only use this if the automated release pipeline is broken and you need to ship an urgent fix.
+
+If you need to publish npm packages manually via `workflow_dispatch`, you'll need to:
+
+1. **Temporarily allow token-based publishing on npmjs.com**
+   - Go to each package on [npmjs.com](https://www.npmjs.com/) → Settings → Publishing access
+   - Change from "Require two-factor authentication and disallow tokens" to "Require two-factor authentication or automation tokens"
+   - Do this for all 4 packages:
+     - `@hyperlight-dev/js-host-api`
+     - `@hyperlight-dev/js-host-api-linux-x64-gnu`
+     - `@hyperlight-dev/js-host-api-linux-x64-musl`
+     - `@hyperlight-dev/js-host-api-win32-x64-msvc`
+
+2. **Create an npm automation token**
+   - Go to [npmjs.com](https://www.npmjs.com/) → Access Tokens → Generate New Token → Granular Access Token
+   - Set scope to the `@hyperlight-dev` org, packages: read and write, expiry: shortest available
+   - Copy the token
+
+3. **Add the token as a repo secret**
+   - Go to the repo on GitHub → Settings → Secrets and variables → Actions → New repository secret
+   - Name: `NPM_TOKEN`
+   - Value: paste the token from the previous step
+   - Save
+
+4. **Run the workflow**
+   - Go to Actions → "Publish npm packages" → Run workflow
+   - Select the correct branch
+   - Enter the version (e.g. `0.2.1`)
+   - Set `dry-run` to `false`
+
+5. **Clean up immediately after publishing**
+   - Delete the `NPM_TOKEN` repo secret on GitHub → Settings → Secrets and variables → Actions
+   - Revoke the npm token on npmjs.com → Access Tokens
+   - Re-enable "Require two-factor authentication and disallow tokens" on all 4 packages
+   - Verify the packages published correctly: `npm view @hyperlight-dev/js-host-api versions`

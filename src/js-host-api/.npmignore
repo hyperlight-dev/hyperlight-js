@@ -24,6 +24,7 @@ examples/
 *.config.mjs
 .prettierrc
 TYPE_NAMING.md
+DEVELOPMENT.md
 build.rs
 src/
 Cargo.toml

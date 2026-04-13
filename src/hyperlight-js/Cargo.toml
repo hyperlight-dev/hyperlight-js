@@ -57,7 +57,7 @@ opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.31"
 plotters = { version = "0.3.5", default-features = false, features = ["svg_backend"] }
-rand = "0.10.0"
+rand = "0.10.1"
 serde_json = { version = "1.0" }
 tempfile = "3.27"
 tracing-forest = { version = "0.3.1", features = ["full"] }

@@ -289,20 +289,24 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cargo-hyperlight"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f745c885e25dbf258ac37804773e60fbb7fce9b46c1db020760131d3faffe35c"
+checksum = "8db26640559cfddd11806fcf29e3103590b625d6f80878f6bfe4874f6e2509b1"
 dependencies = [
  "anyhow",
+ "clap",
  "console",
  "const_format",
  "glob",
  "libc",
+ "object",
  "os_str_bytes",
  "regex",
+ "rustc-demangle",
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "which",
 ]
 
@@ -2295,6 +2299,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3032,6 +3045,12 @@ dependencies = [
  "sha2",
  "walkdir",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d"
 
 [[package]]
 name = "rustc-hash"

@@ -18,7 +18,7 @@ anyhow = "1.0.102"
 fn-traits = "0.2.0"
 hyperlight-host = { workspace = true }
 hyperlight-js-runtime = { workspace = true }
-metrics = "0.24.3"
+metrics = "0.24.4"
 oxc_resolver = "11.19.1"
 phf = { version = "0.13", features = ["macros"] }
 serde = { version = "1.0" }

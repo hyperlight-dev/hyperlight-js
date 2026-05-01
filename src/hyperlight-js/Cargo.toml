@@ -51,7 +51,7 @@ env_logger = "0.11"
 hyperlight-common = { workspace = true }
 lazy_static = "1.4.0"
 metrics-exporter-prometheus = "0.18"
-metrics-util = "0.20.1"
+metrics-util = "0.20.3"
 opentelemetry = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "grpc-tonic"] }

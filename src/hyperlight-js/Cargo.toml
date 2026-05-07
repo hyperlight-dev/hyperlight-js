@@ -48,7 +48,6 @@ crossbeam-queue = { version = "0.3", features = ["std"] }
 crossterm = "0.29.0"
 dashmap = "6.1.0"
 env_logger = "0.11"
-hyperlight-common = { workspace = true }
 lazy_static = "1.4.0"
 metrics-exporter-prometheus = "0.18"
 metrics-util = "0.20.3"

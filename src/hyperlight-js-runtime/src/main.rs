@@ -17,9 +17,6 @@ limitations under the License.
 #![cfg_attr(hyperlight, no_main)]
 
 #[cfg(hyperlight)]
-mod libc;
-
-#[cfg(hyperlight)]
 include!("main/hyperlight.rs");
 
 #[cfg(not(hyperlight))]

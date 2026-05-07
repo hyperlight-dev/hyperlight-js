@@ -12,7 +12,8 @@ PWD := replace(justfile_dir(), "\\", "/")
 # * define __wasi__ as this disables threading support in quickjs
 export HYPERLIGHT_CFLAGS := \
     "-I" + PWD + "/src/hyperlight-js-runtime/include " + \
-    "-D__wasi__=1 "
+    "-D__wasi__=1 " + \
+    "-D_POSIX_MONOTONIC_CLOCK "
 
 # On Windows, use Ninja generator for CMake to avoid aws-lc-sys build issues with Visual Studio generator
 export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }

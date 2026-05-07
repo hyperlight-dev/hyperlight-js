@@ -13,10 +13,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-use hyperlight_guest::error::Result;
+use hyperlight_guest_bin::error::Result;
 use hyperlight_guest_bin::host_function;
-
-use crate::libc;
+use hyperlight_guest_bin::libc;
 
 fn micros_since_epoch() -> u64 {
     #[host_function("CurrentTimeMicros")]
@@ -26,12 +25,12 @@ fn micros_since_epoch() -> u64 {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn clock_gettime(clk_id: libc::clockid_t, ts: *mut libc::timespec) -> libc::c_int {
+extern "C" fn clock_gettime_2(clk_id: libc::clockid_t, ts: *mut libc::timespec) -> libc::c_int {
     const CLOCK_REALTIME: libc::clockid_t = libc::CLOCK_REALTIME as libc::clockid_t;
     const CLOCK_MONOTONIC: libc::clockid_t = libc::CLOCK_MONOTONIC as libc::clockid_t;
 
     if clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC {
-        unsafe { libc::__errno_location().write(libc::EINVAL as _) };
+        unsafe { libc::errno = libc::EINVAL as _ };
         return -1;
     }
     let micros = micros_since_epoch();
@@ -41,17 +40,5 @@ extern "C" fn clock_gettime(clk_id: libc::clockid_t, ts: *mut libc::timespec) ->
             tv_nsec: ((micros % 1_000_000) * 1000) as _,
         })
     };
-    0
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn gettimeofday(tp: *mut libc::timeval, _tz: *mut libc::c_void) -> libc::c_int {
-    let micros = micros_since_epoch();
-    unsafe {
-        tp.write(libc::timeval {
-            tv_sec: (micros / 1_000_000) as _,
-            tv_usec: (micros % 1_000_000) as _,
-        });
-    }
     0
 }

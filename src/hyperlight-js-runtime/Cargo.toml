@@ -30,10 +30,7 @@ spin = "0.10"
 tracing = { version = "0.1.44", default-features = false, features = ["log","attributes","max_level_trace"] }
 
 [target.'cfg(hyperlight)'.dependencies]
-hyperlight-common = { workspace = true, default-features = false }
-hyperlight-guest = { workspace = true }
 hyperlight-guest-bin = { workspace = true }
-chrono = { version = "0.4", default-features = false }
 
 [target.'cfg(not(hyperlight))'.dependencies]
 clap = { version = "4.6", features = ["derive"] }
@@ -47,7 +44,7 @@ bindgen = "0.72"
 
 [features]
 default = []
-trace_guest = ["hyperlight-common/trace_guest", "hyperlight-guest/trace_guest", "hyperlight-guest-bin/trace_guest"]
+trace_guest = ["hyperlight-guest-bin/trace_guest"]
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(hyperlight)'] }

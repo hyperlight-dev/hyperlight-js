@@ -18,6 +18,3 @@ limitations under the License.
 //! here. We also re-export the generated bindings for the rest of the libc functions.
 
 mod clock;
-mod io;
-mod localtime;
-mod srand;

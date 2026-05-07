@@ -109,7 +109,9 @@ impl LoadedJSSandbox {
         let cpu_start = super::monitor::cpu_time::ThreadCpuHandle::for_current_thread()
             .and_then(|h| h.elapsed().map(|t| (h, t)));
 
-        let result = self.inner.call(&func_name, (event, should_gc));
+        let result = self
+            .inner
+            .call("RunHandler", (func_name.clone(), event, should_gc));
 
         // --- guest-call-stats: record timing after the call ---
         // CPU time is read first so the wall-clock measurement fully wraps it.

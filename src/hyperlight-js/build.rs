@@ -148,7 +148,10 @@ fn build_js_runtime() -> PathBuf {
     let cargo_profile = if profile == "debug" { "dev" } else { "release" };
 
     let stubs_inc = runtime_dir.join("include");
-    let cflags = format!("-I{} -D__wasi__=1", stubs_inc.display());
+    let cflags = format!(
+        "-I{} -D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK",
+        stubs_inc.display()
+    );
 
     // in windows escape the backslash to make bindgen happy
     // TODO(jprendes): this should probably go in cargo-hyperlight instead, where

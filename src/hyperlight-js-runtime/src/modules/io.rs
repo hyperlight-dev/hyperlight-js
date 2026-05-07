@@ -15,7 +15,17 @@ limitations under the License.
 */
 use alloc::string::String;
 
-use crate::libc;
+unsafe extern "C" {
+    fn fflush(stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+    fn fwrite(
+        ptr: *const core::ffi::c_void,
+        size: isize,
+        n: isize,
+        stream: *mut core::ffi::c_void,
+    ) -> isize;
+    static stdout: *mut core::ffi::c_void;
+    static stderr: *mut core::ffi::c_void;
+}
 
 #[rquickjs::module(rename_vars = "camelCase", rename_types = "camelCase")]
 #[allow(clippy::module_inception)]
@@ -24,15 +34,14 @@ pub mod io {
 
     #[rquickjs::function]
     pub fn print(txt: String) {
-        for byte in txt.bytes() {
-            let _ = unsafe { libc::putchar(byte as libc::c_int) };
-        }
+        let _ = unsafe { fwrite(txt.as_ptr() as _, 1, txt.len() as _, stdout) };
         flush()
     }
 
     #[rquickjs::function]
     pub fn flush() {
         // Flush the output buffer of libc to make sure all output is printed out.
-        let _ = unsafe { libc::fflush(core::ptr::null_mut()) };
+        let _ = unsafe { fflush(stdout) };
+        let _ = unsafe { fflush(stderr) };
     }
 }

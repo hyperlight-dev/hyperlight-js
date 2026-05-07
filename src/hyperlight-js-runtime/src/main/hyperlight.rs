@@ -20,12 +20,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
-use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
-use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
-use hyperlight_common::flatbuffer_wrappers::util::get_flatbuffer_result;
-use hyperlight_common::func::ParameterTuple;
-use hyperlight_guest::error::{HyperlightGuestError, Result};
-use hyperlight_guest_bin::{guest_function, host_function};
+use hyperlight_guest_bin::error::{ErrorCode, HyperlightGuestError, Result};
+use hyperlight_guest_bin::{guest_function, host_function, main};
+use hyperlight_js_runtime::JsRuntime;
 use spin::Mutex;
 use tracing::instrument;
 
@@ -38,7 +35,7 @@ pub trait CatchGuestErrorExt {
     fn catch(self) -> anyhow::Result<Self::Ok>;
 }
 
-impl<T> CatchGuestErrorExt for hyperlight_guest::error::Result<T> {
+impl<T> CatchGuestErrorExt for Result<T> {
     type Ok = T;
     fn catch(self) -> anyhow::Result<T> {
         self.map_err(|e| anyhow!("{}: {}", String::from(e.kind), e.message))
@@ -65,15 +62,15 @@ impl hyperlight_js_runtime::host::Host for Host {
     }
 }
 
-static RUNTIME: spin::Lazy<Mutex<hyperlight_js_runtime::JsRuntime>> = spin::Lazy::new(|| {
-    Mutex::new(hyperlight_js_runtime::JsRuntime::new(Host).unwrap_or_else(|e| {
+static RUNTIME: spin::Lazy<Mutex<JsRuntime>> = spin::Lazy::new(|| {
+    Mutex::new(JsRuntime::new(Host).unwrap_or_else(|e| {
         panic!("Failed to initialize JS runtime: {e:#?}");
     }))
 });
 
-#[unsafe(no_mangle)]
+#[main]
 #[instrument(skip_all, level = "info")]
-pub extern "C" fn hyperlight_main() {
+fn main() {
     // dereference RUNTIME to force its initialization
     // of the Lazy static
     let _ = &*RUNTIME;
@@ -125,11 +122,7 @@ fn register_host_modules(host_modules_json: String) -> Result<()> {
     Ok(())
 }
 
-#[unsafe(no_mangle)]
-pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
-    let params = function_call.parameters.unwrap_or_default();
-    let function_name = function_call.function_name;
-    let (event, run_gc) = ParameterTuple::from_value(params)?;
-    let result = RUNTIME.lock().run_handler(function_name, event, run_gc)?;
-    Ok(get_flatbuffer_result(result.as_str()))
+#[guest_function("RunHandler")]
+fn run_handler(function_name: String, event: String, run_gc: bool) -> Result<String> {
+    Ok(RUNTIME.lock().run_handler(function_name, event, run_gc)?)
 }

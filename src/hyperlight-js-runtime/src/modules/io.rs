@@ -17,14 +17,7 @@ use alloc::string::String;
 
 unsafe extern "C" {
     fn fflush(stream: *mut core::ffi::c_void) -> core::ffi::c_int;
-    fn fwrite(
-        ptr: *const core::ffi::c_void,
-        size: isize,
-        n: isize,
-        stream: *mut core::ffi::c_void,
-    ) -> isize;
-    static stdout: *mut core::ffi::c_void;
-    static stderr: *mut core::ffi::c_void;
+    fn putchar(c: core::ffi::c_int) -> core::ffi::c_int;
 }
 
 #[rquickjs::module(rename_vars = "camelCase", rename_types = "camelCase")]
@@ -34,14 +27,32 @@ pub mod io {
 
     #[rquickjs::function]
     pub fn print(txt: String) {
-        let _ = unsafe { fwrite(txt.as_ptr() as _, 1, txt.len() as _, stdout) };
+        for c in txt.bytes() {
+            let _ = unsafe { putchar(c as core::ffi::c_int) };
+        }
         flush()
     }
 
     #[rquickjs::function]
     pub fn flush() {
         // Flush the output buffer of libc to make sure all output is printed out.
-        let _ = unsafe { fflush(stdout) };
-        let _ = unsafe { fflush(stderr) };
+
+        #[cfg(hyperlight)]
+        {
+            unsafe extern "C" {
+                static stdout: *mut core::ffi::c_void;
+                static stderr: *mut core::ffi::c_void;
+            }
+
+            // In Hyperlight, fflush(NULL) is not supported, so we need to flush both stdout and stderr separately.
+            let _ = unsafe { fflush(stdout) };
+            let _ = unsafe { fflush(stderr) };
+        }
+
+        #[cfg(not(hyperlight))]
+        {
+            // In the native runtime, we can just fflush(NULL) to flush all output streams.
+            let _ = unsafe { fflush(core::ptr::null_mut()) };
+        }
     }
 }

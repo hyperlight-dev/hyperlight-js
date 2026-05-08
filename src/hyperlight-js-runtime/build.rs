@@ -13,19 +13,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-mod bindings {
-    #![allow(
-        non_camel_case_types,
-        non_snake_case,
-        non_upper_case_globals,
-        dead_code,
-        unnecessary_transmutes,
-        clippy::upper_case_acronyms,
-        clippy::ptr_offset_with_cast
-    )]
-    include!(concat!(env!("OUT_DIR"), "/libc.rs"));
+
+fn main() {
+    if std::env::var("CARGO_CFG_HYPERLIGHT").is_ok() {
+        println!("cargo::rustc-link-arg=-wrap=clock_gettime");
+    }
 }
-
-pub(crate) use core::ffi::*;
-
-pub(crate) use bindings::*;

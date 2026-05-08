@@ -191,6 +191,26 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bindgen"
+version = "0.71.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+dependencies = [
+ "bitflags 2.11.0",
+ "cexpr",
+ "clang-sys",
+ "itertools 0.13.0",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash",
+ "shlex",
+ "syn",
+]
+
+[[package]]
+name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
@@ -1447,6 +1467,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperlight-common"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a29190c35e3883c3e0944007f47a0997f8ebcf784a2a3f35c0311e513b019416"
+dependencies = [
+ "anyhow",
+ "flatbuffers",
+ "log",
+ "spin",
+ "thiserror",
+ "tracing-core",
+]
+
+[[package]]
 name = "hyperlight-guest"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1454,27 +1488,39 @@ checksum = "6ee2682d284171d2bd9e80e3e543de310356c1d8ec65e88028b3e08048d15d3d"
 dependencies = [
  "anyhow",
  "flatbuffers",
- "hyperlight-common",
- "hyperlight-guest-tracing",
+ "hyperlight-common 0.14.0",
+ "hyperlight-guest-tracing 0.14.0",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "hyperlight-guest"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82a676e88a6640b5cf621171c67f609d1e662713624562597518be6fdb0e0b30"
+dependencies = [
+ "anyhow",
+ "flatbuffers",
+ "hyperlight-common 0.15.0",
+ "hyperlight-guest-tracing 0.15.0",
  "serde_json",
  "tracing",
 ]
 
 [[package]]
 name = "hyperlight-guest-bin"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3740817f3be98d18edb50eec985461baca0eba5b1f73d0f475b7a539d812e750"
+checksum = "0bc349c61dc771769308a2079d398488cd0c52d9bdcad8cf633922b288dd2aed"
 dependencies = [
  "buddy_system_allocator",
- "cc",
- "cfg-if",
  "flatbuffers",
- "glob",
- "hyperlight-common",
- "hyperlight-guest",
+ "hyperlight-common 0.15.0",
+ "hyperlight-guest 0.15.0",
  "hyperlight-guest-macro",
- "hyperlight-guest-tracing",
+ "hyperlight-guest-tracing 0.15.0",
+ "hyperlight-libc",
  "linkme",
  "log",
  "spin",
@@ -1483,9 +1529,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-macro"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4f88cbcde1ca986e4f14a85ea0a436659edcb6eb63e8a9d14413ca5cdc8ea86"
+checksum = "8bef332d8490f2ebe5b8d52f7d39263f82580c54e9505980fea8186fd6679ea3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1499,7 +1545,19 @@ version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d14e9c34c508ecfba1283a552c3eb118d8ee82d863e2e91377a6059f06cf84dd"
 dependencies = [
- "hyperlight-common",
+ "hyperlight-common 0.14.0",
+ "spin",
+ "tracing",
+ "tracing-core",
+]
+
+[[package]]
+name = "hyperlight-guest-tracing"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca03b1ccd29c0c277555d8bd737257d0598554004f9667bb196227d5ed8b5b7e"
+dependencies = [
+ "hyperlight-common 0.15.0",
  "spin",
  "tracing",
  "tracing-core",
@@ -1523,8 +1581,8 @@ dependencies = [
  "gdbstub",
  "gdbstub_arch",
  "goblin",
- "hyperlight-common",
- "hyperlight-guest-tracing",
+ "hyperlight-common 0.14.0",
+ "hyperlight-guest-tracing 0.14.0",
  "kvm-bindings",
  "kvm-ioctls",
  "lazy_static",
@@ -1567,7 +1625,7 @@ dependencies = [
  "dashmap",
  "env_logger",
  "fn-traits",
- "hyperlight-common",
+ "hyperlight-common 0.14.0",
  "hyperlight-host",
  "hyperlight-js-runtime",
  "lazy_static",
@@ -1602,7 +1660,7 @@ version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64",
- "bindgen",
+ "bindgen 0.72.1",
  "chrono",
  "clap",
  "escargot",
@@ -1610,8 +1668,8 @@ dependencies = [
  "hashbrown 0.17.0",
  "hex",
  "hmac",
- "hyperlight-common",
- "hyperlight-guest",
+ "hyperlight-common 0.14.0",
+ "hyperlight-guest 0.14.0",
  "hyperlight-guest-bin",
  "rquickjs",
  "serde",
@@ -1620,6 +1678,18 @@ dependencies = [
  "spin",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "hyperlight-libc"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd6f523d9383e9c8b3820bb141b4deb45b5470135ee069cbc387c3a2a3d55c7"
+dependencies = [
+ "anyhow",
+ "bindgen 0.71.1",
+ "cc",
+ "glob",
 ]
 
 [[package]]
@@ -1968,18 +2038,18 @@ dependencies = [
 
 [[package]]
 name = "linkme"
-version = "0.3.35"
+version = "0.3.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e3283ed2d0e50c06dd8602e0ab319bb048b6325d0bba739db64ed8205179898"
+checksum = "e83272d46373fb8decca684579ac3e7c8f3d71d4cc3aa693df8759e260ae41cf"
 dependencies = [
  "linkme-impl",
 ]
 
 [[package]]
 name = "linkme-impl"
-version = "0.3.35"
+version = "0.3.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5cec0ec4228b4853bb129c84dbf093a27e6c7a20526da046defc334a1b017f7"
+checksum = "32d59e20403c7d08fe62b4376edfe5c7fb2ef1e6b1465379686d0f21c8df444b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3008,7 +3078,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27344601ef27460e82d6a4e1ecb9e7e99f518122095f3c51296da8e9be2b9d83"
 dependencies = [
- "bindgen",
+ "bindgen 0.72.1",
  "cc",
 ]
 

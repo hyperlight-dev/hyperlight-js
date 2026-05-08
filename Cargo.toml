@@ -12,7 +12,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 hyperlight-common = { version = "0.14.0", default-features = false }
-hyperlight-guest-bin = { version = "0.14.0" }
+hyperlight-guest-bin = { version = "0.15.0" }
 hyperlight-guest = { version = "0.14.0" }
 hyperlight-host = { version = "0.14.0", default-features = false }
 

@@ -57,6 +57,7 @@ jobs:
       - uses: hyperlight-dev/ci-setup-workflow@v1.9.0
         with:
           rust-toolchain: "1.89"
+          just-version: "1.51"
 
       - name: Install github-cli (Azure Linux)
         if: runner.os == 'Linux' && matrix.hypervisor == 'mshv3'

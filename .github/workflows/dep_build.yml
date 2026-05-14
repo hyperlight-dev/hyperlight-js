@@ -61,7 +61,8 @@ jobs:
 
     - uses: hyperlight-dev/ci-setup-workflow@v1.9.0
       with:
-        rust-toolchain: "1.89"
+          rust-toolchain: "1.89"
+          just-version: "1.51"
 
     - name: install nodejs
       uses: actions/setup-node@v6

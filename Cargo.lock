@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-js"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "cargo-hyperlight",
@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-js-runtime"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "js-host-api"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arc-swap",
  "hyperlight-js",

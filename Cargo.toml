@@ -3,7 +3,7 @@ resolver = "2"
 members = ["src/hyperlight-js", "src/js-host-api", "src/hyperlight-js-runtime"]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 rust-version = "1.89"
 license = "Apache-2.0"
@@ -14,8 +14,8 @@ readme = "README.md"
 hyperlight-guest-bin = { version = "0.15.0", features = ["libc"] }
 hyperlight-host = { version = "0.15.0", default-features = false }
 
-hyperlight-js = { version = "0.2.2", path = "src/hyperlight-js" }
-hyperlight-js-runtime = { version = "0.2.2", path = "src/hyperlight-js-runtime" }
+hyperlight-js = { version = "0.2.3", path = "src/hyperlight-js" }
+hyperlight-js-runtime = { version = "0.2.3", path = "src/hyperlight-js-runtime" }
 
 [profile.dev]
 panic = "abort"

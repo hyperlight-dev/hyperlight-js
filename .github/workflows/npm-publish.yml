@@ -127,7 +127,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          # node 22.22.2 has an issue where we can't upgrade npm to 11.x
+          # see https://github.com/nodejs/node/issues/62425
+          node-version: '22.22.3'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'

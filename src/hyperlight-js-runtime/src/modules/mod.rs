@@ -19,7 +19,7 @@ use hashbrown::HashMap;
 use rquickjs::loader::{Loader, Resolver};
 use rquickjs::module::ModuleDef;
 use rquickjs::{Ctx, Module, Result};
-use spin::Lazy;
+use spin::LazyLock;
 
 pub mod console;
 pub mod crypto;
@@ -47,7 +47,7 @@ fn declaration<M: ModuleDef>() -> ModuleDeclarationFn {
     declare::<M>
 }
 
-static NATIVE_MODULES: Lazy<HashMap<&str, ModuleDeclarationFn>> = Lazy::new(|| {
+static NATIVE_MODULES: LazyLock<HashMap<&str, ModuleDeclarationFn>> = LazyLock::new(|| {
     HashMap::from([
         ("io", declaration::<io::js_io>()),
         ("crypto", declaration::<crypto::js_crypto>()),

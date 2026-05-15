@@ -62,7 +62,7 @@ impl hyperlight_js_runtime::host::Host for Host {
     }
 }
 
-static RUNTIME: spin::Lazy<Mutex<JsRuntime>> = spin::Lazy::new(|| {
+static RUNTIME: spin::LazyLock<Mutex<JsRuntime>> = spin::LazyLock::new(|| {
     Mutex::new(JsRuntime::new(Host).unwrap_or_else(|e| {
         panic!("Failed to initialize JS runtime: {e:#?}");
     }))
@@ -72,7 +72,7 @@ static RUNTIME: spin::Lazy<Mutex<JsRuntime>> = spin::Lazy::new(|| {
 #[instrument(skip_all, level = "info")]
 fn main() {
     // dereference RUNTIME to force its initialization
-    // of the Lazy static
+    // of the LazyLock static
     let _ = &*RUNTIME;
 }
 

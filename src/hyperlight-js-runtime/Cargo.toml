@@ -26,7 +26,7 @@ rquickjs = { version = "0.11", default-features = false, features = ["bindgen", 
 serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0.149", default-features = false, features = ["alloc"] }
 sha2 =  { version = "0.10" , default-features = false, features = ["force-soft"]}
-spin = "0.10"
+spin = "0.11"
 tracing = { version = "0.1.44", default-features = false, features = ["log","attributes","max_level_trace"] }
 
 [target.'cfg(hyperlight)'.dependencies]

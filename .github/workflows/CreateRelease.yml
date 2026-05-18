@@ -24,14 +24,38 @@ jobs:
         download-benchmarks: true
         upload-benchmarks: true
         environment: release
+  
+  set-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      
+      - name: Set version
+        id: set-version
+        shell: bash
+        run: |
+          git fetch --tags || true
+          # Extract the version number from the branch name, which is expected to be in the format 'release/vX.Y.Z'
+          # if not, default to '0.0.0' to avoid errors in subsequent steps
+          if [[ "${GITHUB_REF}" =~ refs/heads/release/v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            version="${BASH_REMATCH[1]}"
+          else
+            version="0.0.0"
+          fi
+          echo "Setting version to 'v$version'"
+          echo "version=$version" >> $GITHUB_OUTPUT
 
   publish-hyperlight-js-packages-and-create-release:
-    needs: [build, benchmarks]
+    needs: [build, benchmarks, set-version]
     environment: release
     runs-on: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd", "JobId=publish-hyperlight-js-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}"]
     if: ${{ contains(github.ref, 'refs/heads/release/') }}
-    outputs:
-      version: ${{ steps.set-version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v6
@@ -49,15 +73,6 @@ jobs:
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1
         id: crates-io-auth
-
-      - name: Set crate versions
-        id: set-version
-        run: |
-          git fetch --tags || true
-          version=$(echo "${{ github.ref }}" | sed -E 's#refs/heads/release/v##')
-          echo "Setting version to 'v$version'"
-          echo "HYPERLIGHT_JS_VERSION=v$version" >> $GITHUB_ENV
-          echo "version=$version" >> $GITHUB_OUTPUT
 
       - name: Publish hyperlight-js
         run: |
@@ -92,7 +107,7 @@ jobs:
 
       - name: Create GH Release
         run: |
-            gh release create ${{ env.HYPERLIGHT_JS_VERSION }} \
+            gh release create ${{ needs.set-version.outputs.version }} \
               --generate-notes \
               benchmarks_Windows_whp.tar.gz \
               benchmarks_Linux_kvm.tar.gz \
@@ -101,9 +116,8 @@ jobs:
             GH_TOKEN: ${{ github.token }}
 
   publish-npm-packages:
-    needs: [publish-hyperlight-js-packages-and-create-release]
-    if: ${{ contains(github.ref, 'refs/heads/release/') }}
+    needs: [set-version]
     uses: ./.github/workflows/npm-publish.yml
     with:
-      version: ${{ needs.publish-hyperlight-js-packages-and-create-release.outputs.version }}
-      dry-run: false
+      version: ${{ needs.set-version.outputs.version }}
+      dry-run: ${{ !contains(github.ref, 'refs/heads/release/') }}

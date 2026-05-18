@@ -46,7 +46,7 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 crossbeam = { version = "0.8", features = ["std"] }
 crossbeam-queue = { version = "0.3", features = ["std"] }
 crossterm = "0.29.0"
-dashmap = "6.1.0"
+dashmap = "6.2.1"
 env_logger = "0.11"
 lazy_static = "1.4.0"
 metrics-exporter-prometheus = "0.18"

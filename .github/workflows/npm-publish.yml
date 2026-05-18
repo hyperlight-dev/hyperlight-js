@@ -124,6 +124,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Enable KVM
+        run: |
+          # This is required for the Validate packages.
+          sudo modprobe kvm || true
+          sudo modprobe kvm_intel || true
+          sudo modprobe kvm_amd || true
+          sudo chmod a+rwx /dev/kvm
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:

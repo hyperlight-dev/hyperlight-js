@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Publish npm packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  create-gh-release:
+    environment: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download benchmarks (Windows)
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmarks_Windows_whp
+          path: benchmarks_Windows_whp
+
+      - name: Download benchmarks (Linux kvm)
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmarks_Linux_kvm
+          path: benchmarks_Linux_kvm
+
+      - name: Download benchmarks (Linux hyperv3)
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmarks_Linux_hyperv3
+          path: benchmarks_Linux_hyperv3
+  
+      - name: Archive benchmarks
+        run: |
+          tar -zcvf benchmarks_Windows_whp.tar.gz benchmarks_Windows_whp
+          tar -zcvf benchmarks_Linux_kvm.tar.gz benchmarks_Linux_kvm
+          tar -zcvf benchmarks_Linux_hyperv3.tar.gz benchmarks_Linux_hyperv3
+
+      - name: Create GH Release
+        if: ${{ inputs.dry_run == 'false' }}
+        run: |
+            gh release create ${{ inputs.version }} \
+              --generate-notes \
+              benchmarks_Windows_whp.tar.gz \
+              benchmarks_Linux_kvm.tar.gz \
+              benchmarks_Linux_hyperv3.tar.gz
+        env:
+            GH_TOKEN: ${{ github.token }}

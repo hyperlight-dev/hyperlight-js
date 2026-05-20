@@ -6,9 +6,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags:
+      - "v*"
 
 permissions:
-  id-token: write
+  id-token: write # needed for trusted publishing (OIDC) to npm and crates.io
   contents: write # needed to create a release
 
 jobs:
@@ -30,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.set-version.outputs.version }}
+      dry_run: ${{ steps.set-version.outputs.dry_run }}
 
     steps:
       - uses: actions/checkout@v6
@@ -42,67 +45,50 @@ jobs:
         shell: bash
         run: |
           git fetch --tags || true
-          # Extract the version number from the branch name, which is expected to be in the format 'release/vX.Y.Z'
+          # Extract the version number from the tag name, which is expected to be in the format 'vX.Y.Z'
           # if not, default to '0.0.0' to avoid errors in subsequent steps
-          if [[ "${GITHUB_REF}" =~ refs/heads/release/v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+          if [[ "${GITHUB_REF}" =~ refs/tags/v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version="${BASH_REMATCH[1]}"
+            dry_run=false
           else
             version="0.0.0"
+            dry_run=true
           fi
           echo "Setting version to 'v$version'"
           echo "version=$version" >> $GITHUB_OUTPUT
+          echo "dry_run=$dry_run" >> $GITHUB_OUTPUT
 
-  create-gh-release:
+  create-release-branch:
     needs: [build, benchmarks, set-version]
-    environment: release
     runs-on: ubuntu-latest
-    if: ${{ contains(github.ref, 'refs/heads/release/') }}
+    if: ${{ needs.set-version.outputs.dry_run == 'false' }}
 
     steps:
-      - name: Download benchmarks (Windows)
-        uses: actions/download-artifact@v8
-        with:
-          name: benchmarks_Windows_whp
-          path: benchmarks_Windows_whp
+      - uses: actions/checkout@v6
 
-      - name: Download benchmarks (Linux kvm)
-        uses: actions/download-artifact@v8
-        with:
-          name: benchmarks_Linux_kvm
-          path: benchmarks_Linux_kvm
-
-      - name: Download benchmarks (Linux hyperv3)
-        uses: actions/download-artifact@v8
-        with:
-          name: benchmarks_Linux_hyperv3
-          path: benchmarks_Linux_hyperv3
-  
-      - name: Archive benchmarks
+      - name: Create Release Branch
+        shell: bash
         run: |
-          tar -zcvf benchmarks_Windows_whp.tar.gz benchmarks_Windows_whp
-          tar -zcvf benchmarks_Linux_kvm.tar.gz benchmarks_Linux_kvm
-          tar -zcvf benchmarks_Linux_hyperv3.tar.gz benchmarks_Linux_hyperv3
+          git checkout -b release/v${{ needs.set-version.outputs.version }}
+          git push --set-upstream origin release/v${{ needs.set-version.outputs.version }}
 
-      - name: Create GH Release
-        run: |
-            gh release create ${{ needs.set-version.outputs.version }} \
-              --generate-notes \
-              benchmarks_Windows_whp.tar.gz \
-              benchmarks_Linux_kvm.tar.gz \
-              benchmarks_Linux_hyperv3.tar.gz
-        env:
-            GH_TOKEN: ${{ github.token }}
+  publish-gh-release:
+    needs: [build, benchmarks, set-version]
+    uses: ./.github/workflows/gh-publish.yml
+    with:
+      version: ${{ needs.set-version.outputs.version }}
+      dry_run: ${{ needs.set-version.outputs.dry_run != 'false' }}
 
   publish-npm-packages:
     needs: [build, benchmarks, set-version]
     uses: ./.github/workflows/npm-publish.yml
     with:
       version: ${{ needs.set-version.outputs.version }}
-      dry-run: ${{ !contains(github.ref, 'refs/heads/release/') }}
+      dry_run: ${{ needs.set-version.outputs.dry_run != 'false' }}
 
   publish-cargo-crates:
     needs: [build, benchmarks, set-version]
     uses: ./.github/workflows/cargo-publish.yml
     with:
       version: ${{ needs.set-version.outputs.version }}
-      dry-run: ${{ !contains(github.ref, 'refs/heads/release/') }}
+      dry_run: ${{ needs.set-version.outputs.dry_run != 'false' }}

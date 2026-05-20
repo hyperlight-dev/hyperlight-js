@@ -110,7 +110,7 @@ If you need to publish npm packages manually via `workflow_dispatch`, you'll nee
    - Go to Actions → "Publish npm packages" → Run workflow
    - Select the correct branch
    - Enter the version (e.g. `0.2.1`)
-   - Set `dry-run` to `false`
+   - Set `dry_run` to `false`
 
 5. **Clean up immediately after publishing**
    - Delete the `NPM_TOKEN` repo secret on GitHub → Settings → Secrets and variables → Actions

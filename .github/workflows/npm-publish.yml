@@ -9,7 +9,7 @@ on:
         description: 'Version to publish (e.g., 0.2.0)'
         required: true
         type: string
-      dry-run:
+      dry_run:
         description: 'Dry run (skip actual publish)'
         required: false
         type: boolean
@@ -25,7 +25,7 @@ on:
         description: 'Version to publish'
         required: true
         type: string
-      dry-run:
+      dry_run:
         description: 'Dry run (skip actual publish)'
         required: false
         type: boolean
@@ -251,7 +251,7 @@ jobs:
       # You should almost never need to publish manually — if you do,
       # see docs/release.md for the full (deliberately painful) steps.
       - name: Validate NPM_TOKEN for manual dispatch
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs['dry-run'] }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
         run: |
           if [ -z "$NPM_TOKEN" ]; then
             echo "::error::NPM_TOKEN repo secret is required for manual workflow_dispatch publishing."
@@ -273,35 +273,35 @@ jobs:
           fi
 
       - name: Publish Linux GNU package
-        if: ${{ !inputs['dry-run'] }}
+        if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu
         run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
           NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Linux musl package
-        if: ${{ !inputs['dry-run'] }}
+        if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-musl
         run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
           NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Windows package
-        if: ${{ !inputs['dry-run'] }}
+        if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/win32-x64-msvc
         run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
           NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Publish main package
-        if: ${{ !inputs['dry-run'] }}
+        if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
         run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
         env:
           NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
 
       - name: Verify all packages published
-        if: ${{ !inputs['dry-run'] }}
+        if: ${{ !inputs.dry_run }}
         run: |
           echo "Waiting for registry propagation..."
           sleep 15
@@ -325,7 +325,7 @@ jobs:
           VERSION: ${{ inputs.version }}
 
       - name: Dry run - show what would be published
-        if: ${{ inputs['dry-run'] }}
+        if: ${{ inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           echo "=== DRY RUN - Would publish the following packages ==="

@@ -111,9 +111,18 @@ echo "$dependabot_prs" | jq -c '.[]' | while read -r pr; do
         continue
     fi
     
+    # Check merge status before approving so we do not spend an approval on a PR that cannot merge.
+    merge_status=$(gh pr view "$pr_number" -R "$REPO" --json mergeStateStatus -q '.mergeStateStatus')
+    case "$merge_status" in
+        DIRTY|BLOCKED)
+            echo "  ⚠️ Skipping PR #$pr_number because it cannot be auto-merged (status: $merge_status)"
+            continue
+            ;;
+    esac
+
     # Check if PR needs approval (i.e., hasn't been approved already)
     already_approved=$(echo "$pr" | jq -r '.reviews[] | select(.state == "APPROVED") | .state' | grep -c "APPROVED" || true)
-    
+
     if [ "$already_approved" -eq 0 ]; then
         echo "  ✅ Approving PR #$pr_number"
         gh pr review "$pr_number" -R "$REPO" --approve -b "Automatically approved by dependabot auto-approve workflow"
@@ -127,9 +136,6 @@ echo "$dependabot_prs" | jq -c '.[]' | while read -r pr; do
         gh pr merge "$pr_number" -R "$REPO" --auto --squash
         echo "  ✅ Auto-merge enabled for PR #$pr_number"
     elif [ "$all_checks_pass" = true ]; then
-        # Check if PR is up-to-date with base branch
-        merge_status=$(gh pr view "$pr_number" -R "$REPO" --json mergeStateStatus -q '.mergeStateStatus')
-
         case "$merge_status" in
             CLEAN)
                 echo "  ✅ PR #$pr_number is up to date with base branch"
@@ -142,9 +148,6 @@ echo "$dependabot_prs" | jq -c '.[]' | while read -r pr; do
                 echo "  ✅ Enabling auto-merge (squash strategy) for PR #$pr_number"
                 gh pr merge "$pr_number" -R "$REPO" --auto --squash
                 echo "  ✅ Auto-merge enabled for PR #$pr_number"
-                ;;
-            DIRTY|BLOCKED)
-                echo "  ⚠️ Skipping PR #$pr_number because it cannot be auto-merged (status: $merge_status)"
                 ;;
             *)
                 echo "  ⚠️ Skipping PR #$pr_number due to unsupported merge status: $merge_status"

@@ -17,9 +17,9 @@ fi
 REPO="$1"
 echo "Checking for open Dependabot PRs to approve and merge in $REPO..."
 
-# Get all open PRs from dependabot
-# We filter so that only PRs that are not from forks and are in branches starting with "dependabot/cargo" are included.
-dependabot_prs=$(gh pr list -R "$REPO" --author "dependabot[bot]" --state open --json number,title,reviews,headRepositoryOwner,headRefName | jq --arg repo_owner "$(echo "$REPO" | cut -d'/' -f1)" '[.[] | select(.headRepositoryOwner.login == $repo_owner and (.headRefName | startswith("dependabot/cargo")))]')
+# Get all open PRs from dependabot.
+# We only include PRs from the same repository owner and branches created by Dependabot for cargo and npm updates.
+dependabot_prs=$(gh pr list -R "$REPO" --author "dependabot[bot]" --state open --json number,title,reviews,headRepositoryOwner,headRefName | jq --arg repo_owner "$(echo "$REPO" | cut -d'/' -f1)" '[.[] | select(.headRepositoryOwner.login == $repo_owner and ((.headRefName | startswith("dependabot/cargo")) or (.headRefName | startswith("dependabot/npm_and_yarn"))))]')
 # Exit early if no PRs found
 if [ -z "$dependabot_prs" ] || [ "$dependabot_prs" = "[]" ]; then
     echo "No open Dependabot PRs found in $REPO"
@@ -37,18 +37,18 @@ echo "$dependabot_prs" | jq -c '.[]' | while read -r pr; do
     
     echo "Processing PR #$pr_number: $pr_title"
     
-    # Check if PR only modifies allowed files
+    # Check if PR only modifies allowed dependency manifest files.
     pr_files=$(gh pr view "$pr_number" -R "$REPO" --json files)
-    invalid_files=$(echo "$pr_files" | jq -r '.files[].path' | grep -v -E '(Cargo\.toml|Cargo\.lock)' || true)
-    
+    invalid_files=$(echo "$pr_files" | jq -r '.files[].path' | grep -v -E '(^|/)(Cargo\.toml|Cargo\.lock|package\.json|package-lock\.json)$' || true)
+
     if [ -n "$invalid_files" ]; then
         echo "  ❌ PR #$pr_number modifies files that are not allowed for auto-merge:"
-        echo ${invalid_files/#/    - }
-        echo "  ℹ️ Only changes to Cargo.toml and Cargo.lock are allowed"
+        printf '%s\n' "$invalid_files" | sed 's/^/    - /'
+        echo "  ℹ️ Only changes to Cargo.toml, Cargo.lock, package.json, and package-lock.json are allowed"
         continue
     fi
 
-    echo "  ✅ PR #$pr_number only modifies allowed files (Cargo.toml and Cargo.lock)"
+    echo "  ✅ PR #$pr_number only modifies allowed dependency manifest files"
 
     # First, get detailed PR information including all checks
     pr_details=$(gh pr view "$pr_number" -R "$REPO" --json statusCheckRollup,state)
@@ -121,23 +121,35 @@ echo "$dependabot_prs" | jq -c '.[]' | while read -r pr; do
         echo "  ℹ️ PR #$pr_number is already approved"
     fi
     
-    if [ "$has_pending_checks" = true ] || [ "$all_checks_pass" = true ]; then
+    if [ "$has_pending_checks" = true ]; then
+        echo "  ⏳ PR #$pr_number still has pending checks"
+        echo "  ✅ Enabling auto-merge (squash strategy) for PR #$pr_number"
+        gh pr merge "$pr_number" -R "$REPO" --auto --squash
+        echo "  ✅ Auto-merge enabled for PR #$pr_number"
+    elif [ "$all_checks_pass" = true ]; then
         # Check if PR is up-to-date with base branch
         merge_status=$(gh pr view "$pr_number" -R "$REPO" --json mergeStateStatus -q '.mergeStateStatus')
-        
-        if [ "$merge_status" != "CLEAN" ]; then
-            echo "  ⚠️ PR #$pr_number is not up to date (status: $merge_status)"
-            # Enable auto-merge to merge once checks pass
-            echo "  ✅ Enabling auto-merge (squash strategy) for PR #$pr_number"
-            gh pr merge "$pr_number" -R "$REPO" --auto --squash
-            echo "  ✅ Auto-merge enabled for PR #$pr_number"
-        else
-            echo "  ✅ PR #$pr_number is up to date with base branch"
-            # PR is already clean/mergeable - merge directly instead of enabling auto-merge
-            echo "  ✅ Merging PR #$pr_number directly (squash strategy)"
-            gh pr merge "$pr_number" -R "$REPO" --squash
-            echo "  ✅ PR #$pr_number merged successfully"
-        fi
+
+        case "$merge_status" in
+            CLEAN)
+                echo "  ✅ PR #$pr_number is up to date with base branch"
+                echo "  ✅ Merging PR #$pr_number directly (squash strategy)"
+                gh pr merge "$pr_number" -R "$REPO" --squash
+                echo "  ✅ PR #$pr_number merged successfully"
+                ;;
+            BEHIND)
+                echo "  ⚠️ PR #$pr_number is behind the base branch"
+                echo "  ✅ Enabling auto-merge (squash strategy) for PR #$pr_number"
+                gh pr merge "$pr_number" -R "$REPO" --auto --squash
+                echo "  ✅ Auto-merge enabled for PR #$pr_number"
+                ;;
+            DIRTY|BLOCKED)
+                echo "  ⚠️ Skipping PR #$pr_number because it cannot be auto-merged (status: $merge_status)"
+                ;;
+            *)
+                echo "  ⚠️ Skipping PR #$pr_number due to unsupported merge status: $merge_status"
+                ;;
+        esac
     fi
     
 done

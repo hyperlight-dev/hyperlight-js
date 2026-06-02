@@ -16,7 +16,7 @@ limitations under the License.
 use alloc::string::{String, ToString as _};
 
 use hashbrown::HashMap;
-use rquickjs::loader::{Loader, Resolver};
+use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::ModuleDef;
 use rquickjs::{Ctx, Module, Result};
 use spin::LazyLock;
@@ -57,7 +57,13 @@ static NATIVE_MODULES: LazyLock<HashMap<&str, ModuleDeclarationFn>> = LazyLock::
 });
 
 impl Resolver for NativeModuleLoader {
-    fn resolve(&mut self, _ctx: &Ctx<'_>, base: &str, name: &str) -> Result<String> {
+    fn resolve(
+        &mut self,
+        _ctx: &Ctx<'_>,
+        base: &str,
+        name: &str,
+        _attributes: Option<ImportAttributes<'_>>,
+    ) -> Result<String> {
         if NATIVE_MODULES.contains_key(name) {
             Ok(name.to_string())
         } else {
@@ -67,7 +73,12 @@ impl Resolver for NativeModuleLoader {
 }
 
 impl Loader for NativeModuleLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> Result<Module<'js>> {
         if let Some(declaration) = NATIVE_MODULES.get(name) {
             declaration(ctx.clone(), name)
         } else {

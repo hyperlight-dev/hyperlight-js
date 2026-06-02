@@ -29,7 +29,7 @@ use alloc::string::{String, ToString};
 
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
-use rquickjs::loader::{Loader, Resolver};
+use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Context, Ctx, Function, Module, Persistent, Result, Runtime, Value};
 use serde::de::DeserializeOwned;
@@ -265,7 +265,13 @@ impl ModuleLoader {
 }
 
 impl Resolver for ModuleLoader {
-    fn resolve(&mut self, _ctx: &Ctx<'_>, base: &str, name: &str) -> Result<String> {
+    fn resolve(
+        &mut self,
+        _ctx: &Ctx<'_>,
+        base: &str,
+        name: &str,
+        _attributes: Option<ImportAttributes<'_>>,
+    ) -> Result<String> {
         // quickjs uses the module path as the base for relative imports
         // but oxc_resolver expects the directory as the base
         let (dir, _) = base.rsplit_once('/').unwrap_or((".", ""));
@@ -282,7 +288,12 @@ impl Resolver for ModuleLoader {
 }
 
 impl Loader for ModuleLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> Result<Module<'js>> {
         let source = self
             .host
             .load_module(name.to_string())

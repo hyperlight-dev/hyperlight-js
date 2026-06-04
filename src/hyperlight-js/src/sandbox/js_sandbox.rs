@@ -42,15 +42,30 @@ pub const DEFAULT_MODULE_NAMESPACE: &str = "user";
 /// [`ProtoJSSandbox::host_module`].
 pub const RESERVED_NAMESPACES: &[&str] = &["host"];
 
+/// Maximum allowed length (in bytes) for a module or namespace identifier.
+///
+/// Guards against accidentally large strings being passed as names (e.g.
+/// multi-MB inputs from untrusted callers). Both the inner Rust layer and
+/// the NAPI boundary enforce this limit.
+pub const MAX_MODULE_IDENTIFIER_LEN: usize = 256;
+
 /// Validates a module identifier (name or namespace).
 ///
 /// Rules:
+/// - Must not exceed [`MAX_MODULE_IDENTIFIER_LEN`] bytes
 /// - Must not be empty (or whitespace-only)
 /// - Must not contain `':'`
 ///
 /// Returns an error with a descriptive message using `label`
 /// (e.g. "Module name", "Module namespace").
 pub fn validate_module_identifier(value: &str, label: &str) -> Result<()> {
+    if value.len() > MAX_MODULE_IDENTIFIER_LEN {
+        return Err(new_error!(
+            "{} must not exceed {} bytes",
+            label,
+            MAX_MODULE_IDENTIFIER_LEN
+        ));
+    }
     if value.is_empty() || value.trim().is_empty() {
         return Err(new_error!("{} must not be empty", label));
     }

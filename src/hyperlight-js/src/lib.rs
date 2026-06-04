@@ -35,6 +35,8 @@ pub use sandbox::js_sandbox::validate_namespace_not_reserved;
 pub use sandbox::js_sandbox::JSSandbox;
 /// Default namespace for user modules added via [`JSSandbox::add_module`].
 pub use sandbox::js_sandbox::DEFAULT_MODULE_NAMESPACE;
+/// Maximum allowed length (in bytes) for a module or namespace identifier.
+pub use sandbox::js_sandbox::MAX_MODULE_IDENTIFIER_LEN;
 /// Reserved namespaces that cannot be used for user modules.
 pub use sandbox::js_sandbox::RESERVED_NAMESPACES;
 /// A Hyperlight Sandbox with a JavaScript run time loaded and guest code loaded.

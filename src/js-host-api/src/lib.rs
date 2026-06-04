@@ -214,31 +214,15 @@ fn validate_module_name(name: &str) -> napi::Result<()> {
     Ok(())
 }
 
-/// Maximum allowed length for a module or namespace identifier.
-/// Guards against accidental multi-MB strings being passed as names.
-const MAX_MODULE_IDENTIFIER_LEN: usize = 256;
-
 /// Validates a user module identifier at the NAPI boundary.
 ///
-/// Performs the same core validation as the inner `JSSandbox` layer (empty,
-/// colons) but additionally checks for:
-/// - Control characters (defense-in-depth for JS callers)
-/// - Excessive length (guards against multi-MB strings)
+/// Delegates core validation (length, empty, colons) to the shared
+/// `hyperlight_js::validate_module_identifier` and additionally checks for
+/// control characters (defense-in-depth for JS callers).
 ///
 /// Errors are returned with `ERR_INVALID_ARG` codes so the JS wrapper can
-/// surface them properly. The inner layer's validation still runs as a
-/// safety net, but would produce generic `ERR_INTERNAL` codes.
+/// surface them properly.
 fn validate_napi_module_identifier(value: &str, label: &str) -> napi::Result<()> {
-    // First enforce a hard length limit to short‑circuit expensive validation on
-    // accidentally large strings (DoS / multi‑MB input guard). Then delegate core
-    // validation (e.g., emptiness, colons) to the shared implementation, mapping
-    // its errors through invalid_arg_error so callers consistently receive
-    // ERR_INVALID_ARG rather than generic ERR_INTERNAL codes.
-    if value.len() > MAX_MODULE_IDENTIFIER_LEN {
-        return Err(invalid_arg_error(&format!(
-            "{label} must not exceed {MAX_MODULE_IDENTIFIER_LEN} bytes"
-        )));
-    }
     hyperlight_js::validate_module_identifier(value, label)
         .map_err(|e| invalid_arg_error(&e.to_string()))?;
     if value.chars().any(|c| c.is_control()) {

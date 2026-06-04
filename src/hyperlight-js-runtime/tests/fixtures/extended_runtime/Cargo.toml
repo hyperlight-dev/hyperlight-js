@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 hyperlight-js-runtime = { path = "../../.." }
 native-math = { path = "../native_math" }
-rquickjs = { version = "0.11", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
+rquickjs = { version = "0.12", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
 
 # anyhow is only needed for the native CLI entry point, not the hyperlight guest
 [target.'cfg(not(hyperlight))'.dependencies]

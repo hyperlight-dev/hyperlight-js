@@ -26,8 +26,8 @@ pub(crate) mod utils;
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
-use core::cell::RefCell;
 use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;

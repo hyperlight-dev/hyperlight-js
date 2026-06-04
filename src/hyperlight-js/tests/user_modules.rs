@@ -507,7 +507,7 @@ fn user_module_can_import_builtin_module() {
 fn user_module_can_import_host_function() {
     let enricher_module = Script::from_content(
         r#"
-        import * as db from 'host:db';
+        import * as db from 'db';
         export function enrich(event) {
             const user = db.lookup(event.userId);
             event.userName = user.name;
@@ -526,15 +526,13 @@ fn user_module_can_import_host_function() {
     );
 
     let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.host_module("host:db").register_raw(
-        "lookup",
-        |args: String| -> hyperlight_js::Result<String> {
-            let parsed: serde_json::Value = serde_json::from_str(&args).unwrap();
-            let id = parsed[0].as_i64().unwrap();
-            let result = serde_json::json!({ "id": id, "name": format!("User {}", id) });
-            Ok(serde_json::to_string(&result).unwrap())
-        },
-    );
+    proto
+        .register(
+            "db",
+            "lookup",
+            |id: i32| serde_json::json!({ "id": id, "name": format!("User {}", id) }),
+        )
+        .unwrap();
 
     let mut sandbox = proto.load_runtime().unwrap();
 

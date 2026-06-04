@@ -202,9 +202,11 @@ impl HostModule {
                 // data is not supported — reject if blobs are present.
                 if !blobs.is_empty() {
                     return Err(crate::HyperlightError::Error(format!(
-                        "Function '{}' received {} binary argument(s) but was registered \
-                        with `register` (typed JSON-only). Use `register_js` for functions \
-                        that accept Uint8Array/Buffer arguments.",
+                        concat!(
+                            "Function '{}' received {} binary argument(s) but was registered ",
+                            "with `register` (typed JSON-only). Use `register_js` for functions ",
+                            "that accept Uint8Array/Buffer arguments.",
+                        ),
                         name,
                         blobs.len()
                     )));

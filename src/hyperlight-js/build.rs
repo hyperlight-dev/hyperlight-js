@@ -211,7 +211,7 @@ fn bundle_runtime() {
     println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH");
 
     let js_runtime_resource = match env::var("HYPERLIGHT_JS_RUNTIME_PATH") {
-        Ok(path) => {
+        Ok(path) if !path.trim().is_empty() => {
             let canonical = PathBuf::from(&path)
                 .canonicalize()
                 .expect("HYPERLIGHT_JS_RUNTIME_PATH must point to a valid file");
@@ -227,7 +227,7 @@ fn bundle_runtime() {
             println!("cargo:rerun-if-changed={}", canonical.display());
             canonical
         }
-        Err(_) => build_js_runtime(),
+        _ => build_js_runtime(),
     };
 
     let out_dir = env::var_os("OUT_DIR").unwrap();

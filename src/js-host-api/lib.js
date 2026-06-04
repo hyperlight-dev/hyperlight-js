@@ -218,16 +218,16 @@ for (const method of [
     }
     SandboxBuilder.prototype.setHostPrintFn = wrapSync(function (callback) {
         if (typeof callback !== 'function') {
-            // Forward non-function values to the native method for consistent
-            // validation errors (the Rust layer rejects non-callable arguments).
-            return origSetHostPrintFn.call(this, callback);
+            throw new TypeError(
+                `SandboxBuilder.setHostPrintFn expects a function, received ${typeof callback}`
+            );
         }
         return origSetHostPrintFn.call(this, (msg) => {
-            Promise.resolve()
-                .then(() => callback(msg))
-                .catch((e) => {
-                    console.error('Host print callback threw:', e);
-                });
+            try {
+                callback(msg);
+            } catch (e) {
+                console.error('Host print callback threw:', e);
+            }
         });
     });
 }

@@ -471,8 +471,6 @@ describe('setHostPrintFn', () => {
         );
         const loaded = await sandbox.getLoadedSandbox();
         await loaded.callHandler('handler', {});
-        // Flush microtasks — the print wrapper defers via Promise
-        await new Promise((r) => setTimeout(r, 0));
 
         expect(messages.join('')).toContain('Hello from guest!');
     });
@@ -495,8 +493,6 @@ describe('setHostPrintFn', () => {
         );
         const loaded = await sandbox.getLoadedSandbox();
         await loaded.callHandler('handler', {});
-        // Flush microtasks
-        await new Promise((r) => setTimeout(r, 0));
 
         const combined = messages.join('');
         expect(combined).toContain('first');
@@ -545,8 +541,6 @@ describe('setHostPrintFn', () => {
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
             const result = await loaded.callHandler('handler', {});
-            // Flush microtasks — the print wrapper defers via Promise
-            await new Promise((r) => setTimeout(r, 0));
 
             // The JS wrapper catches the throw — guest continues normally
             expect(result.survived).toBe(true);

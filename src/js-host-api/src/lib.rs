@@ -426,20 +426,18 @@ impl SandboxBuilderWrapper {
         >,
     ) -> napi::Result<&Self> {
         self.with_inner(|b| {
-            // Blocking mode ensures the TSFN dispatch completes before the
-            // native call returns, but the JS wrapper defers the user callback
-            // via a Promise microtask — so user code may run after guest
-            // execution resumes. From the guest's perspective, print is
-            // effectively fire-and-forget with no return value to await.
-            // Unlike host functions (which use NonBlocking + oneshot channel
-            // for async Promise resolution), print has no result path.
+            // Blocking mode ensures the TSFN call is queued even when the
+            // queue is full (it blocks until space is available), preventing
+            // silent message drops that NonBlocking mode would cause.
             //
-            // **Reentrancy note:** The print callback ultimately runs while
-            // the sandbox Mutex is held (inside `call_handler`'s
-            // `spawn_blocking`). Calling Hyperlight APIs that acquire the
-            // same lock from within the callback (e.g. `snapshot()`,
-            // `restore()`, `unload()`) will deadlock. Keep print callbacks
-            // simple — logging only.
+            // The JS wrapper invokes the user callback synchronously in the
+            // TSFN handler — no microtask deferral.
+            //
+            // **Reentrancy note:** The print callback runs while the sandbox
+            // Mutex is held (inside `call_handler`'s `spawn_blocking`).
+            // Calling Hyperlight APIs that acquire the same lock from within
+            // the callback (e.g. `snapshot()`, `restore()`, `unload()`) will
+            // deadlock. Keep print callbacks simple — logging only.
             let print_fn = move |msg: String| -> i32 {
                 let status = callback.call(msg, ThreadsafeFunctionCallMode::Blocking);
                 if status == Status::Ok {
@@ -685,10 +683,10 @@ impl HostModuleWrapper {
             return Err(invalid_arg_error("Function name must not be empty"));
         }
         let wrapper = move |args: String| -> hyperlight_js::Result<String> {
-            use ThreadsafeFunctionCallMode::NonBlocking;
+            use ThreadsafeFunctionCallMode::Blocking;
             let args: Vec<Option<serde_json::Value>> = serde_json::from_str(&args)?;
             let (tx, rx) = oneshot::channel();
-            let status = func.call_with_return_value(Rest(args), NonBlocking, move |result, _| {
+            let status = func.call_with_return_value(Rest(args), Blocking, move |result, _| {
                 let _ = tx.send(result);
                 Ok(())
             });

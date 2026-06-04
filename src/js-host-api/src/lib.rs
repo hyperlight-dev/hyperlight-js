@@ -123,6 +123,8 @@ enum ErrorCode {
     Consumed,
     /// Internal / unexpected failure (lock poison, task join error, etc.).
     Internal,
+    /// Reentrant call detected — calling sandbox methods from a host callback.
+    Reentrant,
 }
 
 impl ErrorCode {
@@ -135,6 +137,7 @@ impl ErrorCode {
             Self::InvalidArg => "ERR_INVALID_ARG",
             Self::Consumed => "ERR_CONSUMED",
             Self::Internal => "ERR_INTERNAL",
+            Self::Reentrant => "ERR_REENTRANT",
         }
     }
 }
@@ -227,6 +230,15 @@ fn join_error(err: tokio::task::JoinError) -> napi::Error {
     hl_error(
         ErrorCode::Internal,
         format!("Background task failed: {err}"),
+    )
+}
+
+/// Creates an error for reentrant calls detected at runtime.
+fn reentrant_error() -> napi::Error {
+    hl_error(
+        ErrorCode::Reentrant,
+        "Cannot call sandbox methods from a host callback — the sandbox lock is held during \
+         guest execution. Perform this operation after callHandler() resolves instead",
     )
 }
 
@@ -399,6 +411,55 @@ impl SandboxBuilderWrapper {
                 .map_err(join_error)??;
         Ok(ProtoJSSandboxWrapper {
             inner: Arc::new(Mutex::new(Some(proto_sandbox))),
+        })
+    }
+
+    /// Set a callback that receives guest `console.log` / `print` output.
+    ///
+    /// Without this, guest print output is silently discarded. The callback
+    /// receives each print message as a string.
+    ///
+    /// If the callback throws, the exception is caught by the JS wrapper
+    /// (`lib.js`) and logged to `console.error`. Guest execution continues.
+    ///
+    /// @param callback - `(message: string) => void` — called for each print
+    /// @returns this (for chaining)
+    /// @throws If the builder has already been consumed by `build()`
+    #[napi]
+    pub fn set_host_print_fn(
+        &self,
+        #[napi(ts_arg_type = "(message: string) => void")] callback: ThreadsafeFunction<
+            String, // Rust → JS argument type
+            (),     // JS return type (void)
+            String, // JS → Rust argument type (same — identity mapping)
+            Status, // Error status type
+            false,  // Not CallerHandled (napi manages errors)
+            false,  // Not accepting unknown return types
+        >,
+    ) -> napi::Result<&Self> {
+        self.with_inner(|b| {
+            // Blocking mode ensures the TSFN call is queued even when the
+            // queue is full (it blocks until space is available), preventing
+            // silent message drops that NonBlocking mode would cause.
+            //
+            // The JS wrapper invokes the user callback synchronously in the
+            // TSFN handler — no microtask deferral.
+            //
+            // **Reentrancy note:** The print callback runs while the sandbox
+            // Mutex is held (inside `call_handler`'s `spawn_blocking`).
+            // If user code in the callback attempts to call methods that
+            // acquire the same lock (e.g. `snapshot()`, `restore()`,
+            // `unload()`, `callHandler()`), the `executing_flag` deadlock
+            // detection will return `ERR_REENTRANT` instead of hanging.
+            let print_fn = move |msg: String| -> i32 {
+                let status = callback.call(msg, ThreadsafeFunctionCallMode::Blocking);
+                if status == Status::Ok {
+                    0
+                } else {
+                    -1
+                }
+            };
+            b.with_host_print_fn(print_fn.into())
         })
     }
 }
@@ -635,10 +696,10 @@ impl HostModuleWrapper {
             return Err(invalid_arg_error("Function name must not be empty"));
         }
         let wrapper = move |args: String| -> hyperlight_js::Result<String> {
-            use ThreadsafeFunctionCallMode::NonBlocking;
+            use ThreadsafeFunctionCallMode::Blocking;
             let args: Vec<Option<serde_json::Value>> = serde_json::from_str(&args)?;
             let (tx, rx) = oneshot::channel();
-            let status = func.call_with_return_value(Rest(args), NonBlocking, move |result, _| {
+            let status = func.call_with_return_value(Rest(args), Blocking, move |result, _| {
                 let _ = tx.send(result);
                 Ok(())
             });
@@ -805,6 +866,7 @@ impl JSSandboxWrapper {
             poisoned_flag,
             last_call_stats: Arc::new(ArcSwapOption::empty()),
             disposed_flag: Arc::new(AtomicBool::new(false)),
+            executing_flag: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -887,17 +949,37 @@ pub struct LoadedJSSandboxWrapper {
     /// `unload()`), for lock-free checks in sync getters that don't
     /// consult the inner Mutex.
     disposed_flag: Arc<AtomicBool>,
+
+    /// Tracks whether guest code is currently executing inside `call_handler`.
+    ///
+    /// Used for deadlock detection: if a host callback (print fn, host function)
+    /// tries to call a method that needs the inner Mutex while this is `true`,
+    /// we return `ERR_REENTRANT` immediately instead of deadlocking.
+    executing_flag: Arc<AtomicBool>,
 }
 
 type LoadedJSSandboxGuard = OwnedMappedMutexGuard<Option<LoadedJSSandbox>, LoadedJSSandbox>;
 
 impl LoadedJSSandboxWrapper {
     /// Borrow the inner value mutably via Mutex, or error if consumed.
+    ///
+    /// Performs deadlock detection: if `executing_flag` is set (meaning we're
+    /// inside a `call_handler` on a background thread), `try_lock` is attempted
+    /// first. If it fails, we know this is a reentrant call from a host callback
+    /// and return `ERR_REENTRANT` immediately instead of deadlocking.
     async fn with_inner<R>(
         &self,
         f: impl AsyncFnOnce(LoadedJSSandboxGuard) -> napi::Result<R>,
     ) -> napi::Result<R> {
-        let sandbox = self.inner.clone().lock_owned().await;
+        let sandbox = if self.executing_flag.load(Ordering::Acquire) {
+            // We're inside a host callback — try_lock to detect reentrancy.
+            match self.inner.clone().try_lock_owned() {
+                Ok(guard) => guard,
+                Err(_) => return Err(reentrant_error()),
+            }
+        } else {
+            self.inner.clone().lock_owned().await
+        };
         let sandbox = OwnedMutexGuard::try_map(sandbox, Option::as_mut)
             .map_err(|_| consumed_error("LoadedJSSandbox"))?;
         f(sandbox).await
@@ -906,30 +988,42 @@ impl LoadedJSSandboxWrapper {
     /// Borrow the inner value mutably via Mutex, or error if consumed.
     /// The closure `f` will run using spawn_blocking, so it can perform long-running operations without
     /// blocking the Node.js event loop. This is the main way to interact with the inner `LoadedJSSandbox`.
+    ///
+    /// Sets `executing_flag` for the duration of the blocking closure so that
+    /// reentrant calls from host callbacks are detected instead of deadlocking.
     async fn with_blocking_inner<R: Send + 'static>(
         &self,
         f: impl FnOnce(LoadedJSSandboxGuard) -> napi::Result<R> + Send + 'static,
     ) -> napi::Result<R> {
+        let executing_flag = self.executing_flag.clone();
         self.with_inner(async move |sandbox| {
-            tokio::task::spawn_blocking(move || f(sandbox))
+            executing_flag.store(true, Ordering::Release);
+            let result = tokio::task::spawn_blocking(move || f(sandbox))
                 .await
-                .map_err(join_error)?
+                .map_err(join_error)?;
+            executing_flag.store(false, Ordering::Release);
+            result
         })
         .await
     }
 
     /// Take ownership of the inner value, returning a consumed-state error if
     /// this instance has already been used.
+    ///
+    /// Performs the same deadlock detection as `with_inner`.
     async fn take_inner_with<R>(
         &self,
         f: impl AsyncFnOnce(LoadedJSSandbox) -> napi::Result<R>,
     ) -> napi::Result<R> {
-        let sandbox = self
-            .inner
-            .lock()
-            .await
-            .take()
-            .ok_or_else(|| consumed_error("LoadedJSSandbox"))?;
+        let sandbox = if self.executing_flag.load(Ordering::Acquire) {
+            match self.inner.try_lock() {
+                Ok(mut guard) => guard.take(),
+                Err(_) => return Err(reentrant_error()),
+            }
+        } else {
+            self.inner.lock().await.take()
+        }
+        .ok_or_else(|| consumed_error("LoadedJSSandbox"))?;
         self.disposed_flag.store(true, Ordering::Release);
         f(sandbox).await
     }
@@ -938,14 +1032,20 @@ impl LoadedJSSandboxWrapper {
     /// this instance has already been used.
     /// The closure `f` will run using spawn_blocking, so it can perform long-running operations without
     /// blocking the Node.js event loop. This is the main way to interact with the inner `LoadedJSSandbox`.
+    ///
+    /// Sets `executing_flag` for the duration of the blocking closure.
     async fn take_blocking_inner_with<R: Send + 'static>(
         &self,
         f: impl FnOnce(LoadedJSSandbox) -> napi::Result<R> + Send + 'static,
     ) -> napi::Result<R> {
+        let executing_flag = self.executing_flag.clone();
         self.take_inner_with(async move |sandbox| {
-            tokio::task::spawn_blocking(move || f(sandbox))
+            executing_flag.store(true, Ordering::Release);
+            let result = tokio::task::spawn_blocking(move || f(sandbox))
                 .await
-                .map_err(join_error)?
+                .map_err(join_error)?;
+            executing_flag.store(false, Ordering::Release);
+            result
         })
         .await
     }

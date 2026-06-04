@@ -1,5 +1,5 @@
 // Basic sandbox functionality tests
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SandboxBuilder } from '../lib.js';
 import { expectThrowsWithCode, expectRejectsWithCode } from './test-helpers.js';
 
@@ -443,5 +443,116 @@ describe('LoadedJSSandbox.unload()', () => {
         await loaded.unload();
 
         expectThrowsWithCode(() => loaded.lastCallStats, 'ERR_CONSUMED');
+    });
+});
+
+// ── Host print function ──────────────────────────────────────────────
+
+describe('setHostPrintFn', () => {
+    it('should support method chaining', () => {
+        const builder = new SandboxBuilder();
+        const returned = builder.setHostPrintFn(() => {});
+        expect(returned).toBe(builder);
+    });
+
+    it('should receive console.log output from the guest', async () => {
+        const messages = [];
+        const builder = new SandboxBuilder().setHostPrintFn((msg) => {
+            messages.push(msg);
+        });
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler(
+            'handler',
+            `function handler(event) {
+                console.log("Hello from guest!");
+                return event;
+            }`
+        );
+        const loaded = await sandbox.getLoadedSandbox();
+        await loaded.callHandler('handler', {});
+
+        expect(messages.join('')).toContain('Hello from guest!');
+    });
+
+    it('should receive multiple console.log calls', async () => {
+        const messages = [];
+        const builder = new SandboxBuilder().setHostPrintFn((msg) => {
+            messages.push(msg);
+        });
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler(
+            'handler',
+            `function handler(event) {
+                console.log("first");
+                console.log("second");
+                console.log("third");
+                return event;
+            }`
+        );
+        const loaded = await sandbox.getLoadedSandbox();
+        await loaded.callHandler('handler', {});
+
+        const combined = messages.join('');
+        expect(combined).toContain('first');
+        expect(combined).toContain('second');
+        expect(combined).toContain('third');
+    });
+
+    it('should use the last callback when set multiple times', async () => {
+        const firstMessages = [];
+        const secondMessages = [];
+        const builder = new SandboxBuilder()
+            .setHostPrintFn((msg) => firstMessages.push(msg))
+            .setHostPrintFn((msg) => secondMessages.push(msg));
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler(
+            'handler',
+            `function handler(event) {
+                console.log("which callback?");
+                return event;
+            }`
+        );
+        const loaded = await sandbox.getLoadedSandbox();
+        await loaded.callHandler('handler', {});
+
+        expect(firstMessages.length).toBe(0);
+        expect(secondMessages.join('')).toContain('which callback?');
+    });
+
+    it('should continue guest execution when callback throws', async () => {
+        const builder = new SandboxBuilder().setHostPrintFn(() => {
+            throw new Error('print callback exploded');
+        });
+        const proto = await builder.build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler(
+            'handler',
+            `function handler(event) {
+                console.log("this will throw in the callback");
+                return { survived: true };
+            }`
+        );
+        const loaded = await sandbox.getLoadedSandbox();
+
+        // Spy on console.error to suppress noise and verify the error is logged
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const result = await loaded.callHandler('handler', {});
+
+            // The JS wrapper catches the throw — guest continues normally
+            expect(result.survived).toBe(true);
+            expect(errorSpy).toHaveBeenCalledWith('Host print callback threw:', expect.any(Error));
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    it('should throw CONSUMED after build()', async () => {
+        const builder = new SandboxBuilder();
+        await builder.build();
+        expectThrowsWithCode(() => builder.setHostPrintFn(() => {}), 'ERR_CONSUMED');
     });
 });

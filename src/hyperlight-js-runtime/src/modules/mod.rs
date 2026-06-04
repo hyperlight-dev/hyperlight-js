@@ -19,8 +19,7 @@ use hashbrown::HashMap;
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::ModuleDef;
 use rquickjs::{Ctx, Module, Result};
-use spin::LazyLock;
-use spin::Mutex;
+use spin::{LazyLock, Mutex};
 
 #[doc(hidden)]
 pub mod console;

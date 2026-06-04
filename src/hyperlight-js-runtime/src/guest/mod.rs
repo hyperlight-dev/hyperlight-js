@@ -34,9 +34,10 @@ use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
 use hyperlight_guest_bin::error::{ErrorCode, HyperlightGuestError, Result};
 use hyperlight_guest_bin::{guest_function, host_function, main};
-use crate::JsRuntime;
 use spin::Mutex;
 use tracing::instrument;
+
+use crate::JsRuntime;
 
 mod stubs;
 
@@ -74,8 +75,8 @@ impl crate::host::Host for Host {
     }
 }
 
-static RUNTIME: spin::LazyLock<Mutex<crate::JsRuntime>> = spin::LazyLock::new(|| {
-    Mutex::new(crate::JsRuntime::new(Host).unwrap_or_else(|e| {
+static RUNTIME: spin::LazyLock<Mutex<JsRuntime>> = spin::LazyLock::new(|| {
+    Mutex::new(JsRuntime::new(Host).unwrap_or_else(|e| {
         panic!("Failed to initialize JS runtime: {e:#?}");
     }))
 });

@@ -61,7 +61,7 @@ fn loader_resolves_all_builtin_modules() {
 
     with_qjs_context(|ctx| {
         for name in &builtins {
-            let result = loader.resolve(&ctx, ".", name);
+            let result = loader.resolve(&ctx, ".", name, None);
             assert!(result.is_ok(), "Should resolve built-in module '{name}'");
             assert_eq!(result.unwrap(), *name);
         }
@@ -73,7 +73,7 @@ fn loader_rejects_unknown_modules() {
     let mut loader = hyperlight_js_runtime::modules::NativeModuleLoader;
 
     with_qjs_context(|ctx| {
-        let result = loader.resolve(&ctx, ".", "nonexistent");
+        let result = loader.resolve(&ctx, ".", "nonexistent", None);
         assert!(result.is_err(), "Should reject unknown modules");
     });
 }
@@ -85,7 +85,7 @@ fn loader_loads_all_builtin_modules() {
 
     with_qjs_context(|ctx| {
         for name in &builtins {
-            let result = loader.load(&ctx, name);
+            let result = loader.load(&ctx, name, None);
             assert!(
                 result.is_ok(),
                 "Should load built-in module '{name}', got: {:?}",
@@ -116,13 +116,13 @@ fn registered_custom_module_resolves_and_loads() {
     let mut loader = hyperlight_js_runtime::modules::NativeModuleLoader;
 
     with_qjs_context(|ctx| {
-        let result = loader.resolve(&ctx, ".", "greeting");
+        let result = loader.resolve(&ctx, ".", "greeting", None);
         assert!(
             result.is_ok(),
             "Should resolve registered 'greeting' module"
         );
 
-        let result = loader.load(&ctx, "greeting");
+        let result = loader.load(&ctx, "greeting", None);
         assert!(
             result.is_ok(),
             "Should load registered 'greeting' module, got: {:?}",
@@ -144,7 +144,7 @@ fn builtins_still_work_after_custom_registration() {
 
     with_qjs_context(|ctx| {
         for name in &builtins {
-            let result = loader.resolve(&ctx, ".", name);
+            let result = loader.resolve(&ctx, ".", name, None);
             assert!(
                 result.is_ok(),
                 "Built-in '{name}' should still resolve after custom registration"
@@ -221,7 +221,7 @@ fn macro_generated_init_registers_modules() {
     let mut loader = hyperlight_js_runtime::modules::NativeModuleLoader;
 
     with_qjs_context(|ctx| {
-        let result = loader.resolve(&ctx, ".", "test_math_macro");
+        let result = loader.resolve(&ctx, ".", "test_math_macro", None);
         assert!(
             result.is_ok(),
             "Module registered via native_modules! macro should resolve"

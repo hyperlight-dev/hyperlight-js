@@ -14,8 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 use hyperlight_guest_bin::error::Result;
-use hyperlight_guest_bin::host_function;
-use hyperlight_guest_bin::libc;
+use hyperlight_guest_bin::{host_function, libc};
 
 fn micros_since_epoch() -> u64 {
     #[host_function("CurrentTimeMicros")]
@@ -33,7 +32,10 @@ fn micros_since_epoch() -> u64 {
 // hyperlight runtime's libc is a stub that returns an epuch and increments time by 1s
 // on every call.
 #[unsafe(no_mangle)]
-extern "C" fn __wrap_clock_gettime(clk_id: libc::clockid_t, ts: *mut libc::timespec) -> libc::c_int {
+extern "C" fn __wrap_clock_gettime(
+    clk_id: libc::clockid_t,
+    ts: *mut libc::timespec,
+) -> libc::c_int {
     const CLOCK_REALTIME: libc::clockid_t = libc::CLOCK_REALTIME as libc::clockid_t;
     const CLOCK_MONOTONIC: libc::clockid_t = libc::CLOCK_MONOTONIC as libc::clockid_t;
 

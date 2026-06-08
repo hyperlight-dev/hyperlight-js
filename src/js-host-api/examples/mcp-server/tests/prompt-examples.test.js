@@ -11,77 +11,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server.js');
-const PROTOCOL_VERSION = '2025-11-25';
-
-// ── NDJSON Utilities (MCP stdio transport framing) ──────────────────
-
-function send(proc, message) {
-    proc.stdin.write(JSON.stringify(message) + '\n');
-}
-
-// Shared per-process line reader state: buffer, queued lines, and waiters.
-const procLineState = new WeakMap();
-
-function ensureLineReader(proc) {
-    let state = procLineState.get(proc);
-    if (state) return state;
-
-    state = {
-        buffer: '',
-        lines: [],
-        waiters: [],
-    };
-
-    const onData = (chunk) => {
-        state.buffer += chunk.toString();
-        let idx;
-        while ((idx = state.buffer.indexOf('\n')) !== -1) {
-            let line = state.buffer.slice(0, idx).replace(/\r$/, '');
-            state.buffer = state.buffer.slice(idx + 1);
-            if (line.length === 0) {
-                continue;
-            }
-
-            if (state.waiters.length > 0) {
-                const { resolve, reject } = state.waiters.shift();
-                try {
-                    resolve(JSON.parse(line));
-                } catch (_err) {
-                    reject(new Error(`Invalid JSON from server: ${line}`));
-                }
-            } else {
-                state.lines.push(line);
-            }
-        }
-    };
-
-    proc.stdout.on('data', onData);
-    procLineState.set(proc, state);
-    return state;
-}
-
-function waitForResponse(proc) {
-    return new Promise((resolve, reject) => {
-        const state = ensureLineReader(proc);
-
-        if (state.lines.length > 0) {
-            const line = state.lines.shift();
-            try {
-                resolve(JSON.parse(line));
-            } catch (_err) {
-                reject(new Error(`Invalid JSON from server: ${line}`));
-            }
-            return;
-        }
-
-        state.waiters.push({ resolve, reject });
-    });
-}
+import { send, waitForResponse, SERVER_PATH, PROTOCOL_VERSION } from './helpers.js';
 
 // ── Code Implementations for Each README Prompt ─────────────────────
 //
@@ -94,7 +24,6 @@ function waitForResponse(proc) {
 /** Prompt: "Calculate π to 50 decimal places using Machin's formula" */
 const PI_50_DIGITS_CODE = `
 // Machin's formula: π/4 = 4·arctan(1/5) - arctan(1/239)
-// (BBP naturally produces hex digits; Machin is better for decimal output)
 // Using BigInt for arbitrary-precision fixed-point arithmetic.
 const DIGITS = 50;
 const SCALE = 10n ** BigInt(DIGITS + 10); // extra precision buffer
@@ -158,11 +87,20 @@ return { e: formatted, digits: DIGITS, method: 'Taylor series with BigInt' };
 
 /** Prompt: "Run a Monte Carlo simulation with 100,000 random dart throws to estimate π" */
 const MONTE_CARLO_CODE = `
+// Seeded PRNG (mulberry32) for deterministic results
+let _seed = 42;
+function seededRandom() {
+    _seed |= 0; _seed = _seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(_seed ^ _seed >>> 15, 1 | _seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
 let inside = 0;
 const N = 100000;
 for (let i = 0; i < N; i++) {
-    const x = Math.random();
-    const y = Math.random();
+    const x = seededRandom();
+    const y = seededRandom();
     if (x * x + y * y <= 1) inside++;
 }
 const piEstimate = 4 * inside / N;
@@ -178,6 +116,15 @@ return {
 
 /** Prompt: "Implement quicksort and mergesort, sort an array of 5,000 random numbers" */
 const SORT_COMPARISON_CODE = `
+// Seeded PRNG (mulberry32) for deterministic results
+let _seed = 123;
+function seededRandom() {
+    _seed |= 0; _seed = _seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(_seed ^ _seed >>> 15, 1 | _seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
 function quicksort(arr) {
     if (arr.length <= 1) return arr;
     const pivot = arr[Math.floor(arr.length / 2)];
@@ -203,7 +150,7 @@ function mergesort(arr) {
 }
 
 const N = 5000;
-const arr = Array.from({ length: N }, () => Math.floor(Math.random() * 1000000));
+const arr = Array.from({ length: N }, () => Math.floor(seededRandom() * 1000000));
 const qsorted = quicksort(arr.slice());
 const msorted = mergesort(arr.slice());
 
@@ -274,6 +221,15 @@ return { s1, s2, lcs, length: lcs.length };
 
 /** Prompt: "Implement a trie data structure, insert 1000 random 8-letter words" */
 const TRIE_CODE = `
+// Seeded PRNG (mulberry32) for deterministic results
+let _seed = 456;
+function seededRandom() {
+    _seed |= 0; _seed = _seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(_seed ^ _seed >>> 15, 1 | _seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
 class TrieNode {
     constructor() { this.children = {}; this.isEnd = false; }
 }
@@ -301,7 +257,7 @@ class Trie {
 function randomWord() {
     const chars = 'abcdefghijklmnopqrstuvwxyz';
     let w = '';
-    for (let i = 0; i < 8; i++) w += chars[Math.floor(Math.random() * 26)];
+    for (let i = 0; i < 8; i++) w += chars[Math.floor(seededRandom() * 26)];
     return w;
 }
 
@@ -376,6 +332,15 @@ return { art: lines.join('\\n'), width: WIDTH, height: HEIGHT };
 
 /** Prompt: "Generate a maze using recursive backtracking on a 21×21 grid" */
 const MAZE_CODE = `
+// Seeded PRNG (mulberry32) for deterministic results
+let _seed = 999;
+function seededRandom() {
+    _seed |= 0; _seed = _seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(_seed ^ _seed >>> 15, 1 | _seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
 const SIZE = 21;
 const WALL = '#', PATH = ' ';
 const grid = Array.from({ length: SIZE }, () => new Array(SIZE).fill(WALL));
@@ -385,7 +350,7 @@ function carve(x, y) {
     const dirs = [[2,0],[0,2],[-2,0],[0,-2]];
     // Fisher-Yates shuffle
     for (let i = dirs.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(seededRandom() * (i + 1));
         [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
     }
     for (const [dx, dy] of dirs) {
@@ -497,12 +462,21 @@ return { populationPerGen: popHistory, finalPopulation: finalPop, generations: G
 
 /** Prompt: "Simulate a particle system: 100 particles bouncing in a 100×100 box" */
 const PARTICLE_SYSTEM_CODE = `
+// Seeded PRNG (mulberry32) for deterministic results
+let _seed = 789;
+function seededRandom() {
+    _seed |= 0; _seed = _seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(_seed ^ _seed >>> 15, 1 | _seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
 const N = 100, BOX = 100, STEPS = 1000;
 const particles = Array.from({ length: N }, () => ({
-    x: Math.random() * BOX,
-    y: Math.random() * BOX,
-    vx: (Math.random() - 0.5) * 4,
-    vy: (Math.random() - 0.5) * 4,
+    x: seededRandom() * BOX,
+    y: seededRandom() * BOX,
+    vx: (seededRandom() - 0.5) * 4,
+    vy: (seededRandom() - 0.5) * 4,
 }));
 
 let totalBounces = 0;

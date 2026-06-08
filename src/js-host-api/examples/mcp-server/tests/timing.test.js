@@ -13,73 +13,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { mkdtempSync, readFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server.js');
-const PROTOCOL_VERSION = '2025-11-25';
-
-// ── NDJSON Utilities ────────────────────────────────────────────────
-
-function send(proc, message) {
-    proc.stdin.write(JSON.stringify(message) + '\n');
-}
-
-// Shared per-process NDJSON line reader state.
-const ndjsonState = new WeakMap();
-
-function getNdjsonState(proc) {
-    let state = ndjsonState.get(proc);
-    if (state) return state;
-
-    state = {
-        buffer: '',
-        queue: [],
-        waiting: [],
-    };
-
-    const onData = (chunk) => {
-        state.buffer += chunk.toString();
-        let idx;
-        // Extract all complete lines currently in the buffer.
-        while ((idx = state.buffer.indexOf('\n')) !== -1) {
-            let line = state.buffer.slice(0, idx).replace(/\r$/, '');
-            state.buffer = state.buffer.slice(idx + 1);
-            if (line.length === 0) continue;
-            state.queue.push(line);
-        }
-        dispatchNdjson(state);
-    };
-
-    proc.stdout.on('data', onData);
-    ndjsonState.set(proc, state);
-    return state;
-}
-
-function dispatchNdjson(state) {
-    // Pair up queued lines with waiting promises in FIFO order.
-    while (state.queue.length > 0 && state.waiting.length > 0) {
-        const line = state.queue.shift();
-        const { resolve, reject } = state.waiting.shift();
-        try {
-            resolve(JSON.parse(line));
-        } catch (_err) {
-            reject(new Error(`Invalid JSON from server: ${line}`));
-        }
-    }
-}
-
-function waitForResponse(proc) {
-    const state = getNdjsonState(proc);
-    return new Promise((resolve, reject) => {
-        state.waiting.push({ resolve, reject });
-        // In case lines were already queued before this call.
-        dispatchNdjson(state);
-    });
-}
+import { join } from 'node:path';
+import { send, waitForResponse, SERVER_PATH, PROTOCOL_VERSION } from './helpers.js';
 
 // ── Expected timing record fields ───────────────────────────────────
 
@@ -297,8 +234,8 @@ describe('Timing Log (HYPERLIGHT_TIMING_LOG)', () => {
         const records = readTimingRecords();
         const latest = records[records.length - 1];
 
-        // executeMs should be measurable (> 0) for real computation
-        expect(latest.executeMs).toBeGreaterThan(0);
+        // executeMs should be measurable (> 1ms) for real computation
+        expect(latest.executeMs).toBeGreaterThan(1);
         // totalMs should always be >= executeMs
         expect(latest.totalMs).toBeGreaterThanOrEqual(latest.executeMs);
     });

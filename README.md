@@ -23,17 +23,17 @@ For Ubuntu:
 ```bash
     wget https://apt.llvm.org/llvm.sh 
     chmod +x ./llvm.sh
-    sudo ./llvm.sh 16 all
-    sudo ln -s /usr/lib/llvm-16/bin/clang-cl /usr/bin/clang-cl
-    sudo ln -s /usr/lib/llvm-16/bin/llvm-lib /usr/bin/llvm-lib
+    sudo ./llvm.sh 18 all
+    sudo ln -s /usr/lib/llvm-18/bin/clang-cl /usr/bin/clang-cl
+    sudo ln -s /usr/lib/llvm-18/bin/llvm-lib /usr/bin/llvm-lib
 ```
 
 For Azure Linux:
 
 ```bash
     sudo dnf remove clang -y|| true
-    sudo dnf install clang16 -y
-    sudo dnf install clang16-tools-extra -y
+    sudo dnf install clang18 -y
+    sudo dnf install clang18-tools-extra -y
 ```
 
 In addition on Linux you will need to install the `x86_64-unknown-none` target:

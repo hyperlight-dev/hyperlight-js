@@ -62,7 +62,13 @@ struct UserModuleLoader {
 }
 
 impl Resolver for UserModuleLoader {
-    fn resolve(&mut self, _ctx: &Ctx<'_>, base: &str, name: &str) -> Result<String> {
+    fn resolve(
+        &mut self,
+        _ctx: &Ctx<'_>,
+        base: &str,
+        name: &str,
+        _attributes: Option<ImportAttributes<'_>>,
+    ) -> Result<String> {
         if self.modules.borrow().contains_key(name) {
             Ok(name.to_string())
         } else {
@@ -72,7 +78,12 @@ impl Resolver for UserModuleLoader {
 }
 
 impl Loader for UserModuleLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> Result<Module<'js>> {
         let source = self
             .modules
             .borrow()
@@ -286,7 +297,7 @@ impl JsRuntime {
         module_source: impl Into<String>,
     ) -> anyhow::Result<()> {
         let module_name = module_name.into();
-        if module_name.is_empty() || module_name.trim().is_empty() {
+        if module_name.trim().is_empty() {
             anyhow::bail!("Module name must not be empty");
         }
         self.user_modules

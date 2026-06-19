@@ -35,7 +35,7 @@ jobs:
       dry_run: ${{ steps.set-version.outputs.dry_run }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -64,7 +64,7 @@ jobs:
     if: ${{ needs.set-version.outputs.dry_run == 'false' }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Create Release Branch
         shell: bash

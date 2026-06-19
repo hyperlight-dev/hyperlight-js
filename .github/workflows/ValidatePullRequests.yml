@@ -32,7 +32,7 @@ jobs:
     name: check license headers
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Check License Headers
       run: ./dev/check-license-headers.sh
 
@@ -54,6 +54,6 @@ jobs:
     name: Spell check with typos
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Spell Check Repo
       uses: crate-ci/typos@v1.47.2

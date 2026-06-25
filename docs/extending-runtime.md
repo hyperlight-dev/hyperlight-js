@@ -359,8 +359,10 @@ impl TextEncoder {
 }
 
 fn setup_text_encoding(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
-    TextEncoder::register(ctx)?;
-    ctx.globals().set("TextEncoder", TextEncoder::constructor(ctx)?)?;
+    // `Class::define` builds the class constructor and installs it on the
+    // target object under the class's name ("TextEncoder"), so handlers can
+    // call `new TextEncoder()` with no import.
+    rquickjs::Class::<TextEncoder>::define(&ctx.globals())?;
     Ok(())
 }
 

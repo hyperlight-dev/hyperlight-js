@@ -237,8 +237,9 @@ pub fn setup_custom_globals(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
 /// }
 ///
 /// fn setup_text_encoding(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
-///     TextEncoder::register(ctx)?;
-///     ctx.globals().set("TextEncoder", TextEncoder::constructor(ctx)?)?;
+///     // `Class::define` installs the constructor on the target object under
+///     // the class's name ("TextEncoder") so handlers can `new TextEncoder()`.
+///     rquickjs::Class::<TextEncoder>::define(&ctx.globals())?;
 ///     Ok(())
 /// }
 ///

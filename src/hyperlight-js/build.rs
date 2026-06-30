@@ -164,12 +164,23 @@ fn build_js_runtime() -> PathBuf {
         .arg("--profile")
         .arg(cargo_profile)
         .arg("-v")
+        // Point the guest build at its own target directory. We set this *both* as a
+        // `--target-dir` flag and as the `CARGO_TARGET_DIR` env var below. The flag alone
+        // is not enough: cargo-hyperlight >= 0.1.12 strips `--target`/`--target-dir` from
+        // the forwarded cargo args (intending to re-inject them as env vars) but only
+        // re-applies `--target`, silently dropping `--target-dir`. Without the env var the
+        // guest build falls back to the workspace `target/<profile>` directory, which the
+        // host build already holds locked, causing a permanent `.cargo-lock` deadlock.
         .arg("--target-dir")
         .arg(&target_dir)
         .arg("--manifest-path")
         .arg(manifest_path)
         .arg("--locked")
         .env_clear_cargo()
+        // Belt-and-braces for the cargo-hyperlight arg-stripping behaviour described above:
+        // an explicit env var is applied last by the wrapper and reaches the inner cargo
+        // intact, keeping the guest build in its own directory regardless of wrapper version.
+        .env("CARGO_TARGET_DIR", &target_dir)
         .env("HYPERLIGHT_CFLAGS", cflags);
 
     if std::env::var("CARGO_FEATURE_TRACE_GUEST").is_ok() {

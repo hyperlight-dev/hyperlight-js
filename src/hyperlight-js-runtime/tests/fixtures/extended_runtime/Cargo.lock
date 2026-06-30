@@ -92,26 +92,6 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bindgen"
-version = "0.71.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
-dependencies = [
- "bitflags",
- "cexpr",
- "clang-sys",
- "itertools",
- "log",
- "prettyplease",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash",
- "shlex 1.3.0",
- "syn",
-]
-
-[[package]]
-name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
@@ -132,9 +112,9 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
-version = "2.12.1"
+version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84d7ced0ae9557296835c32bf1b1e02b44c746701f898460fb000d7eaa84f00a"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "block-buffer"
@@ -153,6 +133,32 @@ checksum = "c1af5a01adeeade54c9f5060300227a8ee64c05b6376f28e9b8ee3b72dd2056f"
 dependencies = [
  "spin 0.10.0",
 ]
+
+[[package]]
+name = "bytemuck"
+version = "1.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "bytes"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "cc"
@@ -339,6 +345,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "fixedbitset"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
 name = "flatbuffers"
 version = "25.12.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -418,23 +430,28 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-common"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a29190c35e3883c3e0944007f47a0997f8ebcf784a2a3f35c0311e513b019416"
+checksum = "436dac5cc08da3db27de38b174a9b22498ab6443aaffd83b97f66a5d2f1d74cc"
 dependencies = [
  "anyhow",
+ "bitflags",
+ "bytemuck",
+ "bytes",
+ "fixedbitset",
  "flatbuffers",
  "log",
- "spin 0.10.0",
+ "smallvec",
+ "spin 0.12.0",
  "thiserror",
  "tracing-core",
 ]
 
 [[package]]
 name = "hyperlight-guest"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82a676e88a6640b5cf621171c67f609d1e662713624562597518be6fdb0e0b30"
+checksum = "4cb2e6548e2b837400a7b27a5ed6a6570c28801253e6ec80959700dd63925c40"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -445,9 +462,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-bin"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bc349c61dc771769308a2079d398488cd0c52d9bdcad8cf633922b288dd2aed"
+checksum = "cdeccde6490e76aefe2e8ca17e1a225d2da3338f020f17533b8ee0cee7cf9a11"
 dependencies = [
  "buddy_system_allocator",
  "flatbuffers",
@@ -458,15 +475,15 @@ dependencies = [
  "hyperlight-libc",
  "linkme",
  "log",
- "spin 0.10.0",
+ "spin 0.12.0",
  "tracing",
 ]
 
 [[package]]
 name = "hyperlight-guest-macro"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bef332d8490f2ebe5b8d52f7d39263f82580c54e9505980fea8186fd6679ea3"
+checksum = "620ed77c5c07027c63a6a741da8a9a2462a56e660691da715c3700cb281a3d23"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -476,23 +493,23 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-tracing"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca03b1ccd29c0c277555d8bd737257d0598554004f9667bb196227d5ed8b5b7e"
+checksum = "d8b39160c2001db5c79916d946d04a601e4e1f2827e2c785d477b31e48f5e514"
 dependencies = [
  "hyperlight-common",
- "spin 0.10.0",
+ "spin 0.12.0",
  "tracing",
  "tracing-core",
 ]
 
 [[package]]
 name = "hyperlight-js-runtime"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
- "bindgen 0.72.1",
+ "bindgen",
  "clap",
  "fn-traits",
  "hashbrown",
@@ -509,12 +526,12 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-libc"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dd6f523d9383e9c8b3820bb141b4deb45b5470135ee069cbc387c3a2a3d55c7"
+checksum = "3c258315b4c0ec4aae172c4ff31b34590559fb6699c144f779be2246672b3147"
 dependencies = [
  "anyhow",
- "bindgen 0.71.1",
+ "bindgen",
  "cc",
  "glob",
 ]
@@ -768,7 +785,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "698077537c286a169de8693b216672bcef148bf2e2e112ebf50758c68e9afa09"
 dependencies = [
- "bindgen 0.72.1",
+ "bindgen",
  "cc",
 ]
 
@@ -866,13 +883,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "smallvec"
+version = "1.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+
+[[package]]
 name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
-dependencies = [
- "lock_api",
-]
 
 [[package]]
 name = "spin"

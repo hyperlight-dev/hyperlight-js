@@ -92,18 +92,24 @@ const WALL_CLOCK_TIMEOUT_MS = parsePositiveInt(
 /** Maximum byte size for heap/scratch to avoid exceeding u32 range at the N-API boundary. */
 const MAX_BYTES = 0xffffffff;
 
+/** Maximum heap/scratch size that still fits within MAX_BYTES.
+ *  Clamping at the MiB level (rather than clamping the byte total) keeps the
+ *  configured size aligned to a whole MiB, so the value we set and print stays
+ *  consistent (e.g. 5000MB clamps to 4095MB, not 4095.999…MB). */
+const MAX_MIB = Math.floor(MAX_BYTES / (1024 * 1024));
+
 /** Guest heap size in bytes. Override with HYPERLIGHT_HEAP_SIZE_MB (megabytes). */
-const HEAP_SIZE_BYTES = Math.min(
-    parsePositiveInt(process.env.HYPERLIGHT_HEAP_SIZE_MB, DEFAULT_HEAP_SIZE_MB) * 1024 * 1024,
-    MAX_BYTES
-);
+const HEAP_SIZE_BYTES =
+    Math.min(parsePositiveInt(process.env.HYPERLIGHT_HEAP_SIZE_MB, DEFAULT_HEAP_SIZE_MB), MAX_MIB) *
+    1024 *
+    1024;
 
 /** Guest scratch size in bytes. Override with HYPERLIGHT_SCRATCH_SIZE_MB (megabytes).
  *  Maps to setScratchSize() on the SandboxBuilder API. */
-const SCRATCH_SIZE_BYTES = Math.min(
-    parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB) * 1024 * 1024,
-    MAX_BYTES
-);
+const SCRATCH_SIZE_BYTES =
+    Math.min(parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB), MAX_MIB) *
+    1024 *
+    1024;
 
 /**
  * Path to a timing log file. When set (via the HYPERLIGHT_TIMING_LOG
@@ -374,39 +380,39 @@ mcpServer.registerTool(
             }
 
             const safeStringifyResult = (value) => {
-                // Track objects during traversal to detect true circular
-                // references. We use a replacer that adds objects on entry
-                // and removes them on exit (post-order), so DAG-shared refs
-                // (e.g. { a: obj, b: obj }) are correctly duplicated rather
-                // than replaced with "[Circular]".
-                const ancestors = new Set();
-                return JSON.stringify(
-                    value,
-                    function (key, val) {
-                        if (typeof val === 'bigint') {
-                            return val.toString();
-                        }
-                        if (typeof val === 'object' && val !== null) {
-                            if (ancestors.has(val)) {
-                                return '[Circular]';
-                            }
-                            ancestors.add(val);
-                            // Schedule removal after this subtree is fully traversed.
-                            // JSON.stringify calls the replacer depth-first, so by the
-                            // time we return from this key the children are already
-                            // processed. We use a finally-scheduled microtask to
-                            // remove after the current synchronous stringify pass.
-                            // Actually — JSON.stringify is synchronous, so we can
-                            // lean on the fact that the replacer is called in-order
-                            // and use a post-processing cleanup. For simplicity,
-                            // just leave the Set as-is — true cycles will be caught,
-                            // and shared non-cyclic refs in practice don't occur in
-                            // sandbox return values (they're freshly JSON-parsed).
-                        }
+                // Detect *true* circular references using a traversal stack:
+                // each object is pushed on entry and popped on exit, so only an
+                // object that reappears on the currently-active path is replaced
+                // with "[Circular]". DAG-shared but acyclic references (e.g.
+                // { a: obj, b: obj }) are serialized normally instead of being
+                // falsely flagged. BigInt is stringified since JSON cannot
+                // represent it natively.
+                const ancestors = [];
+                const serialize = (val) => {
+                    if (typeof val === 'bigint') {
+                        return val.toString();
+                    }
+                    if (val === null || typeof val !== 'object') {
                         return val;
-                    },
-                    2
-                );
+                    }
+                    if (ancestors.includes(val)) {
+                        return '[Circular]';
+                    }
+                    ancestors.push(val);
+                    try {
+                        if (Array.isArray(val)) {
+                            return val.map((item) => serialize(item));
+                        }
+                        const out = {};
+                        for (const [k, v] of Object.entries(val)) {
+                            out[k] = serialize(v);
+                        }
+                        return out;
+                    } finally {
+                        ancestors.pop();
+                    }
+                };
+                return JSON.stringify(serialize(value), null, 2);
             };
 
             const startTime = Date.now();

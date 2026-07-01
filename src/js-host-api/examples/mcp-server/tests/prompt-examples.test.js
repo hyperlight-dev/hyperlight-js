@@ -657,6 +657,17 @@ describe('README Example Prompts', () => {
     beforeAll(async () => {
         server = spawn('node', [SERVER_PATH], {
             stdio: ['pipe', 'pipe', 'pipe'],
+            env: {
+                ...process.env,
+                // A few prompts exercise deliberately memory-heavy, AI-style
+                // implementations (recursive quicksort that .filter()s at every
+                // level over 5,000 elements, a 1,000-node trie, a recursive-
+                // backtracking maze) that exhaust the 1MB default guest scratch
+                // (physical) memory. Give the sandbox extra scratch headroom so
+                // the suite stays faithful to the README prompts instead of
+                // trimming the workloads.
+                HYPERLIGHT_SCRATCH_SIZE_MB: '16',
+            },
         });
         server.stderr.on('data', (d) => {
             process.stderr.write(`[mcp-server] ${d}`);

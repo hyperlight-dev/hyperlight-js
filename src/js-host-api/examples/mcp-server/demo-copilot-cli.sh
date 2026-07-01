@@ -159,7 +159,10 @@ check_prerequisites() {
     info "Verifying native addon loads correctly..."
     local lib_js="${SCRIPT_DIR}/../../lib.js"
     local smoke_err
-    if ! smoke_err="$(node --input-type=module -e "import('${lib_js}').then(() => console.log('OK')).catch(e => { console.error(e.message); process.exit(1); })" 2>&1)"; then
+    # Pass the library path via the environment and resolve it to a file URL
+    # inside node, so paths containing spaces/quotes/backslashes load correctly
+    # and can't break the inlined script.
+    if ! smoke_err="$(HL_LIB_JS="${lib_js}" node --input-type=module -e "import('node:url').then(({ pathToFileURL }) => import(pathToFileURL(process.env.HL_LIB_JS).href)).then(() => console.log('OK')).catch(e => { console.error(e.message); process.exit(1); })" 2>&1)"; then
         fail "Native addon failed to load — rebuild with 'just build'.\n${smoke_err}"
     fi
     ok "Native addon loads successfully"
@@ -186,13 +189,20 @@ build_mcp_json() {
     export HYPERLIGHT_HEAP_SIZE_MB="${HEAP_SIZE}"
     export HYPERLIGHT_SCRATCH_SIZE_MB="${SCRATCH_SIZE}"
 
+    # Pass paths/names to node via the environment rather than string
+    # interpolation, so values containing spaces, quotes, or backslashes
+    # cannot break the generated JSON. The node script reads them all
+    # from process.env.
+    MCP_INSTALL_MODE="${install_mode}" \
+    MCP_SERVER_JS="${SERVER_JS}" \
+    MCP_SERVER_NAME="${MCP_SERVER_NAME}" \
     node -e "
-        const installMode = '${install_mode}' === 'install';
+        const installMode = process.env.MCP_INSTALL_MODE === 'install';
         const env = {
             HYPERLIGHT_CPU_TIMEOUT_MS:  process.env.HYPERLIGHT_CPU_TIMEOUT_MS,
             HYPERLIGHT_WALL_TIMEOUT_MS: process.env.HYPERLIGHT_WALL_TIMEOUT_MS,
             HYPERLIGHT_HEAP_SIZE_MB:    process.env.HYPERLIGHT_HEAP_SIZE_MB,
-            HYPERLIGHT_SCRATCH_SIZE_MB:   process.env.HYPERLIGHT_SCRATCH_SIZE_MB,
+            HYPERLIGHT_SCRATCH_SIZE_MB: process.env.HYPERLIGHT_SCRATCH_SIZE_MB,
         };
         if (installMode) {
             // Permanent install: include timing log at a fixed well-known path.
@@ -207,11 +217,11 @@ build_mcp_json() {
         const server = {
             type: 'stdio',
             command: 'node',
-            args: ['${SERVER_JS}'],
+            args: [process.env.MCP_SERVER_JS],
             env,
         };
 
-        console.log(JSON.stringify({ mcpServers: { '${MCP_SERVER_NAME}': server } }, null, 4));
+        console.log(JSON.stringify({ mcpServers: { [process.env.MCP_SERVER_NAME]: server } }, null, 4));
     "
 }
 
@@ -233,24 +243,34 @@ install_mcp_config() {
 
         # Merge: add our server to existing mcpServers with full env
         # block including fixed log paths for the permanent install.
-        # Use node for reliable JSON merging.
+        # Use node for reliable JSON merging; pass all paths/names/values
+        # via the environment so spaces, quotes, or backslashes in them
+        # can't break the generated JSON.
+        MCP_BAK_FILE="${MCP_CONFIG_FILE}.bak" \
+        MCP_OUT_FILE="${MCP_CONFIG_FILE}" \
+        MCP_SERVER_JS="${SERVER_JS}" \
+        MCP_SERVER_NAME="${MCP_SERVER_NAME}" \
+        MCP_CPU_TIMEOUT="${CPU_TIMEOUT}" \
+        MCP_WALL_TIMEOUT="${WALL_TIMEOUT}" \
+        MCP_HEAP_SIZE="${HEAP_SIZE}" \
+        MCP_SCRATCH_SIZE="${SCRATCH_SIZE}" \
         node -e "
             const fs = require('fs');
-            const existing = JSON.parse(fs.readFileSync('${MCP_CONFIG_FILE}.bak', 'utf8'));
+            const existing = JSON.parse(fs.readFileSync(process.env.MCP_BAK_FILE, 'utf8'));
             existing.mcpServers = existing.mcpServers || {};
-            existing.mcpServers['${MCP_SERVER_NAME}'] = {
+            existing.mcpServers[process.env.MCP_SERVER_NAME] = {
                 type: 'stdio',
                 command: 'node',
-                args: ['${SERVER_JS}'],
+                args: [process.env.MCP_SERVER_JS],
                 env: {
-                    HYPERLIGHT_CPU_TIMEOUT_MS:  '${CPU_TIMEOUT}',
-                    HYPERLIGHT_WALL_TIMEOUT_MS: '${WALL_TIMEOUT}',
-                    HYPERLIGHT_HEAP_SIZE_MB:    '${HEAP_SIZE}',
-                    HYPERLIGHT_SCRATCH_SIZE_MB:   '${SCRATCH_SIZE}',
+                    HYPERLIGHT_CPU_TIMEOUT_MS:  process.env.MCP_CPU_TIMEOUT,
+                    HYPERLIGHT_WALL_TIMEOUT_MS: process.env.MCP_WALL_TIMEOUT,
+                    HYPERLIGHT_HEAP_SIZE_MB:    process.env.MCP_HEAP_SIZE,
+                    HYPERLIGHT_SCRATCH_SIZE_MB: process.env.MCP_SCRATCH_SIZE,
                     HYPERLIGHT_TIMING_LOG:      '/tmp/hyperlight-timing.jsonl',
                 },
             };
-            fs.writeFileSync('${MCP_CONFIG_FILE}', JSON.stringify(existing, null, 4) + '\n');
+            fs.writeFileSync(process.env.MCP_OUT_FILE, JSON.stringify(existing, null, 4) + '\n');
         "
     else
         build_mcp_json install > "${MCP_CONFIG_FILE}"
@@ -272,15 +292,17 @@ uninstall_mcp_config() {
         return 0
     fi
 
+    MCP_OUT_FILE="${MCP_CONFIG_FILE}" \
+    MCP_SERVER_NAME="${MCP_SERVER_NAME}" \
     node -e "
         const fs = require('fs');
-        const config = JSON.parse(fs.readFileSync('${MCP_CONFIG_FILE}', 'utf8'));
-        delete config.mcpServers?.['${MCP_SERVER_NAME}'];
+        const config = JSON.parse(fs.readFileSync(process.env.MCP_OUT_FILE, 'utf8'));
+        delete config.mcpServers?.[process.env.MCP_SERVER_NAME];
         if (Object.keys(config.mcpServers || {}).length === 0) {
-            fs.unlinkSync('${MCP_CONFIG_FILE}');
+            fs.unlinkSync(process.env.MCP_OUT_FILE);
             console.log('Config file removed (no servers remaining).');
         } else {
-            fs.writeFileSync('${MCP_CONFIG_FILE}', JSON.stringify(config, null, 4) + '\n');
+            fs.writeFileSync(process.env.MCP_OUT_FILE, JSON.stringify(config, null, 4) + '\n');
             console.log('Server removed from config.');
         }
     "
@@ -336,13 +358,17 @@ run_prompt() {
     #                                   in interactive mode's permission prompts.
     #                                   See `copilot --help` for details.
     #
-    #   --available-tools               Restrict model to ONLY our MCP tool plus
-    #                                   internal tools the agent needs to function
-    #                                   (task_complete, report_intent). The model
-    #                                   cannot call shell, file write, web fetch,
-    #                                   or any other tool. This is the security
-    #                                   layer — even though --allow-all-tools is
-    #                                   set, only whitelisted tools are visible.
+    #   --available-tools               (Optional) Can be used to restrict the model
+    #                                   to ONLY specific tools plus the internal tools
+    #                                   the agent needs to function (for example,
+    #                                   task_complete, report_intent). When set, the
+    #                                   model cannot call shell, file write, web fetch,
+    #                                   or any other non-allowed tool. NOTE: this
+    #                                   demo script does NOT currently pass
+    #                                   --available-tools — the restriction below comes
+    #                                   from the --allow-all-tools + --deny-tool
+    #                                   denylist, so do not assume an allowlist is in
+    #                                   effect.
     #
     #   --no-custom-instructions        Don't load AGENTS.md / copilot-instructions.md
     #                                   which could confuse the agent.

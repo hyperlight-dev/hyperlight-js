@@ -11,7 +11,7 @@
 //
 // ─────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -111,6 +111,15 @@ describe('Timing Log (HYPERLIGHT_TIMING_LOG)', () => {
         } catch {
             // best effort
         }
+    });
+
+    // Make every test self-contained: guarantee at least one timing record
+    // exists and the sandbox is warm before each test, regardless of test
+    // order or running a single test in isolation. The very first invocation
+    // across the suite is still a cold start, so records[0].initMs > 0 holds
+    // for the cold-start test no matter which test runs first.
+    beforeEach(async () => {
+        await callExecuteJavaScript('return { probe: true };');
     });
 
     // ── Timing record structure ──────────────────────────────────

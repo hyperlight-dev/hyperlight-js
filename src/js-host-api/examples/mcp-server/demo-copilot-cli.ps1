@@ -516,13 +516,17 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
     #                                   in interactive mode's permission prompts.
     #                                   See `copilot --help` for details.
     #
-    #   --available-tools               Restrict model to ONLY our MCP tool plus
-    #                                   internal tools the agent needs to function
-    #                                   (task_complete, report_intent). The model
-    #                                   cannot call shell, file write, web fetch,
-    #                                   or any other tool. This is the security
-    #                                   layer — even though --allow-all-tools is
-    #                                   set, only whitelisted tools are visible.
+    #   --available-tools               (Optional) Can be used to restrict the model
+    #                                   to ONLY specific tools plus the internal tools
+    #                                   the agent needs to function (for example,
+    #                                   task_complete, report_intent). When set, the
+    #                                   model cannot call shell, file write, web fetch,
+    #                                   or any other non-whitelisted tool. NOTE: this
+    #                                   demo script does NOT currently pass
+    #                                   --available-tools — the restriction below comes
+    #                                   from the --allow-all-tools + --deny-tool
+    #                                   denylist, so do not assume an allowlist is in
+    #                                   effect.
     #
     #   --no-custom-instructions        Don't load AGENTS.md / copilot-instructions.md
     #                                   which could confuse the agent.
@@ -564,8 +568,10 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
     $copilotStart = Get-NowMs
 
     try {
-        # Use --% (stop-parsing token) to prevent PS from mangling
-        # the native command arguments. Pass prompt via temp file.
+        # PowerShell 7's call operator (&) passes each argument to the native
+        # command as a distinct argv element, so $fullPrompt is delivered as a
+        # single argument with no shell re-parsing — no --% stop-parsing token
+        # or temp-file indirection is needed here.
         $rawOutput = & $script:CopilotBin `
             -p $fullPrompt `
             -s `

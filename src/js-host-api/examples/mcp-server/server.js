@@ -107,7 +107,10 @@ const HEAP_SIZE_BYTES =
 /** Guest scratch size in bytes. Override with HYPERLIGHT_SCRATCH_SIZE_MB (megabytes).
  *  Maps to setScratchSize() on the SandboxBuilder API. */
 const SCRATCH_SIZE_BYTES =
-    Math.min(parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB), MAX_MIB) *
+    Math.min(
+        parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB),
+        MAX_MIB
+    ) *
     1024 *
     1024;
 

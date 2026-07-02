@@ -4,7 +4,7 @@ members = ["src/hyperlight-js", "src/js-host-api", "src/hyperlight-js-runtime", 
 exclude = ["src/hyperlight-js-runtime/tests/fixtures"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.89"
 license = "Apache-2.0"
@@ -17,9 +17,9 @@ hyperlight-host = { version = "0.16.0", default-features = false }
 hyperlight-common = { version = "0.16.0", default-features = false }
 hyperlight-guest = { version = "0.16.0" }
 
-hyperlight-js = { version = "0.3.0", path = "src/hyperlight-js" }
-hyperlight-js-runtime = { version = "0.3.0", path = "src/hyperlight-js-runtime" }
-hyperlight-js-common = { version = "0.3.0", path = "src/hyperlight-js-common" }
+hyperlight-js = { version = "0.3.1", path = "src/hyperlight-js" }
+hyperlight-js-runtime = { version = "0.3.1", path = "src/hyperlight-js-runtime" }
+hyperlight-js-common = { version = "0.3.1", path = "src/hyperlight-js-common" }
 
 [profile.dev]
 panic = "abort"

@@ -70,7 +70,11 @@ jobs:
               return
             fi
 
-            if cargo info --locked -q "$crate"@"$VERSION" > /dev/null; then
+            # Query crates.io from /tmp in a subshell so `cargo info` does not
+            # read the workspace manifest or lockfile. The subshell exits
+            # back to the original PWD automatically. `--locked` is omitted
+            # because there is no Cargo.lock in /tmp.
+            if (cd /tmp && cargo info -q "$crate"@"$VERSION") > /dev/null; then
               echo "PUBLISH_${crate_env_var}=false" >> "$GITHUB_ENV"
               echo "✅ $crate@$VERSION already exists."
             else

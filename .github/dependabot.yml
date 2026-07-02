@@ -16,7 +16,9 @@ updates:
     labels:
       - "kind/dependencies"
   - package-ecosystem: "npm"
-    directory: "/src/js-host-api"
+    directories: 
+      - "/src/js-host-api"
+      - "/src/js-host-api/examples/mcp-server"
     schedule:
       interval: "daily"
       time: "03:00"

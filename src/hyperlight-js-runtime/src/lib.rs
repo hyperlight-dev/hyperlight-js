@@ -41,6 +41,16 @@ use core::cell::RefCell;
 use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
 use modules::NativeModuleLoader;
+/// Re-export of the [`rquickjs`] crate that this runtime is built against.
+///
+/// The [`custom_globals!`] and [`native_modules!`] macros expand to code in
+/// downstream extender crates that references rquickjs types through this
+/// re-export (`$crate::rquickjs::...`). Extender crates should use these
+/// re-exported types in their setup-function signatures so the generated glue
+/// is bound to the *same* rquickjs version the runtime was compiled against —
+/// turning what would otherwise be a silent ABI mismatch into a compile-time
+/// error.
+pub use rquickjs;
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Context, Ctx, Function, Module, Persistent, Result, Runtime, Value};

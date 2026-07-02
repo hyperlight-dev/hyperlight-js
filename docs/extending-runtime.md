@@ -33,7 +33,7 @@ cargo init --bin my-custom-runtime
 ```toml
 [dependencies]
 hyperlight-js-runtime = { git = "https://github.com/hyperlight-dev/hyperlight-js" }
-rquickjs = { version = "0.11", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
+rquickjs = { version = "0.12", default-features = false, features = ["bindgen", "futures", "macro", "loader"] }
 
 # Only needed for native CLI testing, not the hyperlight guest
 [target.'cfg(not(hyperlight))'.dependencies]

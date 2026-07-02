@@ -13,9 +13,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString as _};
 
-use hashbrown::HashMap;
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::ModuleDef;
 use rquickjs::{Ctx, Module, Result};
@@ -43,8 +43,11 @@ pub fn declaration<M: ModuleDef>() -> ModuleDeclarationFn {
     declare::<M>
 }
 
-static BUILTIN_MODULES: LazyLock<HashMap<&str, ModuleDeclarationFn>> = LazyLock::new(|| {
-    HashMap::from([
+// A `BTreeMap` (rather than a hash map) keeps the module registries in a
+// deterministic, seed-independent iteration order, so `builtin_module_names()`
+// and module resolution behave identically across runs and builds.
+static BUILTIN_MODULES: LazyLock<BTreeMap<&str, ModuleDeclarationFn>> = LazyLock::new(|| {
+    BTreeMap::from([
         ("io", declaration::<io::js_io>()),
         ("crypto", declaration::<crypto::js_crypto>()),
         ("console", declaration::<console::js_console>()),
@@ -63,8 +66,8 @@ pub fn builtin_module_names() -> alloc::vec::Vec<&'static str> {
 // `register_native_module`. The NativeModuleLoader checks this registry
 // first, then falls back to the built-in modules.
 
-static CUSTOM_MODULES: LazyLock<Mutex<HashMap<&'static str, ModuleDeclarationFn>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CUSTOM_MODULES: LazyLock<Mutex<BTreeMap<&'static str, ModuleDeclarationFn>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 /// Register a custom native module by name.
 ///
@@ -268,7 +271,9 @@ macro_rules! custom_globals {
         /// Called by the hyperlight runtime to register custom globals
         /// after built-in globals are set up.
         #[unsafe(no_mangle)]
-        pub fn init_custom_globals(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+        pub fn init_custom_globals(
+            ctx: &$crate::rquickjs::Ctx<'_>,
+        ) -> $crate::rquickjs::Result<()> {
             $( ($setup_fn)(ctx)?; )*
             Ok(())
         }

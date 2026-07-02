@@ -504,6 +504,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperlight-js-common"
+version = "0.3.0"
+
+[[package]]
 name = "hyperlight-js-runtime"
 version = "0.3.0"
 dependencies = [
@@ -515,7 +519,10 @@ dependencies = [
  "hashbrown",
  "hex",
  "hmac",
+ "hyperlight-common",
+ "hyperlight-guest",
  "hyperlight-guest-bin",
+ "hyperlight-js-common",
  "rquickjs",
  "serde",
  "serde_json",

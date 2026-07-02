@@ -20,8 +20,9 @@ This MCP server exposes a single tool — **`execute_javascript`** — that:
 3. Enforces a **configurable CPU time limit** (default 1000ms, with a 5000ms wall-clock backstop)
 4. Returns the result (or a timeout/error message) back to the agent
 
-The sandbox automatically recovers after timeouts via snapshot/restore,
-so subsequent invocations work without manual intervention.
+The sandbox automatically recovers after timeouts by unloading (which resets it
+to a clean pre-handler state), so subsequent invocations work without manual
+intervention.
 
 ## Architecture
 
@@ -321,16 +322,17 @@ The script uses the [documented](https://docs.github.com/copilot/concepts/agents
 | `--allow-all-tools`        | Required for `-p` (non-interactive) mode              |
 | `--deny-tool 'shell'`      | Blocks **all** shell command execution                |
 | `--deny-tool 'write'`      | Blocks **all** file write/edit operations             |
-| `--deny-tool 'read'`       | Blocks **all** file read operations                   |
-| `--deny-tool 'fetch'`      | Blocks **all** web fetch/HTTP operations              |
 | `-s`                       | Silent — agent response only, no stats or retry noise |
 | `--disable-builtin-mcps`   | Removes the GitHub MCP server                         |
 | `--no-custom-instructions` | Ignores workspace AGENTS.md / copilot-instructions.md |
 | `--no-ask-user`            | No clarifying questions in programmatic mode          |
 | `--model <name>`           | LLM model to use (default: `claude-opus-4.6`)        |
 
-`--deny-tool` takes precedence over `--allow-all-tools`, so the agent can
-_only_ call our MCP sandbox tool — no shell access, no file writes, no file reads, no web fetches.
+`--deny-tool` takes precedence over `--allow-all-tools`. The
+[documented approval options](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-copilot-cli#using-the-approval-options)
+for `--deny-tool` are the `shell` and `write` tool categories (plus MCP-server
+names), so this blocks shell execution and file writes; combined with
+`--disable-builtin-mcps`, our sandbox is the only MCP tool the agent can reach.
 
 **Model selection:**
 
@@ -362,7 +364,6 @@ was spent:
     ├─ Sandbox init:       120ms
     ├─ Handler setup:        2ms
     ├─ Compile & load:       8ms
-    ├─ Snapshot:             5ms
     └─ JS execution:        10ms
 ```
 
@@ -370,8 +371,8 @@ was spent:
   Copilot CLI round-trip. It includes LLM inference, code generation, and
   response formatting.
 - **Tool execution** is measured server-side by the MCP server, broken down
-  into sandbox init (first call only), handler setup, compilation, snapshot,
-  and actual JavaScript execution.
+  into sandbox init (first call only), handler setup, compilation, and actual
+  JavaScript execution.
 - The MCP server writes timing data to a JSON-lines file via the
   `HYPERLIGHT_TIMING_LOG` environment variable (set automatically by the
   demo script).
@@ -468,8 +469,6 @@ Output (when MCP server is not yet installed, with non-default sandbox limits):
     --allow-all-tools \
     --deny-tool shell \
     --deny-tool write \
-    --deny-tool read \
-    --deny-tool fetch \
     --no-custom-instructions \
     --no-ask-user \
     --disable-builtin-mcps \
@@ -588,13 +587,13 @@ When the AI agent calls `execute_javascript`, the server:
 
 1. **Wraps** the code as the body of a `handler(event)` function
 2. **Loads** it into the Hyperlight sandbox (QuickJS engine inside a micro-VM)
-3. **Snapshots** the sandbox state (for recovery after timeouts)
-4. **Executes** with `cpuTimeoutMs: 1000` and `wallClockTimeoutMs: 5000`
-5. **Returns** the JSON-serializable result, or an error message
-6. **Recovers** automatically if execution times out (snapshot/restore)
-7. **Logs timing** (if `HYPERLIGHT_TIMING_LOG` is set) — a JSON-lines record
-   with `initMs`, `setupMs`, `compileMs`, `snapshotMs`, `executeMs`, and `totalMs`
-8. **Logs code** (if `HYPERLIGHT_CODE_LOG` is set) — writes the received
+3. **Executes** with `cpuTimeoutMs: 1000` and `wallClockTimeoutMs: 5000`
+4. **Returns** the JSON-serializable result, or an error message
+5. **Recovers** automatically if execution times out — the sandbox is unloaded,
+   which resets it to a clean pre-handler state
+6. **Logs timing** (if `HYPERLIGHT_TIMING_LOG` is set) — a JSON-lines record
+   with `initMs`, `setupMs`, `compileMs`, `executeMs`, and `totalMs`
+7. **Logs code** (if `HYPERLIGHT_CODE_LOG` is set) — writes the received
    JavaScript source to the specified file for inspection
 
 ### Writing Code for the Sandbox
@@ -647,7 +646,7 @@ This makes it safe to execute untrusted, AI-generated code.
 | `HYPERLIGHT_WALL_TIMEOUT_MS`   | `5000`   | Maximum wall-clock time per execution (milliseconds). Backstop for edge cases where CPU time alone doesn't catch the issue. |
 | `HYPERLIGHT_HEAP_SIZE_MB`      | `16`     | Guest heap size in megabytes. Increase for memory-heavy computations (large arrays, BigInt work). |
 | `HYPERLIGHT_SCRATCH_SIZE_MB`     | `1`      | Guest scratch size in megabytes. Increase for deeply recursive algorithms. |
-| `HYPERLIGHT_TIMING_LOG`        | —        | Path to a file. When set, the server appends one JSON line per tool call with a timing breakdown (init, setup, compile, snapshot, execute, total). Used by the demo script to show model vs. tool time. |
+| `HYPERLIGHT_TIMING_LOG`        | —        | Path to a file. When set, the server appends one JSON line per tool call with a timing breakdown (init, setup, compile, execute, total). Used by the demo script to show model vs. tool time. |
 | `HYPERLIGHT_CODE_LOG`          | —        | Path to a file. When set, the server writes the received JavaScript source code on each tool call. Used by the demo script's `--show-code` flag. |
 
 Example — tighten limits for a multi-tenant deployment:

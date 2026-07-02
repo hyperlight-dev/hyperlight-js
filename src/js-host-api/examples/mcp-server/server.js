@@ -12,7 +12,7 @@
 //   - Isolated execution via Hyperlight (no filesystem, no network)
 //   - CPU time limit: configurable (default 1000ms) via HYPERLIGHT_CPU_TIMEOUT_MS
 //   - Wall-clock backstop: configurable (default 5000ms) via HYPERLIGHT_WALL_TIMEOUT_MS
-//   - Automatic snapshot/restore recovery after timeouts
+//   - Automatic recovery after timeouts (sandbox reset on unload)
 //   - Sandbox reuse across invocations for performance
 //   - Optional timing log (HYPERLIGHT_TIMING_LOG) for performance analysis
 //
@@ -192,7 +192,6 @@ async function executeJavaScript(code) {
         setupMs: 0,
         compileMs: 0,
         executeMs: 0,
-        snapshotMs: 0,
         totalMs: 0,
     };
     const totalStart = performance.now();
@@ -241,17 +240,6 @@ async function executeJavaScript(code) {
     }
     timing.compileMs = Math.round(performance.now() - compileStart);
 
-    // ── Snapshot for timeout recovery ────────────────────────────
-    const snapStart = performance.now();
-    let snapshot;
-    try {
-        snapshot = await loaded.snapshot();
-    } catch (err) {
-        jsSandbox = null;
-        return { success: false, error: `Snapshot error: ${err.message}` };
-    }
-    timing.snapshotMs = Math.round(performance.now() - snapStart);
-
     // ── Execute with CPU + wall-clock guards ─────────────────────
     const execStart = performance.now();
     try {
@@ -282,15 +270,15 @@ async function executeJavaScript(code) {
             errorMessage = `Runtime error: ${err.message}`;
         }
 
-        // Capture execution time before recovery — recovery cost
-        // (snapshot restore / unload) should not inflate executeMs.
+        // Capture execution time before recovery — the unload() cost
+        // should not inflate executeMs.
         timing.executeMs = Math.round(performance.now() - execStart);
 
         // ── Attempt recovery ─────────────────────────────────────
+        // unload() restores the sandbox's internal pre-handler snapshot,
+        // which both clears any poisoned state and returns a clean
+        // JSSandbox — so no explicit snapshot/restore is needed here.
         try {
-            if (loaded.poisoned) {
-                await loaded.restore(snapshot);
-            }
             jsSandbox = await loaded.unload();
         } catch {
             // Recovery failed — sandbox will be rebuilt on next call
@@ -377,46 +365,10 @@ mcpServer.registerTool(
             // Log the received code if configured (demo --show-code flag)
             if (CODE_LOG_PATH) {
                 const separator = `\n// ── ${new Date().toISOString()} ${'─'.repeat(40)}\n`;
-                appendFile(CODE_LOG_PATH, separator + code + '\n').catch(() => {
+                await appendFile(CODE_LOG_PATH, separator + code + '\n').catch(() => {
                     console.error('[hyperlight] Warning: failed to write code log');
                 });
             }
-
-            const safeStringifyResult = (value) => {
-                // Detect *true* circular references using a traversal stack:
-                // each object is pushed on entry and popped on exit, so only an
-                // object that reappears on the currently-active path is replaced
-                // with "[Circular]". DAG-shared but acyclic references (e.g.
-                // { a: obj, b: obj }) are serialized normally instead of being
-                // falsely flagged. BigInt is stringified since JSON cannot
-                // represent it natively.
-                const ancestors = [];
-                const serialize = (val) => {
-                    if (typeof val === 'bigint') {
-                        return val.toString();
-                    }
-                    if (val === null || typeof val !== 'object') {
-                        return val;
-                    }
-                    if (ancestors.includes(val)) {
-                        return '[Circular]';
-                    }
-                    ancestors.push(val);
-                    try {
-                        if (Array.isArray(val)) {
-                            return val.map((item) => serialize(item));
-                        }
-                        const out = {};
-                        for (const [k, v] of Object.entries(val)) {
-                            out[k] = serialize(v);
-                        }
-                        return out;
-                    } finally {
-                        ancestors.pop();
-                    }
-                };
-                return JSON.stringify(serialize(value), null, 2);
-            };
 
             const startTime = Date.now();
             const { success, result, error } = await executeJavaScript(code);
@@ -424,7 +376,7 @@ mcpServer.registerTool(
 
             if (success) {
                 try {
-                    const serialized = safeStringifyResult(result);
+                    const serialized = JSON.stringify(result, null, 2);
                     return {
                         content: [
                             {

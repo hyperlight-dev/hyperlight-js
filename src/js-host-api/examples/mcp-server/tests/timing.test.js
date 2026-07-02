@@ -21,7 +21,7 @@ import { send, waitForResponse, SERVER_PATH, PROTOCOL_VERSION } from './helpers.
 // ── Expected timing record fields ───────────────────────────────────
 
 /** Every timing JSON line must contain these keys. */
-const TIMING_FIELDS = ['initMs', 'setupMs', 'compileMs', 'executeMs', 'snapshotMs', 'totalMs'];
+const TIMING_FIELDS = ['initMs', 'setupMs', 'compileMs', 'executeMs', 'totalMs'];
 
 // ── Test Suite ──────────────────────────────────────────────────────
 
@@ -158,12 +158,7 @@ describe('Timing Log (HYPERLIGHT_TIMING_LOG)', () => {
 
         // totalMs should be at least the sum of the individual phases
         // (with some tolerance for rounding)
-        const sumOfParts =
-            record.initMs +
-            record.setupMs +
-            record.compileMs +
-            record.snapshotMs +
-            record.executeMs;
+        const sumOfParts = record.initMs + record.setupMs + record.compileMs + record.executeMs;
 
         expect(record.totalMs).toBeGreaterThanOrEqual(sumOfParts - 2);
     });

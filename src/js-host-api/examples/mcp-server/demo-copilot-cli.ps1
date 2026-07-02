@@ -497,8 +497,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
         Write-Host  '    --allow-all-tools `'
         Write-Host  '    --deny-tool shell `'
         Write-Host  '    --deny-tool write `'
-        Write-Host  '    --deny-tool read `'
-        Write-Host  '    --deny-tool fetch `'
         Write-Host  '    --no-custom-instructions `'
         Write-Host  '    --no-ask-user `'
         Write-Host  '    --disable-builtin-mcps `'
@@ -544,8 +542,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
     #   --allow-all-tools : auto-approve all tools (required for -p mode)
     #   --deny-tool 'shell' : BLOCK all shell commands (takes precedence)
     #   --deny-tool 'write' : BLOCK all file write/edit operations
-    #   --deny-tool 'read'  : BLOCK file reading (agent should only use our MCP tool)
-    #   --deny-tool 'fetch' : BLOCK web/HTTP requests
     #   -s                  : Silent — agent response only, no stats/retry noise
     #
     # --deny-tool takes precedence over --allow-all-tools per the docs.
@@ -579,8 +575,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
             --allow-all-tools `
             --deny-tool shell `
             --deny-tool write `
-            --deny-tool read `
-            --deny-tool fetch `
             --no-custom-instructions `
             --no-ask-user `
             --disable-builtin-mcps `
@@ -643,7 +637,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
         $toolInitMs    = [int]$timing.initMs
         $toolSetupMs   = [int]$timing.setupMs
         $toolCompileMs = [int]$timing.compileMs
-        $toolSnapMs    = [int]$timing.snapshotMs
         $toolExecMs    = [int]$timing.executeMs
 
         $modelMs = $copilotElapsedMs - $toolTotalMs
@@ -660,7 +653,6 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
         }
         Write-Host ("    ├─ Handler setup:    {0,5}ms" -f $toolSetupMs)   -ForegroundColor DarkGray
         Write-Host ("    ├─ Compile & load:   {0,5}ms" -f $toolCompileMs) -ForegroundColor DarkGray
-        Write-Host ("    ├─ Snapshot:         {0,5}ms" -f $toolSnapMs)    -ForegroundColor DarkGray
         Write-Host ("    └─ JS execution:     {0,5}ms" -f $toolExecMs)    -ForegroundColor DarkGray
     } else {
         Write-Warn 'No tool timing data — the model may not have called the tool'

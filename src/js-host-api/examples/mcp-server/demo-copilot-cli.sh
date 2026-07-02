@@ -438,8 +438,6 @@ Your task is complete the moment you present the result."
     #   --allow-all-tools : auto-approve all tools (required for -p mode)
     #   --deny-tool 'shell' : BLOCK all shell commands (takes precedence)
     #   --deny-tool 'write' : BLOCK all file write/edit operations
-    #   --deny-tool 'read'  : BLOCK file reading (agent should only use our MCP tool)
-    #   --deny-tool 'fetch' : BLOCK web/HTTP requests
     #   -s                  : Silent — agent response only, no stats/retry noise
     #
     # --deny-tool takes precedence over --allow-all-tools per the docs.
@@ -500,8 +498,6 @@ Your task is complete the moment you present the result."
         echo "    --allow-all-tools \\"
         echo "    --deny-tool shell \\"
         echo "    --deny-tool write \\"
-        echo "    --deny-tool read \\"
-        echo "    --deny-tool fetch \\"
         echo "    --no-custom-instructions \\"
         echo "    --no-ask-user \\"
         echo "    --disable-builtin-mcps \\"
@@ -524,8 +520,6 @@ Your task is complete the moment you present the result."
         --allow-all-tools \
         --deny-tool 'shell' \
         --deny-tool 'write' \
-        --deny-tool 'read' \
-        --deny-tool 'fetch' \
         --no-custom-instructions \
         --no-ask-user \
         --disable-builtin-mcps \
@@ -567,14 +561,14 @@ Your task is complete the moment you present the result."
             process.stdin.on('data', c => d += c);
             process.stdin.on('end', () => {
                 const t = JSON.parse(d);
-                // Output: totalMs initMs setupMs compileMs snapshotMs executeMs
-                console.log([t.totalMs, t.initMs, t.setupMs, t.compileMs, t.snapshotMs, t.executeMs].join(' '));
+                // Output: totalMs initMs setupMs compileMs executeMs
+                console.log([t.totalMs, t.initMs, t.setupMs, t.compileMs, t.executeMs].join(' '));
             });
         ")"
 
         # Read into individual variables
-        local tool_total_ms tool_init_ms tool_setup_ms tool_compile_ms tool_snap_ms tool_exec_ms
-        read -r tool_total_ms tool_init_ms tool_setup_ms tool_compile_ms tool_snap_ms tool_exec_ms <<< "${timing_values}"
+        local tool_total_ms tool_init_ms tool_setup_ms tool_compile_ms tool_exec_ms
+        read -r tool_total_ms tool_init_ms tool_setup_ms tool_compile_ms tool_exec_ms <<< "${timing_values}"
 
         # Model time ≈ total copilot time minus tool time
         local model_ms=$(( copilot_elapsed_ms - tool_total_ms ))
@@ -590,7 +584,6 @@ Your task is complete the moment you present the result."
         fi
         printf "    ${DIM}├─ Handler setup:    %5dms${RESET}\n" "${tool_setup_ms}"
         printf "    ${DIM}├─ Compile & load:   %5dms${RESET}\n" "${tool_compile_ms}"
-        printf "    ${DIM}├─ Snapshot:         %5dms${RESET}\n" "${tool_snap_ms}"
         printf "    ${DIM}└─ JS execution:     %5dms${RESET}\n" "${tool_exec_ms}"
     else
         warn "No tool timing data — the model may not have called the tool"

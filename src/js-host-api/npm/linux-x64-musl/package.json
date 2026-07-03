@@ -1,6 +1,6 @@
 {
   "name": "@hyperlight-dev/js-host-api-linux-x64-musl",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "os": [
     "linux"
   ],

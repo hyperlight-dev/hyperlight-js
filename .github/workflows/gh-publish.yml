@@ -35,6 +35,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download benchmarks (Windows)
         uses: actions/download-artifact@v8
         with:
@@ -62,7 +67,7 @@ jobs:
       - name: Create GH Release
         if: ${{ !inputs.dry_run }}
         run: |
-            gh release create ${{ inputs.version }} \
+            gh release create v${{ inputs.version }} \
               --generate-notes \
               benchmarks_Windows_whp.tar.gz \
               benchmarks_Linux_kvm.tar.gz \

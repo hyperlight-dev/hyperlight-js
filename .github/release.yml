@@ -11,11 +11,13 @@ changelog:
         - breaking-change
     - title: 🎉 New Features 
       labels:
+        - kind/enhancement
         - enhancement
         - feature
     - title: 🐛 Bug Fixes
       labels:
         - bug
+        - kind/bugfix
     - title: 🔒 Security Fixes
       labels:
         - security
@@ -24,13 +26,21 @@ changelog:
         - performance
     - title: 👒 Dependencies
       labels:
+        - kind/dependencies
         - dependencies
     - title: 📚 Documentation
       labels:
+        - kind/documentation
         - documentation
     - title: 🔬 Testing
       labels:
         - testing
+    - title: 🪣 Cleanup
+      labels:
+        - kind/cleanup
+    - title: 🧩 Refactoring
+      labels:
+        - kind/refactor
     - title: 📝 Other Changes
       labels:
         - "*"

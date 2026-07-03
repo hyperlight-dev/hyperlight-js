@@ -1,28 +1,35 @@
 # Create a new hyperlight-js release
 
-This document details the process of releasing a new version of hyperlight-js to [crates.io](https://crates.io/). It's intended to be used as a checklist for the developer doing the release. The checklist is represented in the below sections.
+This document details the process of releasing a new version of hyperlight-js to [crates.io](https://crates.io/) and [npmjs.com](https://www.npmjs.com/). It's intended to be used as a checklist for the developer doing the release. 
 
-## Update cargo.toml Versions
+## Update versions
 
-The first step in the release process is to update the version numbers of the crates you are releasing.
+The first step in the release process is to bump the version numbers — the Rust crates **and** the npm packages — keeping them all in sync.
 
-Update the `version` field in the `[workspace.package]` section of the root `Cargo.toml`, as well as the `hyperlight-js-runtime` entry in `[workspace.dependencies]`.
+Do this with the `just set-version` recipe. **Always use this instead of bumping by hand** (`cargo set-version`, `npm version`, editing `package.json`): piecemeal bumps are exactly what leaves a lockfile stale and breaks CI mid-release. In one step it updates:
 
-The easiest way to do this is with the `cargo-edit` crate, which provides a `cargo set-version` command. Install it with:
+- every workspace crate's `version` and the root `Cargo.lock`,
+- the excluded `extended_runtime` fixture's own `Cargo.lock` (a bare `cargo set-version` can't reach it, and a stale one fails the `native_modules --locked` build),
+- the npm main package, the three platform packages, and their `optionalDependencies`,
+- `src/js-host-api/package-lock.json` (a stale one fails `npm ci` in the publish job).
+
+It uses `cargo set-version` from the `cargo-edit` crate under the hood, so install that first:
 
 ```console
 cargo install cargo-edit
 ```
 
-Then update the version number:
+Then bump everything:
 
 ```console
-cargo set-version 0.18.0
+just set-version 0.18.0
 ```
 
-For simplicity, we keep the version number consistent across all crates in the repository.
+We keep the version number consistent across all crates and npm packages in the repository.
 
 Create a PR with these changes and merge it into the `main` branch.
+
+> **Note:** The `CreateRelease` workflow *also* sets the npm packages to the tag's version at publish time (via `npm version`), so the published artifacts always match the tag regardless. Bumping them in the repo with `just set-version` is what keeps `npm ci` from failing *during* the release — don't skip it.
 
 ## Create a tag
 
@@ -36,26 +43,18 @@ git push origin v0.18.0 # if you've named your git remote for the hyperlight-dev
 >Note: we'll use `v0.18.0` as the version for the above and all subsequent instructions. You should replace this with the version you're releasing. Make sure your version follows [SemVer](https://semver.org) conventions as closely as possible, and is prefixed with a `v` character. *In particular do not use a patch version unless you are patching an issue in a release branch, releases from main should always be minor or major versions*.
 If you are creating a patch release see the instructions [here](#patching-a-release).
 
-## Create a release branch (no manual steps)
+## What happens when you push the tag
 
-After you push your new tag in the previous section, the ["Create a Release Branch"](https://github.com/hyperlight-dev/hyperlight-js/blob/main/.github/workflows/CreateReleaseBranch.yml) CI job will automatically run. When this job completes, a new `release/v0.18.0` branch will be automatically created for you.
+Pushing a `vX.Y.Z` tag is the **only** manual trigger you need — you do **not** run any workflow by hand. The tag push starts the ["Create a Release"](https://github.com/hyperlight-dev/hyperlight-js/actions/workflows/CreateRelease.yml) workflow ([`CreateRelease.yml`](https://github.com/hyperlight-dev/hyperlight-js/blob/main/.github/workflows/CreateRelease.yml)), which reads the version from the tag and then does everything else automatically:
 
-## Create a new GitHub release and publish the crates
+1. **Creates the release branch** — a `release/v0.18.0` branch is created and pushed for you.
+2. **Creates the GitHub release** — a new [GitHub release](https://github.com/hyperlight-dev/hyperlight-js/releases) is published with automatically generated release notes and the benchmark results attached.
+3. **Publishes the crates to crates.io** — in dependency order (`hyperlight-js-common` → `hyperlight-js-runtime` → `hyperlight-js`). Verify on the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js).
+4. **Publishes the npm packages to npmjs.com** — `@hyperlight-dev/js-host-api` and its platform-specific binary packages, with their versions set from the tag. Verify on the [npmjs.com package page](https://www.npmjs.com/package/@hyperlight-dev/js-host-api).
 
-After the previous CI job runs to create the new release branch, go to the ["Create a Release"](https://github.com/hyperlight-dev/hyperlight-js/actions/workflows/CreateRelease.yml) Github actions workflow and do the following:
-1. Click the "Run workflow" button near the top right
-1. In the Use workflow from dropdown, select the `release/v0.18.0` branch
-1. Click the green **Run workflow** button
+Both crates.io and npm publishing use trusted publishing (OIDC), so no `NPM_TOKEN` or crates.io token secret is needed for the `CreateRelease` workflow. Provenance attestations are generated automatically for the npm packages.
 
-When this job is done, a new [GitHub release](https://github.com/hyperlight-dev/hyperlight-js/releases) will be created for you. 
-
-This release contains the benchmark results and the source code for the release along with automatically generated release notes.
-
-In addition, the hyperlight-js crates will be published to crates.io in dependency order (`hyperlight-js-common` → `hyperlight-js-runtime` → `hyperlight-js`). You can verify this by going to the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js) and checking that the new version is listed.
-
-The npm packages (`@hyperlight-dev/js-host-api` and platform-specific binaries) are also published automatically as part of this workflow. Publishing uses [npm trusted publishing (OIDC)](https://docs.npmjs.com/trusted-publishers) — no `NPM_TOKEN` secret is needed for the `CreateRelease` workflow. Provenance attestations are generated automatically.
-
-You can verify the npm publish by checking the [npmjs.com package page](https://www.npmjs.com/package/@hyperlight-dev/js-host-api).
+> **Note:** Only a `vX.Y.Z` **tag** push triggers a real release. Pushing to `main`, or running the workflow manually with **Run workflow**, performs a **dry run** — it builds and validates everything but publishes nothing.
 
 ### npm trusted publishing setup
 

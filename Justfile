@@ -178,7 +178,7 @@ test-js-host-api target=default-target features="": (build-js-host-api target fe
 # Base path to the extended runtime fixture target directory
 extended_runtime_target := replace(justfile_dir(), "\\", "/") + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target/x86_64-hyperlight-none"
 
-test-native-modules target=default-target: (ensure-tools) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-restore target)
+test-native-modules target=default-target: (ensure-tools) (check-fixture-lock) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-restore target)
 
 [private]
 _test-native-modules-unit target=default-target:
@@ -199,6 +199,51 @@ _test-native-modules-vm target=default-target:
 _test-native-modules-restore target=default-target:
     @echo "Rebuilding hyperlight-js with default guest runtime..."
     cd src/hyperlight-js && cargo build --profile={{ if target == "debug" {"dev"} else { target } }}
+
+# ── Version bumping & fixture-lock consistency ──────────────────────────────
+# The extended_runtime test fixture is a separate `[workspace]` that is excluded
+# from the root workspace (see the root Cargo.toml `exclude`), so it keeps its
+# OWN committed Cargo.lock. `cargo set-version` bumps the workspace crates + the
+# root lock but cannot reach the excluded fixture, leaving its lock pinning the
+# old version — which then fails the native_modules `--locked` build. These two
+# recipes keep them in lockstep.
+
+# Bump the version of EVERYTHING in lockstep so a release PR can't end up in a
+# half-bumped, CI-breaking state. In one step this updates:
+#   * all workspace crates + the root Cargo.lock (via cargo-edit)
+#   * the excluded extended_runtime fixture's own Cargo.lock (cargo can't reach it)
+#   * the npm main package, the 3 platform packages, and their optionalDependencies
+#   * the npm package-lock.json (regenerated; the not-yet-published platform
+#     optionals are omitted, matching CI's `npm ci --omit=optional`)
+# Requires cargo-edit (`cargo install cargo-edit`). ALWAYS use this instead of a
+# bare `cargo set-version` / `npm version` when preparing a release.
+set-version version:
+    # Rust: workspace crates + root lock, then the excluded fixture lock
+    cargo set-version {{ version }}
+    cargo update \
+        --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
+        -p hyperlight-js-runtime -p hyperlight-js-common
+    # npm: main + the 3 platform package.json versions (--ignore-scripts avoids needing node_modules)
+    cd src/js-host-api && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
+    cd src/js-host-api/npm/linux-x64-gnu && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
+    cd src/js-host-api/npm/linux-x64-musl && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
+    cd src/js-host-api/npm/win32-x64-msvc && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
+    # npm: point the main package's optionalDependencies at the new version
+    cd src/js-host-api && npm pkg set \
+        "optionalDependencies.@hyperlight-dev/js-host-api-linux-x64-gnu={{ version }}" \
+        "optionalDependencies.@hyperlight-dev/js-host-api-linux-x64-musl={{ version }}" \
+        "optionalDependencies.@hyperlight-dev/js-host-api-win32-x64-msvc={{ version }}"
+    # npm: regenerate package-lock.json so `npm ci --omit=optional` stays in sync
+    cd src/js-host-api && npm install --package-lock-only --omit=optional --ignore-scripts
+
+# Fail fast if the excluded fixture lock has drifted from the workspace version.
+# Without this, drift only surfaces as a cryptic poisoned-LazyLock panic inside
+# the native_modules unit tests. Fix drift with `just set-version <version>`.
+# Wired into `test-native-modules` so CI catches it before the confusing failure.
+check-fixture-lock:
+    cargo metadata --locked --format-version 1 \
+        --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
+        {{ if os() == "windows" { "> $null" } else { "> /dev/null" } }}
 
 # Run js-host-api examples (simple.js, calculator.js, unload.js, interrupt.js, cpu-timeout.js, host-functions.js)
 run-js-host-api-examples target=default-target features="": (build-js-host-api target features)

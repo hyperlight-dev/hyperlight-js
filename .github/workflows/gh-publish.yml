@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 
-name: Publish npm packages
+name: Create GitHub Release
 
 on:
   workflow_dispatch:
@@ -60,7 +60,7 @@ jobs:
           tar -zcvf benchmarks_Linux_hyperv3.tar.gz benchmarks_Linux_hyperv3
 
       - name: Create GH Release
-        if: ${{ inputs.dry_run == 'false' }}
+        if: ${{ !inputs.dry_run }}
         run: |
             gh release create ${{ inputs.version }} \
               --generate-notes \

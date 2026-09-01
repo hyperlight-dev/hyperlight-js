@@ -19,7 +19,7 @@ export HYPERLIGHT_CFLAGS := \
 export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
 
 ensure-tools:
-    cargo install cargo-hyperlight --version 0.1.14 --locked
+    cargo install cargo-hyperlight --locked
 
 # Check if npm is installed, install automatically if missing (Linux)
 [private]

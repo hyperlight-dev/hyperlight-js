@@ -51,7 +51,7 @@ fn handle_termination() -> Result<()> {
 
     // Verify sandbox is not poisoned before we start
     assert!(
-        !loaded_sandbox.poisoned(),
+        !loaded_sandbox.status().is_poisoned(),
         "Sandbox should not be poisoned initially"
     );
 
@@ -102,7 +102,7 @@ fn handle_termination() -> Result<()> {
 
     // Verify sandbox is poisoned after interruption
     assert!(
-        loaded_sandbox.poisoned(),
+        loaded_sandbox.status().is_poisoned(),
         "Sandbox should be poisoned after interruption"
     );
 
@@ -111,7 +111,7 @@ fn handle_termination() -> Result<()> {
 
     // Verify sandbox is no longer poisoned after restore
     assert!(
-        !loaded_sandbox.poisoned(),
+        !loaded_sandbox.status().is_poisoned(),
         "Sandbox should not be poisoned after restore"
     );
 

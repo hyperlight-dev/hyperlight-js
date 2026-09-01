@@ -13,14 +13,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
 use hyperlight_js::{
     CpuTimeMonitor, ExecutionStats, HyperlightError, InterruptHandle, JSSandbox, LoadedJSSandbox,
-    ProtoJSSandbox, SandboxBuilder, Script, Snapshot, WallClockMonitor,
+    ProtoJSSandbox, SandboxBuilder, SandboxStatus as HyperlightSandboxStatus, Script, Snapshot,
+    WallClockMonitor,
 };
 use napi::bindgen_prelude::{FromNapiValue, JsValuesTupleIntoVec, Promise, ToNapiValue};
 use napi::sys::{napi_env, napi_value};
@@ -68,12 +69,58 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex, OwnedMappedMutexGuard, OwnedMute
 // to be callable during that time:
 //
 // - `interruptHandle` — the whole point is to `kill()` a *running* handler
-// - `poisoned` — callers want to check state without blocking the event loop
+// - `status` — callers want to check state without blocking the event loop
 //
 // Both are cloned out of the `LoadedJSSandbox` at construction time and stored
-// as separate `Arc` fields that never touch the Mutex. The `poisoned_flag`
-// (`AtomicBool`) is updated inside every `spawn_blocking` closure where we
+// as separate `Arc` fields that never touch the Mutex. The `status`
+// (`AtomicU8`) is updated inside every `spawn_blocking` closure where we
 // already hold the lock, so it stays in sync without extra contention.
+
+/// The lifecycle status of a sandbox.
+#[napi(string_enum)]
+#[derive(Clone, Copy)]
+pub enum SandboxStatus {
+    /// The sandbox can execute guest operations.
+    #[napi(value = "ready")]
+    Ready,
+    /// The sandbox requires a successful restore before further use.
+    #[napi(value = "poisoned")]
+    Poisoned,
+    /// The sandbox cannot be used and must be discarded.
+    #[napi(value = "unrecoverable")]
+    Unrecoverable,
+}
+
+impl SandboxStatus {
+    const fn from_hyperlight(status: HyperlightSandboxStatus) -> Self {
+        match status {
+            HyperlightSandboxStatus::Ready => Self::Ready,
+            HyperlightSandboxStatus::Poisoned => Self::Poisoned,
+            HyperlightSandboxStatus::Unrecoverable => Self::Unrecoverable,
+        }
+    }
+
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::Ready => 0,
+            Self::Poisoned => 1,
+            Self::Unrecoverable => 2,
+        }
+    }
+
+    fn from_u8(status: u8) -> Self {
+        match status {
+            0 => Self::Ready,
+            1 => Self::Poisoned,
+            2 => Self::Unrecoverable,
+            _ => unreachable!("invalid sandbox status"),
+        }
+    }
+
+    const fn is_poisoned(self) -> bool {
+        matches!(self, Self::Poisoned)
+    }
+}
 
 // ── Error codes ──────────────────────────────────────────────────────
 //
@@ -1712,28 +1759,38 @@ impl JSSandboxWrapper {
         })
         .await
         .map_err(join_error)??;
-        // Grab the interrupt handle and poisoned state before moving behind the Mutex.
+        // Grab the interrupt handle and status before moving behind the Mutex.
         // These are stored separately so they never contend with the inner lock —
         // callers can read them even while guest code is executing on a background thread.
         let interrupt = loaded_sandbox.interrupt_handle();
-        let poisoned_flag = Arc::new(AtomicBool::new(loaded_sandbox.poisoned()));
+        let status = Arc::new(AtomicU8::new(
+            SandboxStatus::from_hyperlight(loaded_sandbox.status()).as_u8(),
+        ));
         Ok(LoadedJSSandboxWrapper {
             inner: Arc::new(AsyncMutex::new(Some(loaded_sandbox))),
             interrupt,
-            poisoned_flag,
+            status,
             last_call_stats: Arc::new(ArcSwapOption::empty()),
             disposed_flag: Arc::new(AtomicBool::new(false)),
             executing_flag: Arc::new(AtomicBool::new(false)),
         })
     }
 
+    /// The sandbox lifecycle status.
+    #[napi(getter)]
+    pub fn status(&self) -> napi::Result<SandboxStatus> {
+        self.with_inner_ref(|sandbox| Ok(SandboxStatus::from_hyperlight(sandbox.status())))
+    }
+
     /// Whether the sandbox is in a poisoned (inconsistent) state.
     ///
     /// A poisoned sandbox has had its guest execution interrupted or
     /// aborted. Most operations will fail with an `ERR_POISONED` error code.
+    ///
+    /// @deprecated Use `status` instead.
     #[napi(getter)]
     pub fn poisoned(&self) -> napi::Result<bool> {
-        self.with_inner_ref(|sandbox| Ok(sandbox.poisoned()))
+        self.status().map(SandboxStatus::is_poisoned)
     }
 
     /// Eagerly release the underlying sandbox resources.
@@ -1779,16 +1836,16 @@ pub struct LoadedJSSandboxWrapper {
     /// See the module-level architecture comment for the full rationale.
     interrupt: Arc<dyn InterruptHandle>,
 
-    /// Tracks poisoned state **outside** the Mutex for lock-free reads.
+    /// Tracks lifecycle status **outside** the Mutex for lock-free reads.
     ///
-    /// The `poisoned` getter is a sync napi property (not async). If it tried
+    /// The `status` getter is a sync napi property (not async). If it tried
     /// to acquire the Mutex while `call_handler()` is running, it would block
     /// the Node.js event loop until guest execution finishes.
     ///
     /// Updated via `Ordering::Release` inside every `spawn_blocking` closure
     /// (where we already hold the lock), read via `Ordering::Acquire` in the
     /// getter. See the module-level architecture comment for the full rationale.
-    poisoned_flag: Arc<AtomicBool>,
+    status: Arc<AtomicU8>,
 
     /// Execution statistics from the most recent `callHandler()` call.
     ///
@@ -1972,7 +2029,7 @@ impl LoadedJSSandboxWrapper {
                 )));
         }
 
-        let poisoned_flag = self.poisoned_flag.clone();
+        let status = self.status.clone();
         let last_call_stats_store = self.last_call_stats.clone();
         let gc = options.gc;
         let wall_clock_timeout_ms = options.wall_clock_timeout_ms;
@@ -2025,9 +2082,12 @@ impl LoadedJSSandboxWrapper {
                             .map_err(to_napi_error)
                     }
                 };
-                // Update poisoned flag while we hold the lock — keeps the getter
+                // Update status while we hold the lock — keeps the getter
                 // lock-free so it never blocks the Node.js event loop.
-                poisoned_flag.store(sandbox.poisoned(), Ordering::Release);
+                status.store(
+                    SandboxStatus::from_hyperlight(sandbox.status()).as_u8(),
+                    Ordering::Release,
+                );
 
                 // Copy execution stats while we still hold the lock.
                 last_call_stats_store.store(
@@ -2095,6 +2155,20 @@ impl LoadedJSSandboxWrapper {
         })
     }
 
+    /// The sandbox lifecycle status.
+    ///
+    /// This getter is lock-free and never blocks the event loop, even while a
+    /// handler is executing on a background thread.
+    ///
+    /// @throws `ERR_CONSUMED` if the sandbox has been consumed via `dispose()` or `unload()`
+    #[napi(getter)]
+    pub fn status(&self) -> napi::Result<SandboxStatus> {
+        if self.disposed_flag.load(Ordering::Acquire) {
+            return Err(consumed_error("LoadedJSSandbox"));
+        }
+        Ok(SandboxStatus::from_u8(self.status.load(Ordering::Acquire)))
+    }
+
     /// Whether the sandbox is in a poisoned (inconsistent) state.
     ///
     /// A sandbox becomes poisoned when guest execution is interrupted
@@ -2109,13 +2183,11 @@ impl LoadedJSSandboxWrapper {
     /// - `restore(snapshot)` — revert to a captured state
     /// - `unload()` — discard handlers and start fresh
     ///
+    /// @deprecated Use `status` instead.
     /// @throws `ERR_CONSUMED` if the sandbox has been consumed via `dispose()` or `unload()`
     #[napi(getter)]
     pub fn poisoned(&self) -> napi::Result<bool> {
-        if self.disposed_flag.load(Ordering::Acquire) {
-            return Err(consumed_error("LoadedJSSandbox"));
-        }
-        Ok(self.poisoned_flag.load(Ordering::Acquire))
+        self.status().map(SandboxStatus::is_poisoned)
     }
 
     /// Execution statistics from the most recent `callHandler()` call.
@@ -2164,12 +2236,15 @@ impl LoadedJSSandboxWrapper {
     /// @throws If already consumed
     #[napi]
     pub async fn snapshot(&self) -> napi::Result<SnapshotWrapper> {
-        let poisoned_flag = self.poisoned_flag.clone();
+        let status = self.status.clone();
 
         let snapshot = self
             .with_blocking_inner(move |mut sandbox| {
                 let result = sandbox.snapshot().map_err(to_napi_error);
-                poisoned_flag.store(sandbox.poisoned(), Ordering::Release);
+                status.store(
+                    SandboxStatus::from_hyperlight(sandbox.status()).as_u8(),
+                    Ordering::Release,
+                );
                 result
             })
             .await?;
@@ -2188,11 +2263,14 @@ impl LoadedJSSandboxWrapper {
     #[napi]
     pub async fn restore(&self, snapshot: &SnapshotWrapper) -> napi::Result<()> {
         let snap = snapshot.inner.clone();
-        let poisoned_flag = self.poisoned_flag.clone();
+        let status = self.status.clone();
 
         self.with_blocking_inner(move |mut sandbox| {
             let result = sandbox.restore(snap).map_err(to_napi_error);
-            poisoned_flag.store(sandbox.poisoned(), Ordering::Release);
+            status.store(
+                SandboxStatus::from_hyperlight(sandbox.status()).as_u8(),
+                Ordering::Release,
+            );
             result
         })
         .await?;

@@ -130,7 +130,8 @@ describe('JSSandbox', () => {
         expect(loaded).toBeDefined();
     });
 
-    it('should report poisoned state', () => {
+    it('should report ready status', () => {
+        expect(sandbox.status).toBe('ready');
         expect(sandbox.poisoned).toBe(false);
     });
 
@@ -195,6 +196,7 @@ describe('LoadedJSSandbox', () => {
     });
 
     it('should not be poisoned initially', () => {
+        expect(loaded.status).toBe('ready');
         expect(loaded.poisoned).toBe(false);
     });
 

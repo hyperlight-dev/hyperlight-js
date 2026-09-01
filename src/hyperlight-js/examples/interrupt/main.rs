@@ -17,7 +17,7 @@ limitations under the License.
 //!
 //! This example shows how to:
 //! 1. Use `interrupt_handle().kill()` to terminate long-running handlers
-//! 2. Check the `poisoned()` state after interruption
+//! 2. Check the sandbox status after interruption
 //! 3. Use `snapshot()` and `restore()` to recover from poisoned state
 //!
 //! Run with: cargo run --example interrupt
@@ -57,9 +57,12 @@ fn main() -> Result<()> {
     let mut loaded_sandbox = sandbox.get_loaded_sandbox()?;
 
     // Verify sandbox is not poisoned initially
-    println!("🔒 Initial poisoned state: {}", loaded_sandbox.poisoned());
+    println!(
+        "🔒 Initial poisoned state: {}",
+        loaded_sandbox.status().is_poisoned()
+    );
     assert!(
-        !loaded_sandbox.poisoned(),
+        !loaded_sandbox.status().is_poisoned(),
         "Sandbox should not be poisoned initially"
     );
 
@@ -100,9 +103,12 @@ fn main() -> Result<()> {
         }
         Err(hyperlight_js::HyperlightError::ExecutionCanceledByHost()) => {
             println!("\n✅ Handler was properly interrupted!");
-            println!("🔒 Poisoned after interrupt: {}", loaded_sandbox.poisoned());
+            println!(
+                "🔒 Poisoned after interrupt: {}",
+                loaded_sandbox.status().is_poisoned()
+            );
             assert!(
-                loaded_sandbox.poisoned(),
+                loaded_sandbox.status().is_poisoned(),
                 "Sandbox should be poisoned after interruption"
             );
         }
@@ -116,9 +122,12 @@ fn main() -> Result<()> {
     println!("\n📸 Restoring sandbox from snapshot...");
     loaded_sandbox.restore(snapshot)?;
 
-    println!("🔒 Poisoned after restore: {}", loaded_sandbox.poisoned());
+    println!(
+        "🔒 Poisoned after restore: {}",
+        loaded_sandbox.status().is_poisoned()
+    );
     assert!(
-        !loaded_sandbox.poisoned(),
+        !loaded_sandbox.status().is_poisoned(),
         "Sandbox should not be poisoned after restore"
     );
 

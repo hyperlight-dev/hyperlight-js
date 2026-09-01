@@ -173,7 +173,7 @@ fn main() -> Result<()> {
                     "   💀 Terminated by: {} ✅",
                     stats.terminated_by.unwrap_or("(unknown)")
                 );
-                println!("   🔒 Poisoned: {}", loaded.poisoned());
+                println!("   🔒 Poisoned: {}", loaded.status().is_poisoned());
             }
         }
 
@@ -181,7 +181,7 @@ fn main() -> Result<()> {
         loaded.restore(snapshot.clone())?;
         println!(
             "   📸 Restored from snapshot — poisoned: {}",
-            loaded.poisoned()
+            loaded.status().is_poisoned()
         );
     }
 

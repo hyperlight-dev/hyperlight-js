@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use hyperlight_host::sandbox::snapshot::Snapshot;
-use hyperlight_host::{new_error, MultiUseSandbox, Result};
+use hyperlight_host::{new_error, MultiUseSandbox, Result, SandboxStatus};
 use tracing::{instrument, Level};
 
 use super::loaded_js_sandbox::LoadedJSSandbox;
@@ -277,13 +277,14 @@ impl JSSandbox {
     }
 
     /// Returns whether the sandbox is currently poisoned.
-    ///
-    /// A poisoned sandbox is in an inconsistent state due to the guest not running to completion.
-    /// This can happen when guest execution is interrupted (e.g., via `InterruptHandle::kill()`),
-    /// when the guest panics, or when memory violations occur.
-    ///
+    #[deprecated(since = "0.4.0", note = "use status().is_poisoned()")]
     pub fn poisoned(&self) -> bool {
-        self.inner.poisoned()
+        self.inner.status().is_poisoned()
+    }
+
+    /// Returns the sandbox lifecycle status.
+    pub fn status(&self) -> SandboxStatus {
+        self.inner.status()
     }
 
     #[cfg(test)]

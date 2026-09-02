@@ -1610,7 +1610,7 @@ dependencies = [
  "flatbuffers",
  "log",
  "smallvec",
- "spin 0.12.2",
+ "spin 0.12.3",
  "thiserror",
  "tracing",
  "tracing-core",
@@ -1645,7 +1645,7 @@ dependencies = [
  "hyperlight-libc",
  "linkme",
  "log",
- "spin 0.12.2",
+ "spin 0.12.3",
  "tracing",
 ]
 
@@ -1668,7 +1668,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f43a3d5d3fa245ce0fccee8a48ad7d94ec479e0898fc8f91fd440a1d65830c6"
 dependencies = [
  "hyperlight-common",
- "spin 0.12.2",
+ "spin 0.12.3",
  "tracing",
  "tracing-core",
 ]
@@ -1797,7 +1797,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "spin 0.12.2",
+ "spin 0.12.3",
  "tempfile",
  "tracing",
 ]
@@ -3647,9 +3647,9 @@ checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 
 [[package]]
 name = "spin"
-version = "0.12.2"
+version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8abadc99fd9c7bbb7d0ca2b31d72a067d0c0dcd7aad25ab8cac71ba91417694b"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
 dependencies = [
  "lock_api",
 ]
@@ -3745,7 +3745,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

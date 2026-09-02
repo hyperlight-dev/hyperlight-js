@@ -208,13 +208,8 @@ _test-native-modules-restore target=default-target:
 # old version — which then fails the native_modules `--locked` build. These two
 # recipes keep them in lockstep.
 
-# Bump the version of EVERYTHING in lockstep so a release PR can't end up in a
-# half-bumped, CI-breaking state. In one step this updates:
-#   * all workspace crates + the root Cargo.lock (via cargo-edit)
-#   * the excluded extended_runtime fixture's own Cargo.lock (cargo can't reach it)
-#   * the npm main package, the 3 platform packages, and their optionalDependencies
-#   * the npm package-lock.json (regenerated; the not-yet-published platform
-#     optionals are omitted, matching CI's `npm ci --omit=optional`)
+# Bump all crate and npm package versions together.
+# The publish workflow updates optionalDependencies to the release version.
 # Requires cargo-edit (`cargo install cargo-edit`). ALWAYS use this instead of a
 # bare `cargo set-version` / `npm version` when preparing a release.
 set-version version:
@@ -228,13 +223,8 @@ set-version version:
     cd src/js-host-api/npm/linux-x64-gnu && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/linux-x64-musl && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/win32-x64-msvc && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
-    # npm: point the main package's optionalDependencies at the new version
-    cd src/js-host-api && npm pkg set \
-        "optionalDependencies.@hyperlight-dev/js-host-api-linux-x64-gnu={{ version }}" \
-        "optionalDependencies.@hyperlight-dev/js-host-api-linux-x64-musl={{ version }}" \
-        "optionalDependencies.@hyperlight-dev/js-host-api-win32-x64-msvc={{ version }}"
-    # npm: regenerate package-lock.json so `npm ci --omit=optional` stays in sync
-    cd src/js-host-api && npm install --package-lock-only --omit=optional --ignore-scripts
+    # Verify the npm lockfile
+    cd src/js-host-api && npm ci --dry-run --omit=optional --ignore-scripts
 
 # Fail fast if the excluded fixture lock has drifted from the workspace version.
 # Without this, drift only surfaces as a cryptic poisoned-LazyLock panic inside

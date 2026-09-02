@@ -23,7 +23,7 @@ test = false
 [dependencies]
 hyperlight-js-common = { workspace = true }
 anyhow = { version = "1.0", default-features = false }
-base64 = {version = "0.22", default-features = false, features = ["alloc"] }
+base64 = {version = "0.23", default-features = false, features = ["alloc"] }
 fn-traits = "0.2.0"
 hashbrown = { version = "0.17", features = ["serde"] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }

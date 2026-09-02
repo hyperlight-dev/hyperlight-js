@@ -70,6 +70,7 @@ describe('Wall Clock Timeout', () => {
         // Should have been killed around 500ms, not 4000ms
         expect(elapsed).toBeLessThan(2000);
         expect(elapsed).toBeGreaterThan(300);
+        expect(loaded.status).toBe('poisoned');
         expect(loaded.poisoned).toBe(true);
     });
 
@@ -86,11 +87,13 @@ describe('Wall Clock Timeout', () => {
             'ERR_CANCELLED'
         );
 
+        expect(loaded.status).toBe('poisoned');
         expect(loaded.poisoned).toBe(true);
 
         // Restore from snapshot
         await loaded.restore(snapshot);
 
+        expect(loaded.status).toBe('ready');
         expect(loaded.poisoned).toBe(false);
 
         // Should be able to use the sandbox again

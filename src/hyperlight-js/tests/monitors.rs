@@ -66,7 +66,10 @@ fn wall_clock_monitor_completes_fast_handler() {
     assert!(result.is_ok(), "Fast handler should complete: {:?}", result);
     let output = result.unwrap();
     assert!(output.contains("counter"), "Should have counter in output");
-    assert!(!loaded.poisoned(), "Sandbox should not be poisoned");
+    assert!(
+        !loaded.status().is_poisoned(),
+        "Sandbox should not be poisoned"
+    );
 }
 
 #[test]
@@ -95,7 +98,10 @@ fn wall_clock_monitor_kills_slow_handler() {
 
     // Result should be error since handler was killed
     assert!(result.is_err(), "Killed handler should return error");
-    assert!(loaded.poisoned(), "Sandbox should be poisoned after kill");
+    assert!(
+        loaded.status().is_poisoned(),
+        "Sandbox should be poisoned after kill"
+    );
 }
 
 #[test]
@@ -109,11 +115,17 @@ fn wall_clock_monitor_sandbox_recovers_with_restore() {
     let event = r#"{"runtime": 5000}"#;
     let _ = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
 
-    assert!(loaded.poisoned(), "Should be poisoned after kill");
+    assert!(
+        loaded.status().is_poisoned(),
+        "Should be poisoned after kill"
+    );
 
     // Restore from snapshot
     loaded.restore(snapshot.clone()).unwrap();
-    assert!(!loaded.poisoned(), "Should not be poisoned after restore");
+    assert!(
+        !loaded.status().is_poisoned(),
+        "Should not be poisoned after restore"
+    );
 
     // Should be able to run again
     let monitor2 = WallClockMonitor::new(Duration::from_secs(5)).unwrap();
@@ -135,7 +147,10 @@ fn cpu_time_monitor_completes_fast_handler() {
     assert!(result.is_ok(), "Fast handler should complete: {:?}", result);
     let output = result.unwrap();
     assert!(output.contains("counter"), "Should have counter in output");
-    assert!(!loaded.poisoned(), "Sandbox should not be poisoned");
+    assert!(
+        !loaded.status().is_poisoned(),
+        "Sandbox should not be poisoned"
+    );
 }
 
 #[test]
@@ -160,7 +175,10 @@ fn cpu_time_monitor_kills_cpu_intensive_handler() {
 
     // Result should be error since handler was killed
     assert!(result.is_err(), "Killed handler should return error");
-    assert!(loaded.poisoned(), "Sandbox should be poisoned after kill");
+    assert!(
+        loaded.status().is_poisoned(),
+        "Sandbox should be poisoned after kill"
+    );
 }
 
 #[test]
@@ -174,11 +192,17 @@ fn cpu_time_monitor_sandbox_recovers_with_restore() {
     let event = r#"{"runtime": 5000}"#;
     let _ = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
 
-    assert!(loaded.poisoned(), "Should be poisoned after kill");
+    assert!(
+        loaded.status().is_poisoned(),
+        "Should be poisoned after kill"
+    );
 
     // Restore from snapshot
     loaded.restore(snapshot.clone()).unwrap();
-    assert!(!loaded.poisoned(), "Should not be poisoned after restore");
+    assert!(
+        !loaded.status().is_poisoned(),
+        "Should not be poisoned after restore"
+    );
 
     // Should be able to run again
     let monitor2 = CpuTimeMonitor::new(Duration::from_secs(5)).unwrap();
@@ -210,7 +234,7 @@ fn tuple_monitor_kills_cpu_intensive_handler() {
 
     // CPU monitor should fire first (tight loop ≈ 100% CPU utilisation)
     assert!(result.is_err(), "Should be killed by CPU monitor");
-    assert!(loaded.poisoned(), "Sandbox should be poisoned");
+    assert!(loaded.status().is_poisoned(), "Sandbox should be poisoned");
     assert!(
         elapsed < Duration::from_secs(3),
         "CPU monitor should fire well before wall-clock, took {:?}",
@@ -233,7 +257,10 @@ fn tuple_monitor_completes_fast_handler() {
     let result = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
 
     assert!(result.is_ok(), "Fast handler should complete: {:?}", result);
-    assert!(!loaded.poisoned(), "Sandbox should not be poisoned");
+    assert!(
+        !loaded.status().is_poisoned(),
+        "Sandbox should not be poisoned"
+    );
 }
 
 #[test]
@@ -249,11 +276,17 @@ fn tuple_monitor_sandbox_recovers_with_restore() {
     );
     let event = r#"{"runtime": 10000}"#;
     let _ = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
-    assert!(loaded.poisoned(), "Should be poisoned after kill");
+    assert!(
+        loaded.status().is_poisoned(),
+        "Should be poisoned after kill"
+    );
 
     // Restore and verify recovery
     loaded.restore(snapshot.clone()).unwrap();
-    assert!(!loaded.poisoned(), "Should not be poisoned after restore");
+    assert!(
+        !loaded.status().is_poisoned(),
+        "Should not be poisoned after restore"
+    );
 
     let monitor2 = (
         CpuTimeMonitor::new(Duration::from_secs(5)).unwrap(),
@@ -309,7 +342,7 @@ fn tuple_with_failing_monitor_is_fail_closed() {
     );
     // Sandbox should NOT be poisoned — we never ran the handler
     assert!(
-        !loaded.poisoned(),
+        !loaded.status().is_poisoned(),
         "Sandbox should not be poisoned when monitor fails to start"
     );
 }
@@ -326,12 +359,12 @@ fn monitor_reuse_across_calls() {
     // First call
     let result1 = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
     assert!(result1.is_ok(), "First call should succeed: {:?}", result1);
-    assert!(!loaded.poisoned());
+    assert!(!loaded.status().is_poisoned());
 
     // Second call with same monitor instance
     let result2 = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
     assert!(result2.is_ok(), "Second call should succeed: {:?}", result2);
-    assert!(!loaded.poisoned());
+    assert!(!loaded.status().is_poisoned());
 }
 
 /// Single-element tuple monitors should work identically to a bare monitor.
@@ -347,7 +380,7 @@ fn single_element_tuple_monitor() {
     let elapsed = start.elapsed();
 
     assert!(result.is_err(), "Should be killed by 1-tuple monitor");
-    assert!(loaded.poisoned(), "Sandbox should be poisoned");
+    assert!(loaded.status().is_poisoned(), "Sandbox should be poisoned");
     assert!(
         elapsed < Duration::from_secs(2),
         "Should terminate quickly, took {:?}",

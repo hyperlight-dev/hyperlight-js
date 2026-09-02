@@ -171,7 +171,7 @@ impl SandboxBuilder {
         if !is_hypervisor_present() {
             return Err(HyperlightError::NoHypervisorFound());
         }
-        let guest_binary = GuestBinary::Buffer(super::JSRUNTIME);
+        let guest_binary = GuestBinary::Buffer(super::JSRUNTIME.to_vec());
         let proto_js_sandbox =
             ProtoJSSandbox::new(guest_binary, Some(self.config), self.host_print_fn)?;
         Ok(proto_js_sandbox)

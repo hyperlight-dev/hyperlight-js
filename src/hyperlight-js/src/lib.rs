@@ -72,7 +72,7 @@ pub type ReturnType = hyperlight_host::func::ReturnType;
 /// A snapshot of sandbox state that can be used to restore it later.
 pub use hyperlight_host::sandbox::snapshot::Snapshot;
 /// Configuration for sandbox resource limits and behavior.
-pub use hyperlight_host::sandbox::SandboxConfiguration;
+pub use hyperlight_host::sandbox::{SandboxConfiguration, SandboxStatus};
 /// Module resolution and loading functionality.
 pub use resolver::{FileMetadata, FileSystem, FileSystemEmbedded, ResolveError};
 /// Execution statistics from the most recent guest function call.

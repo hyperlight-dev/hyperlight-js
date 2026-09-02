@@ -19,7 +19,7 @@ use std::sync::Arc;
 use hyperlight_host::hypervisor::InterruptHandle;
 use hyperlight_host::sandbox::snapshot::Snapshot;
 use hyperlight_host::HyperlightError::{self, JsonConversionFailure};
-use hyperlight_host::{MultiUseSandbox, Result};
+use hyperlight_host::{MultiUseSandbox, Result, SandboxStatus};
 use tokio::task::JoinHandle;
 use tracing::{instrument, Level};
 
@@ -193,15 +193,14 @@ impl LoadedJSSandbox {
     }
 
     /// Returns whether the sandbox is currently poisoned.
-    ///
-    /// A poisoned sandbox is in an inconsistent state due to the guest not running to completion.
-    /// This can happen when guest execution is interrupted (e.g., via `InterruptHandle::kill()`),
-    /// when the guest panics, or when memory violations occur.
-    ///
-    /// When poisoned, most operations will fail with `PoisonedSandbox` error.
-    /// Use `restore()` with a snapshot or `unload()` to recover from a poisoned state.
+    #[deprecated(since = "0.4.0", note = "use status().is_poisoned()")]
     pub fn poisoned(&self) -> bool {
-        self.inner.poisoned()
+        self.inner.status().is_poisoned()
+    }
+
+    /// Returns the sandbox lifecycle status.
+    pub fn status(&self) -> SandboxStatus {
+        self.inner.status()
     }
 
     /// Handles an event with execution monitoring.
@@ -648,7 +647,7 @@ mod tests {
 
         // Sandbox should NOT be poisoned - we never ran the handler
         assert!(
-            !loaded.poisoned(),
+            !loaded.status().is_poisoned(),
             "Sandbox should not be poisoned when monitor fails to start"
         );
     }

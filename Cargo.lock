@@ -307,9 +307,9 @@ checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "cargo-hyperlight"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5605a328ba56e38027ec2ab1d6cd490c942c3908a92cb2b36b3c775d5bb22f6"
+checksum = "c52f1c9d4b6173aefb66fdc2e3e112ddb359fe2fbdbaafe1b9ba25f7ac578b39"
 dependencies = [
  "anyhow",
  "clap",
@@ -1598,9 +1598,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-common"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "436dac5cc08da3db27de38b174a9b22498ab6443aaffd83b97f66a5d2f1d74cc"
+checksum = "3ad5576d6ef947dc2822c2f5038ddff8325c158ddef4cbabf9d0b125294cdb0f"
 dependencies = [
  "anyhow",
  "bitflags 2.13.0",
@@ -1618,9 +1618,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cb2e6548e2b837400a7b27a5ed6a6570c28801253e6ec80959700dd63925c40"
+checksum = "816f673f3f8ef6d5703796bf92927b85177ad1baac6f391551a88451a9e46a7e"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -1632,9 +1632,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-bin"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdeccde6490e76aefe2e8ca17e1a225d2da3338f020f17533b8ee0cee7cf9a11"
+checksum = "9c2d0ea739be89822992706da9dc6812ce359b654b328efd6141ba1549751907"
 dependencies = [
  "buddy_system_allocator",
  "flatbuffers",
@@ -1651,21 +1651,21 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-macro"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "620ed77c5c07027c63a6a741da8a9a2462a56e660691da715c3700cb281a3d23"
+checksum = "875d03a9e4d302f29d8feb57faff937f80c6f69ec9d31b32f41c41721144e25d"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.118",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "hyperlight-guest-tracing"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8b39160c2001db5c79916d946d04a601e4e1f2827e2c785d477b31e48f5e514"
+checksum = "8f43a3d5d3fa245ce0fccee8a48ad7d94ec479e0898fc8f91fd440a1d65830c6"
 dependencies = [
  "hyperlight-common",
  "spin 0.12.2",
@@ -1675,14 +1675,16 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-host"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef3edc7875e70a3b5cc291a17f78cfc352e24c9a665a5a1bbdbc46ada3df43b5"
+checksum = "d85dcf5ae7a578e1b09bdeb76cc3b3ca8e6e57d6395d2f57204aec45c1bbbde9"
 dependencies = [
  "anyhow",
+ "bindgen",
  "bitflags 2.13.0",
  "blake3",
  "bytemuck",
+ "cc",
  "cfg-if",
  "cfg_aliases",
  "chrono",
@@ -1706,6 +1708,7 @@ dependencies = [
  "oci-spec",
  "opentelemetry",
  "page_size",
+ "parking_lot",
  "rand 0.10.2",
  "rust-embed",
  "serde",
@@ -1727,7 +1730,7 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-js"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "cargo-hyperlight",
@@ -1771,11 +1774,11 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-js-common"
-version = "0.3.3"
+version = "0.4.0"
 
 [[package]]
 name = "hyperlight-js-runtime"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1801,9 +1804,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-libc"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c258315b4c0ec4aae172c4ff31b34590559fb6699c144f779be2246672b3147"
+checksum = "108dd0e7335821a2ef0dfa375c08236c3302a117045822e2aa68c64147f8e895"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -2029,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "js-host-api"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "arc-swap",
  "hyperlight-js",
@@ -3742,7 +3745,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

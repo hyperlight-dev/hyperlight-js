@@ -141,7 +141,8 @@ A sandbox with handlers loaded, ready to process events.
 
 **Properties:**
 - `interruptHandle` → `InterruptHandle` — Gets a handle to interrupt/kill handler execution (getter, not a method)
-- `poisoned` → `boolean` — Whether the sandbox is in a poisoned (inconsistent) state
+- `status` → `SandboxStatus` — Lifecycle status: `ready`, `poisoned`, or `unrecoverable`
+- `poisoned` → `boolean` — Deprecated compatibility alias for `status === 'poisoned'`
 - `lastCallStats` → `CallStats | null` — Execution statistics from the most recent `callHandler()` call (see [CallStats](#callstats-) below)
 
 ```javascript
@@ -288,7 +289,7 @@ const snapshot = await loaded.snapshot();
 // ... handler gets killed, sandbox is poisoned ...
 
 await loaded.restore(snapshot);
-console.log(loaded.poisoned); // false — back to normal
+console.log(loaded.status); // "ready"
 ```
 
 ### Error Codes

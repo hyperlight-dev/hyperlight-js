@@ -25,12 +25,9 @@ use serde_json::json;
 
 #[test]
 fn absent_or_empty_overrides_select_default_source() {
+    assert_eq!(runtime_source(None, None).unwrap(), RuntimeSource::Default);
     assert_eq!(
-        runtime_source(None, None, None).unwrap(),
-        RuntimeSource::Default
-    );
-    assert_eq!(
-        runtime_source(Some(" ".into()), Some("".into()), Some(" ".into())).unwrap(),
+        runtime_source(Some(" ".into()), Some("".into())).unwrap(),
         RuntimeSource::Default
     );
 }
@@ -38,22 +35,20 @@ fn absent_or_empty_overrides_select_default_source() {
 #[test]
 fn removed_binary_override_is_rejected_instead_of_silently_using_another_runtime() {
     for manifest in [None, Some("Cargo.toml".into())] {
-        let error = runtime_source(Some("guest".into()), manifest, None).unwrap_err();
+        let error = runtime_source(Some("guest".into()), manifest).unwrap_err();
         assert!(error.contains("HYPERLIGHT_JS_RUNTIME_PATH is no longer supported"));
         assert!(error.contains("HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH"));
     }
 }
 
 #[test]
-fn manifest_selects_custom_source_and_binary_requires_manifest() {
+fn manifest_selects_custom_source() {
     assert_eq!(
-        runtime_source(None, Some("Cargo.toml".into()), Some("custom".into())).unwrap(),
+        runtime_source(None, Some("Cargo.toml".into())).unwrap(),
         RuntimeSource::Manifest {
-            path: "Cargo.toml".into(),
-            bin: Some("custom".into())
+            path: "Cargo.toml".into()
         }
     );
-    assert!(runtime_source(None, None, Some("custom".into())).is_err());
 }
 
 #[test]
@@ -64,20 +59,25 @@ fn binary_selection_ignores_libraries_and_build_scripts() {
         {"name": "different-from-package-name", "kind": ["bin"]}
     ]});
     assert_eq!(
-        select_binary(&package, None).unwrap(),
+        select_binary(&package).unwrap(),
         "different-from-package-name"
     );
-    assert!(select_binary(&package, Some("missing")).is_err());
 }
 
 #[test]
-fn ambiguous_binaries_require_selection() {
-    let mut package = json!({"targets": [
-        {"name": "one", "kind": ["bin"]}, {"name": "two", "kind": ["bin"]}
-    ]});
-    assert!(select_binary(&package, None).is_err());
-    package["default_run"] = json!("two");
-    assert_eq!(select_binary(&package, None).unwrap(), "two");
-    assert_eq!(select_binary(&package, Some("one")).unwrap(), "one");
-    assert!(select_binary(&json!({"targets": []}), None).is_err());
+fn runtime_requires_exactly_one_binary() {
+    for package in [
+        json!({"targets": [{"name": "runtime_lib", "kind": ["lib"]}]}),
+        json!({"targets": [
+            {"name": "one", "kind": ["bin"]}, {"name": "two", "kind": ["bin"]}
+        ]}),
+        json!({"default_run": "two", "targets": [
+            {"name": "one", "kind": ["bin"]}, {"name": "two", "kind": ["bin"]}
+        ]}),
+    ] {
+        assert_eq!(
+            select_binary(&package).unwrap_err(),
+            "Runtime manifest must define exactly one binary target"
+        );
+    }
 }

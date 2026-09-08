@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#![allow(clippy::disallowed_macros)] // allow assert!(..)
 
 // build.rs
 
@@ -26,57 +25,17 @@ limitations under the License.
 // The source crate for the hyperlight-js-runtime binary is obtained through cargo metadata, and obtaining the manifest_path
 // of the hyperlight-js-runtime dependency.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use serde_json::Value;
 
+mod runtime_build;
+use runtime_build::{runtime_source, select_binary, RuntimeSource};
+
 // cargo-hyperlight supplies libc headers. QuickJS still needs threading disabled
 // and the monotonic clock definitions enabled.
 const QUICKJS_CFLAGS: &str = "-D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK";
-
-#[derive(Debug, PartialEq)]
-pub(crate) enum RuntimeSource {
-    Default,
-    Manifest { path: PathBuf },
-}
-
-pub(crate) fn runtime_source(
-    removed_binary_override: Option<OsString>,
-    manifest: Option<OsString>,
-) -> Result<RuntimeSource, String> {
-    let nonempty = |value: &OsString| !value.to_string_lossy().trim().is_empty();
-    if removed_binary_override.filter(nonempty).is_some() {
-        return Err(
-            "HYPERLIGHT_JS_RUNTIME_PATH is no longer supported; unset it and set HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH to your custom runtime's Cargo.toml"
-                .into(),
-        );
-    }
-    if let Some(path) = manifest.filter(nonempty) {
-        return Ok(RuntimeSource::Manifest { path: path.into() });
-    }
-    Ok(RuntimeSource::Default)
-}
-
-pub(crate) fn select_binary(package: &Value) -> Result<String, String> {
-    let targets = package["targets"]
-        .as_array()
-        .ok_or("Guest package has no targets in cargo metadata")?;
-    let binaries: Vec<&str> = targets
-        .iter()
-        .filter(|target| {
-            target["kind"]
-                .as_array()
-                .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
-        })
-        .filter_map(|target| target["name"].as_str())
-        .collect();
-    match binaries.as_slice() {
-        [name] => Ok((*name).to_owned()),
-        _ => Err("Runtime manifest must define exactly one binary target".into()),
-    }
-}
 
 fn main() {
     if env::var("DOCS_RS").is_ok() {
@@ -307,6 +266,7 @@ fn bundle_runtime() {
 
     fs::write(dest_path, contents).unwrap();
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=runtime_build.rs");
 }
 
 fn bundle_dummy() {

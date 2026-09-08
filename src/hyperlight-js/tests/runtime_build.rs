@@ -20,8 +20,36 @@ limitations under the License.
 #[path = "../build.rs"]
 mod build_script;
 
-use build_script::{runtime_source, select_binary, RuntimeSource};
+use build_script::{
+    resolve_js_runtime_manifest_path, runtime_source, select_binary, RuntimeSource,
+};
 use serde_json::json;
+
+#[test]
+fn default_runtime_reuses_host_metadata_for_manifest_and_binary_selection() {
+    let metadata = json!({"packages": [
+        {"name": "host", "manifest_path": "host/Cargo.toml"},
+        {
+            "name": "hyperlight-js-runtime",
+            "manifest_path": "runtime/Cargo.toml",
+            "targets": [{"name": "hyperlight-js-runtime", "kind": ["bin"]}]
+        }
+    ]});
+    assert_eq!(
+        resolve_js_runtime_manifest_path(&metadata),
+        std::path::PathBuf::from("runtime/Cargo.toml")
+    );
+    assert_eq!(
+        select_binary(&metadata["packages"][1], None).unwrap(),
+        "hyperlight-js-runtime"
+    );
+}
+
+#[test]
+#[should_panic(expected = "hyperlight-js-runtime crate not found in cargo metadata")]
+fn missing_default_runtime_is_reported() {
+    resolve_js_runtime_manifest_path(&json!({"packages": []}));
+}
 
 #[test]
 fn default_and_empty_overrides_preserve_embedded_runtime() {

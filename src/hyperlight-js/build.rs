@@ -129,11 +129,15 @@ fn main() {
     bundle_runtime();
 }
 
-fn resolve_js_runtime_manifest_path() -> PathBuf {
-    // Use cargo metadata to obtain information about our dependencies
+fn read_cargo_metadata(manifest_path: Option<&Path>) -> Value {
+    // Inspect the custom guest when supplied, otherwise the host dependency graph.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let output = std::process::Command::new(&cargo)
-        .args(["metadata", "--format-version=1"])
+    let mut command = std::process::Command::new(&cargo);
+    command.args(["metadata", "--format-version=1"]);
+    if let Some(path) = manifest_path {
+        command.arg("--manifest-path").arg(path);
+    }
+    let output = command
         .output()
         .expect("Cargo is not installed or not found in PATH");
 
@@ -143,44 +147,24 @@ fn resolve_js_runtime_manifest_path() -> PathBuf {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Cargo metadata output is in JSON format, so we use serde_json to parse it.
-    // The output will look like this:
-    // {
-    //     "packages": [
-    //         ...,
-    //         {
-    //             "name": "hyperlight-js-runtime",
-    //             "manifest_path": "/path/to/hyperlight-js-runtime/Cargo.toml",
-    //             ...
-    //         },
-    //         ...
-    //     ],
-    //     ...
-    // }
-    // We only care about the name and manifest_path fields of the packages, so we
-    // define a minimal struct to deserialize the output.
-    #[derive(serde::Deserialize)]
-    struct CargoMetadata {
-        packages: Vec<CargoPackage>,
-    }
+    serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata")
+}
 
-    #[derive(serde::Deserialize)]
-    struct CargoPackage {
-        name: String,
-        manifest_path: PathBuf,
-    }
-
-    let metadata: CargoMetadata =
-        serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata");
-
-    // find the package entry for hyperlight-js-runtime and get its manifest_path
-    let hyperlight_js_runtime = metadata
-        .packages
-        .into_iter()
-        .find(|pkg| pkg.name == "hyperlight-js-runtime")
+pub(crate) fn resolve_js_runtime_manifest_path(metadata: &Value) -> PathBuf {
+    // Reuse the host metadata to locate the default runtime. The same response
+    // also supplies binary targets and local dependencies for the guest build.
+    let hyperlight_js_runtime = metadata["packages"]
+        .as_array()
+        .expect("Missing packages in cargo metadata")
+        .iter()
+        .find(|pkg| pkg["name"] == "hyperlight-js-runtime")
         .expect("hyperlight-js-runtime crate not found in cargo metadata");
 
-    hyperlight_js_runtime.manifest_path
+    PathBuf::from(
+        hyperlight_js_runtime["manifest_path"]
+            .as_str()
+            .expect("Missing hyperlight-js-runtime manifest path in cargo metadata"),
+    )
 }
 
 fn find_target_dir() -> PathBuf {
@@ -234,8 +218,9 @@ fn build_js_runtime(custom: Option<(PathBuf, Option<String>)>) -> PathBuf {
     let target_dir = target_dir.join("hyperlight-js-runtime");
 
     let is_custom = custom.is_some();
+    let metadata = read_cargo_metadata(custom.as_ref().map(|(path, _)| path.as_path()));
     let (manifest_path, requested_bin) =
-        custom.unwrap_or_else(|| (resolve_js_runtime_manifest_path(), None));
+        custom.unwrap_or_else(|| (resolve_js_runtime_manifest_path(&metadata), None));
     let manifest_path = manifest_path
         .canonicalize()
         .expect("JS runtime manifest must point to an existing Cargo.toml");
@@ -249,20 +234,6 @@ fn build_js_runtime(custom: Option<(PathBuf, Option<String>)>) -> PathBuf {
         .parent()
         .expect("expected hyperlight-js-runtime manifest path to have a parent directory");
 
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let output = std::process::Command::new(cargo)
-        .args(["metadata", "--format-version=1"])
-        .arg("--manifest-path")
-        .arg(&manifest_path)
-        .output()
-        .expect("Failed to inspect the JS runtime manifest");
-    assert!(
-        output.status.success(),
-        "Failed to inspect the JS runtime manifest: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("Invalid cargo metadata");
     let packages = metadata["packages"].as_array().expect("Missing packages");
     let package = packages
         .iter()

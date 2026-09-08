@@ -134,7 +134,7 @@ fn read_cargo_metadata(manifest_path: Option<&Path>) -> Value {
     serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata")
 }
 
-pub(crate) fn resolve_js_runtime_manifest_path(metadata: &Value) -> PathBuf {
+fn resolve_js_runtime_manifest_path(metadata: &Value) -> PathBuf {
     // Reuse the host metadata to locate the default runtime. The same response
     // also supplies binary targets and local dependencies for the guest build.
     let hyperlight_js_runtime = metadata["packages"]

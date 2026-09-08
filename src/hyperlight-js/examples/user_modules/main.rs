@@ -28,8 +28,6 @@ limitations under the License.
 //! cargo run --example user_modules
 //! ```
 
-#![allow(clippy::disallowed_macros)]
-
 use anyhow::Result;
 use hyperlight_js::{SandboxBuilder, Script};
 

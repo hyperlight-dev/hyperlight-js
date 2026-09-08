@@ -18,9 +18,15 @@ code that JavaScript handlers can `import` — without forking the runtime.
 2. **`native_modules!` macro** — registers custom modules into a global
    registry. The runtime's `NativeModuleLoader` checks custom modules
    first, then falls back to built-ins (io, crypto, console, require).
-3. **`HYPERLIGHT_JS_RUNTIME_PATH`** — a build-time env var that tells
-   `hyperlight-js` to embed your custom runtime binary instead of the
-   default one.
+3. **Build with `cargo hyperlight`** — it discovers Hyperlight's libc
+   headers and configures the guest compiler and sysroot.
+4. **Build and embed with the host** — point `hyperlight-js` at your custom
+   runtime manifest. Its build script builds the guest and embeds it at
+   compile time.
+
+Custom guests must use a compatible `hyperlight-js-runtime` and Hyperlight
+version with the host library/addon. Pin the guest and host to the same
+release (or git revision).
 
 ## Quick Start
 
@@ -64,51 +70,41 @@ mod math {
 hyperlight_js_runtime::native_modules! {
     "math" => js_math,
 }
+
+hyperlight_js_runtime::custom_globals! {}
 ```
 
-That's all the Rust you write for the Hyperlight guest. The macro generates
+That's the guest application code. The macro generates
 an `init_native_modules()` function that the `NativeModuleLoader` calls
 automatically on first use. Built-in modules are inherited. The lib provides
-all hyperlight guest infrastructure (entry point, host function dispatch,
-libc stubs) — no copying files or build scripts needed.
+the guest entry point and host function dispatch. Invoke both registration
+macros, even when one is empty.
 
 ### 3. Build and embed in hyperlight-js
 
-The hyperlight target has no libc, so QuickJS needs stub headers from
-`hyperlight-js-runtime/include/` and `-D__wasi__=1` to disable pthreads.
-Set `HYPERLIGHT_CFLAGS` before building — the one-liner below uses
-`cargo metadata` to resolve the include path from your dependency tree:
+Set `HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH` to the custom crate's **absolute**
+`Cargo.toml` path, then build your host project normally:
 
 ```bash
-# Resolve CFLAGS from hyperlight-js-runtime's include/ directory
-export HYPERLIGHT_CFLAGS=$(node -e "
-  var m=JSON.parse(require('child_process').execSync(
-    'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
-    {encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:20*1024*1024}));
-  var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
-  if(p)console.log('-I'+require('path').join(
-    require('path').dirname(p.manifest_path),'include')+' -D__wasi__=1');
-")
-
-# Build the custom runtime for the hyperlight target
-cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml --release
-
-# Tell hyperlight-js to embed the custom runtime (not the default one).
-# The guest target matches the host architecture: x86_64-hyperlight-none on
-# x86_64, aarch64-hyperlight-none on Apple Silicon and other aarch64 hosts.
-# Note: macOS `uname -m` prints `arm64`, so normalise it to Rust's `aarch64`.
-GUEST_ARCH=$(uname -m | sed 's/^arm64$/aarch64/')
-export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/${GUEST_ARCH}-hyperlight-none/release/my-custom-runtime
-
-# Rebuild hyperlight-js so the embedded runtime is updated
-cargo build -p hyperlight-js --release
+export HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH="$(realpath my-custom-runtime/Cargo.toml)"
+cargo build --release
 ```
 
-### 4. Use from the host
+PowerShell:
 
-The host-side code is **identical** to any other `hyperlight-js` usage.
-Custom native modules are transparent — they're baked into the guest
-binary. Your handlers just `import` from them:
+```powershell
+$env:HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH = (Resolve-Path .\my-custom-runtime\Cargo.toml).Path
+cargo build --release
+```
+
+This builds your custom runtime with `cargo-hyperlight` and embeds it in the
+host. No additional compiler flags or include paths need to be configured.
+Re-run the host build after changing your runtime.
+
+### 4. Use from the Rust host
+
+The host-side API is unchanged. Your custom runtime is already embedded,
+and handlers simply import your modules:
 
 ```rust
 use hyperlight_js::{SandboxBuilder, Script};
@@ -149,7 +145,9 @@ A no-op `Host` is all that's needed — it only gets called for `.js` file
 imports, which native modules don't use:
 
 ```rust
+#[cfg(not(hyperlight))]
 struct NoOpHost;
+#[cfg(not(hyperlight))]
 impl hyperlight_js_runtime::host::Host for NoOpHost {
     fn resolve_module(&self, _base: String, name: String) -> anyhow::Result<String> {
         anyhow::bail!("Module '{name}' not found")
@@ -159,6 +157,7 @@ impl hyperlight_js_runtime::host::Host for NoOpHost {
     }
 }
 
+#[cfg(not(hyperlight))]
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let script = std::fs::read_to_string(&args[1])?;
@@ -189,98 +188,66 @@ cargo run -- handler.js '{"a":6,"b":7}'
 See the [extended_runtime fixture](../src/hyperlight-js-runtime/tests/fixtures/extended_runtime/)
 for a working example with end-to-end tests.
 
-Run `just test-native-modules` to build the fixture for the Hyperlight
-target and run the full integration tests.
+Run `just test-native-modules` to build and embed the fixture.
+These VM tests cover custom modules, custom globals, built-ins, and the
+host-backed clock. They require a supported hypervisor. Build selection
+regressions are also covered by
+`cargo test -p hyperlight-js --test runtime_build`.
 
 ## Using js-host-api from a Downstream Node.js Project
 
-If your downstream project depends on `@hyperlight/js-host-api` (the
-Node.js NAPI addon) and uses a custom runtime, you **cannot** use a
-published version of the addon — the published binary has the default
-runtime baked in via `include_bytes!()`. You need to build the NAPI
-addon from source with your custom runtime embedded.
+**If you use a custom runtime, you must build the Node.js addon from source
+instead of using the published `@hyperlight-dev/js-host-api` binary.**
 
-### Why not just `npm install`?
+### Why the published addon cannot be used
 
-The `js-host-api` NAPI addon links against the `hyperlight-js` Rust crate,
-which embeds the runtime binary at compile time. A published npm package
-would contain a `.node` binary with the **default** runtime — your custom
-native modules wouldn't be present.
+The NAPI addon links against the `hyperlight-js` Rust crate, which embeds
+the guest runtime using `include_bytes!()` at compile time. The published
+package's `.node` binary therefore already contains the **default** runtime.
+Your custom native modules are not in that binary.
 
-### The pattern: reuse Cargo's git checkout
+Running `npm install` to get the published package does not rebuild it with
+your guest. Neither building your custom runtime separately nor setting
+`HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH` when starting Node.js changes the
+runtime inside an already-compiled addon. That variable is read during the
+Rust host build, not when JavaScript creates a sandbox.
 
-Your custom runtime crate already has a Cargo dependency on
-`hyperlight-js-runtime`, which causes Cargo to clone the full
-`hyperlight-js` workspace into `~/.cargo/git/checkouts/`. The
-`js-host-api` NAPI source is included in that checkout — no separate
-git clone needed.
+### Build the addon with your custom runtime
 
-#### 1. Discover the checkout path
+Use a `hyperlight-js` checkout matching the release or git revision used by
+your custom runtime. From the checkout root, set the custom manifest's
+absolute path and build the addon:
 
-Use `cargo metadata` to find where Cargo placed the hyperlight-js
-workspace:
-
-```bash
-HYPERLIGHT_DIR=$(node -e "
-  var m=JSON.parse(require('child_process').execSync(
-    'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
-    {encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:20*1024*1024}));
-  var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
-  if(p)console.log(require('path').resolve(
-    require('path').dirname(p.manifest_path),'..','..'));
-")
-echo "$HYPERLIGHT_DIR"
-# e.g. /home/you/.cargo/git/checkouts/hyperlight-js-abc123/def456
+```powershell
+$env:HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH = (Resolve-Path C:\path\to\my-custom-runtime\Cargo.toml).Path
+just build-js-host-api release
 ```
 
-#### 2. Build the NAPI addon with your custom runtime
+On Bash, use `export HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH=/absolute/path/to/my-custom-runtime/Cargo.toml`
+before the same `just` command. This builds and embeds the custom guest as
+part of the addon build.
 
-```bash
-# Set HYPERLIGHT_CFLAGS for the guest build
-export HYPERLIGHT_CFLAGS=$(node -e "
-  var m=JSON.parse(require('child_process').execSync(
-    'cargo metadata --format-version 1 --manifest-path my-custom-runtime/Cargo.toml',
-    {encoding:'utf8',stdio:['pipe','pipe','pipe'],maxBuffer:20*1024*1024}));
-  var p=m.packages.find(function(p){return p.name==='hyperlight-js-runtime'});
-  if(p)console.log('-I'+require('path').join(
-    require('path').dirname(p.manifest_path),'include')+' -D__wasi__=1');
-")
+### Use the locally built addon
 
-# Build your custom runtime for the hyperlight target
-cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml --release
-
-# Point hyperlight-js at your custom runtime binary (the guest target matches
-# the host architecture — aarch64-hyperlight-none on Apple Silicon).
-# Note: macOS `uname -m` prints `arm64`, so normalise it to Rust's `aarch64`.
-GUEST_ARCH=$(uname -m | sed 's/^arm64$/aarch64/')
-export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/${GUEST_ARCH}-hyperlight-none/release/my-custom-runtime
-
-# Clean stale builds so build.rs re-embeds the runtime
-cd "${HYPERLIGHT_DIR}/src/hyperlight-js" && cargo clean -p hyperlight-js
-
-# Build the NAPI addon from the Cargo checkout
-cd "${HYPERLIGHT_DIR}" && just build release
-```
-
-#### 3. Symlink for npm dependency resolution
-
-Create a symlink so npm can resolve the addon via a stable path:
-
-```bash
-mkdir -p deps
-ln -sfn "${HYPERLIGHT_DIR}/src/js-host-api" deps/js-host-api
-```
-
-In your package.json, point to js-host-api via the symlink:
+Point your downstream project's npm dependency at the built checkout's
+`src/js-host-api` directory, rather than a published version:
 
 ```json
 {
   "dependencies": {
-    "@hyperlight/js-host-api": "file:deps/js-host-api"
+    "@hyperlight-dev/js-host-api": "file:../hyperlight-js/src/js-host-api"
   }
 }
 ```
-Make sure to add `deps` to your `.gitignore` since it's a symlink to a local Cargo checkout.
+
+Adjust the path for your layout, then run `npm install` in the downstream
+project to update its dependency and lockfile. The application must use this
+locally built addon, not a previously installed published copy.
+
+The JavaScript API is unchanged: use the usual `SandboxBuilder`, and handlers
+can import the custom modules embedded in your guest. After changing the
+custom runtime, rebuild the addon and refresh the downstream installation
+before restarting the application.
 
 ## API Reference
 

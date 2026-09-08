@@ -39,13 +39,12 @@ const QUICKJS_CFLAGS: &str = "-D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK";
 #[derive(Debug, PartialEq)]
 pub(crate) enum RuntimeSource {
     Default,
-    Manifest { path: PathBuf, bin: Option<String> },
+    Manifest { path: PathBuf },
 }
 
 pub(crate) fn runtime_source(
     removed_binary_override: Option<OsString>,
     manifest: Option<OsString>,
-    bin: Option<String>,
 ) -> Result<RuntimeSource, String> {
     let nonempty = |value: &OsString| !value.to_string_lossy().trim().is_empty();
     if removed_binary_override.filter(nonempty).is_some() {
@@ -54,22 +53,13 @@ pub(crate) fn runtime_source(
                 .into(),
         );
     }
-    let bin = bin.filter(|value| !value.trim().is_empty());
     if let Some(path) = manifest.filter(nonempty) {
-        return Ok(RuntimeSource::Manifest {
-            path: path.into(),
-            bin,
-        });
-    }
-    if bin.is_some() {
-        return Err(
-            "HYPERLIGHT_JS_RUNTIME_BIN requires HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH".into(),
-        );
+        return Ok(RuntimeSource::Manifest { path: path.into() });
     }
     Ok(RuntimeSource::Default)
 }
 
-pub(crate) fn select_binary(package: &Value, requested: Option<&str>) -> Result<String, String> {
+pub(crate) fn select_binary(package: &Value) -> Result<String, String> {
     let targets = package["targets"]
         .as_array()
         .ok_or("Guest package has no targets in cargo metadata")?;
@@ -82,19 +72,9 @@ pub(crate) fn select_binary(package: &Value, requested: Option<&str>) -> Result<
         })
         .filter_map(|target| target["name"].as_str())
         .collect();
-    if let Some(name) = requested.or_else(|| package["default_run"].as_str()) {
-        if binaries.contains(&name) {
-            return Ok(name.to_owned());
-        }
-        return Err(format!("Guest package has no binary target named '{name}'"));
-    }
     match binaries.as_slice() {
         [name] => Ok((*name).to_owned()),
-        [] => Err("Custom runtime manifest must define a binary target".into()),
-        _ => Err(
-            "Custom runtime has multiple binaries; set HYPERLIGHT_JS_RUNTIME_BIN or package.default-run"
-                .into(),
-        ),
+        _ => Err("Runtime manifest must define exactly one binary target".into()),
     }
 }
 
@@ -175,7 +155,7 @@ fn find_target_dir() -> PathBuf {
     target_dir.to_path_buf()
 }
 
-fn build_js_runtime(custom: Option<(PathBuf, Option<String>)>) -> PathBuf {
+fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
     let profile = env::var_os("PROFILE").unwrap();
 
     // Get the current target directory.
@@ -185,9 +165,8 @@ fn build_js_runtime(custom: Option<(PathBuf, Option<String>)>) -> PathBuf {
     let target_dir = target_dir.join("hyperlight-js-runtime");
 
     let is_custom = custom.is_some();
-    let metadata = read_cargo_metadata(custom.as_ref().map(|(path, _)| path.as_path()));
-    let (manifest_path, requested_bin) =
-        custom.unwrap_or_else(|| (resolve_js_runtime_manifest_path(&metadata), None));
+    let metadata = read_cargo_metadata(custom.as_deref());
+    let manifest_path = custom.unwrap_or_else(|| resolve_js_runtime_manifest_path(&metadata));
     let manifest_path = manifest_path
         .canonicalize()
         .expect("JS runtime manifest must point to an existing Cargo.toml");
@@ -212,8 +191,7 @@ fn build_js_runtime(custom: Option<(PathBuf, Option<String>)>) -> PathBuf {
                 == Some(&manifest_path)
         })
         .expect("Custom runtime manifest must identify a package, not a virtual workspace");
-    let bin =
-        select_binary(package, requested_bin.as_deref()).unwrap_or_else(|error| panic!("{error}"));
+    let bin = select_binary(package).unwrap_or_else(|error| panic!("{error}"));
 
     // Track local dependencies too, including native modules outside the guest crate.
     // Do not watch entire crate directories: they may contain the nested build output.
@@ -308,7 +286,6 @@ fn bundle_runtime() {
     // Always rerun if the environment variable changes, even if it's currently unset.
     println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH");
     println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH");
-    println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_BIN");
 
     // Relative manifest paths resolve from this build script's working directory
     // (the hyperlight-js crate root), not the invoking host project. Prefer an
@@ -316,11 +293,10 @@ fn bundle_runtime() {
     let source = runtime_source(
         env::var_os("HYPERLIGHT_JS_RUNTIME_PATH"),
         env::var_os("HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH"),
-        env::var("HYPERLIGHT_JS_RUNTIME_BIN").ok(),
     )
     .unwrap_or_else(|error| panic!("{error}"));
     let js_runtime_resource = match source {
-        RuntimeSource::Manifest { path, bin } => build_js_runtime(Some((path, bin))),
+        RuntimeSource::Manifest { path } => build_js_runtime(Some(path)),
         RuntimeSource::Default => build_js_runtime(None),
     };
 

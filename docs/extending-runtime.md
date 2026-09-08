@@ -99,6 +99,7 @@ cargo build --release
 
 This builds your custom runtime with `cargo-hyperlight` and embeds it in the
 host. No additional compiler flags or include paths need to be configured.
+The custom runtime manifest must define exactly one binary target.
 Re-run the host build after changing your runtime.
 
 ### 4. Use from the Rust host

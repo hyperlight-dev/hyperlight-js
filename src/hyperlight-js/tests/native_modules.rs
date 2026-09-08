@@ -17,8 +17,8 @@ limitations under the License.
 //! Integration tests for custom native modules in the Hyperlight VM.
 //!
 //! These tests require a custom runtime (the `extended_runtime` fixture)
-//! built for `x86_64-hyperlight-none` and embedded in `hyperlight-js` via
-//! `HYPERLIGHT_JS_RUNTIME_PATH`. They are marked `#[ignore]` because they
+//! built and embedded in `hyperlight-js` via
+//! `HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH`. They are marked `#[ignore]` because they
 //! cannot run with a normal `cargo test`.
 //!
 //! To run them, use:
@@ -26,9 +26,7 @@ limitations under the License.
 //! just test-native-modules
 //! ```
 //!
-//! This recipe builds the fixture with `cargo hyperlight build`, sets the
-//! env var, rebuilds `hyperlight-js` with the custom guest, and runs these
-//! tests.
+//! This recipe builds the custom runtime automatically during the host build.
 
 #![allow(clippy::disallowed_macros)]
 
@@ -134,4 +132,39 @@ fn console_log_works_with_custom_native_module() {
         .unwrap();
 
     assert_eq!(result, "54");
+}
+
+#[test]
+#[ignore]
+fn custom_globals_and_host_clock_work_in_vm() {
+    let mut sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    sandbox
+        .add_handler(
+            "globals",
+            Script::from_content(
+                "export function handler() { return { custom: CUSTOM_GLOBAL_TEST, now: Date.now() }; }",
+            ),
+        )
+        .unwrap();
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let result = sandbox
+        .get_loaded_sandbox()
+        .unwrap()
+        .handle_event("globals", "{}".to_owned(), None)
+        .unwrap();
+    let after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["custom"], 42);
+    let now = parsed["now"].as_u64().unwrap() as u128;
+    assert!((before..=after).contains(&now));
 }

@@ -30,8 +30,6 @@ limitations under the License.
 //! Or via Just:
 //!   just run-examples
 
-#![allow(clippy::disallowed_macros)]
-
 use std::time::Duration;
 
 use anyhow::Result;

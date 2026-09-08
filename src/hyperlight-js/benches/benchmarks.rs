@@ -15,7 +15,6 @@ limitations under the License.
 */
 
 // this is benchmarks, assert macros are fine
-#![allow(clippy::disallowed_macros)]
 
 use std::time::{Duration, Instant};
 

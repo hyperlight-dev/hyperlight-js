@@ -18,8 +18,6 @@ limitations under the License.
 //! These tests exercise the full lifecycle: host-side registration → guest-side
 //! lazy compilation → handler import → execution.
 
-#![allow(clippy::disallowed_macros)]
-
 use hyperlight_js::{SandboxBuilder, Script};
 
 // ── Basic import ─────────────────────────────────────────────────────

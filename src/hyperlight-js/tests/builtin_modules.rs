@@ -15,8 +15,6 @@ limitations under the License.
 */
 //! Tests for the built-in (native) modules
 
-#![allow(clippy::disallowed_macros)]
-
 use std::collections::{HashMap, HashSet};
 
 use hyperlight_js::{SandboxBuilder, Script};

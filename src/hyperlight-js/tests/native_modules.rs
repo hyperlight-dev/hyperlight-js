@@ -28,8 +28,6 @@ limitations under the License.
 //!
 //! This recipe builds the custom runtime automatically during the host build.
 
-#![allow(clippy::disallowed_macros)]
-
 use hyperlight_js::{SandboxBuilder, Script};
 
 /// Test that a custom native module ("math") can be imported and used

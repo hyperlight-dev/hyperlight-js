@@ -25,21 +25,12 @@ pub(crate) enum RuntimeSource {
     Manifest { path: PathBuf },
 }
 
-pub(crate) fn runtime_source(
-    removed_binary_override: Option<OsString>,
-    manifest: Option<OsString>,
-) -> Result<RuntimeSource, String> {
+pub(crate) fn runtime_source(manifest: Option<OsString>) -> RuntimeSource {
     let nonempty = |value: &OsString| !value.to_string_lossy().trim().is_empty();
-    if removed_binary_override.filter(nonempty).is_some() {
-        return Err(
-            "HYPERLIGHT_JS_RUNTIME_PATH is no longer supported; unset it and set HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH to your custom runtime's Cargo.toml"
-                .into(),
-        );
-    }
     if let Some(path) = manifest.filter(nonempty) {
-        return Ok(RuntimeSource::Manifest { path: path.into() });
+        return RuntimeSource::Manifest { path: path.into() };
     }
-    Ok(RuntimeSource::Default)
+    RuntimeSource::Default
 }
 
 pub(crate) fn select_binary(package: &Value) -> Result<String, String> {
@@ -68,27 +59,16 @@ mod tests {
     use super::{runtime_source, select_binary, RuntimeSource};
 
     #[test]
-    fn absent_or_empty_overrides_select_default_source() {
-        assert_eq!(runtime_source(None, None).unwrap(), RuntimeSource::Default);
-        assert_eq!(
-            runtime_source(Some(" ".into()), Some("".into())).unwrap(),
-            RuntimeSource::Default
-        );
-    }
-
-    #[test]
-    fn removed_binary_override_is_rejected_instead_of_silently_using_another_runtime() {
-        for manifest in [None, Some("Cargo.toml".into())] {
-            let error = runtime_source(Some("guest".into()), manifest).unwrap_err();
-            assert!(error.contains("HYPERLIGHT_JS_RUNTIME_PATH is no longer supported"));
-            assert!(error.contains("HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH"));
+    fn absent_or_empty_manifest_selects_default_source() {
+        for manifest in [None, Some("".into()), Some(" ".into())] {
+            assert_eq!(runtime_source(manifest), RuntimeSource::Default);
         }
     }
 
     #[test]
     fn manifest_selects_custom_source() {
         assert_eq!(
-            runtime_source(None, Some("Cargo.toml".into())).unwrap(),
+            runtime_source(Some("Cargo.toml".into())),
             RuntimeSource::Manifest {
                 path: "Cargo.toml".into()
             }

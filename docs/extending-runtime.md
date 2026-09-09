@@ -82,6 +82,13 @@ macros, even when one is empty.
 
 ### 3. Build and embed in hyperlight-js
 
+**Breaking change:** `HYPERLIGHT_JS_RUNTIME_PATH` is no longer read.
+Prebuilt guest binary embedding is no longer supported. Replace that setting
+with `HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH` pointing to the custom crate's
+`Cargo.toml`, then rebuild the host or Node.js addon from source.
+Without a custom manifest, the default runtime is built and embedded, even
+if the old variable is still set.
+
 Set `HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH` to the custom crate's **absolute**
 `Cargo.toml` path, then build your host project normally:
 

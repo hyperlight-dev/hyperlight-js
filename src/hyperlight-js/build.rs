@@ -192,7 +192,7 @@ fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
 
     let mut cargo_cmd = cargo_hyperlight::cargo().unwrap();
     let cmd = cargo_cmd
-        .arg("build")
+        .arg(if is_custom { "rustc" } else { "build" })
         .arg("--profile")
         .arg(cargo_profile)
         .arg("--bin")
@@ -210,19 +210,18 @@ fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
         .current_dir(runtime_dir)
         .env("HYPERLIGHT_CFLAGS", QUICKJS_CFLAGS);
 
-    // Link arguments from the runtime library's build.rs do not propagate to
-    // downstream binaries. Preserve its clock override for custom guest builds.
-    if is_custom {
-        let mut flags = env::var_os("RUSTFLAGS").unwrap_or_default();
-        flags.push(" -Clink-arg=--wrap=clock_gettime");
-        cmd.env("RUSTFLAGS", flags);
-    }
     if std::env::var("CARGO_FEATURE_TRACE_GUEST").is_ok() {
         cmd.arg("--features").arg(if is_custom {
             "hyperlight-js-runtime/trace_guest"
         } else {
             "trace_guest"
         });
+    }
+    // Dependency build scripts do not pass linker arguments to this binary.
+    // Scope the clock override to the guest: RUSTFLAGS would also affect
+    // cargo-hyperlight's native sysroot wrappers.
+    if is_custom {
+        cmd.arg("--").arg("-Clink-arg=--wrap=clock_gettime");
     }
 
     cmd.status().unwrap_or_else(|e| {

@@ -8,12 +8,8 @@ latest-release:= if os() == "windows" {"$(git tag -l --sort=v:refname | select -
 PWD := replace(justfile_dir(), "\\", "/")
 
 # Set the HYPERLIGHT_CFLAGS so cargo-hyperlight applies them when building the runtimes:
-# * include the stubs required by hyperlight-js-runtime
 # * define __wasi__ as this disables threading support in quickjs
-export HYPERLIGHT_CFLAGS := \
-    "-I" + PWD + "/src/hyperlight-js-runtime/include " + \
-    "-D__wasi__=1 " + \
-    "-D_POSIX_MONOTONIC_CLOCK "
+export HYPERLIGHT_CFLAGS := "-D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK"
 
 # On Windows, use Ninja generator for CMake to avoid aws-lc-sys build issues with Visual Studio generator
 export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
@@ -160,40 +156,25 @@ test target=default-target features="": (build target)
 # Note: We exclude test_metrics (requires process isolation, already run by `test`)
 # and native_modules (requires custom guest runtime, run by `test-native-modules`)
 test-monitors target=default-target:
-    cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics --skip custom_native_module --skip builtin_modules_work_with_custom --skip console_log_works_with_custom
+    cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics --skip custom_native_module --skip builtin_modules_work_with_custom --skip console_log_works_with_custom --skip custom_globals_and_host_clock
 
 test-js-host-api target=default-target features="": (build-js-host-api target features)
     cd src/js-host-api && npm test
 
 # Test custom native modules:
 # 1. Runs the runtime crate's native_modules unit/pipeline tests (native binary)
-# 2. Builds the extended_runtime fixture for the hyperlight target
-# 3. Rebuilds hyperlight-js with the custom guest embedded via HYPERLIGHT_JS_RUNTIME_PATH
-# 4. Runs the ignored VM integration tests
-# 5. Rebuilds hyperlight-js with the default guest (unsets HYPERLIGHT_JS_RUNTIME_PATH)
-#
-# The build.rs in hyperlight-js has `cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH`
-# so setting/unsetting the env var triggers a rebuild automatically.
+# 2. Builds and embeds the fixture from its manifest and runs the VM tests
+# 3. Rebuilds hyperlight-js with the default guest
 
-# Base path to the extended runtime fixture target directory
-extended_runtime_target := replace(justfile_dir(), "\\", "/") + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target/x86_64-hyperlight-none"
-
-test-native-modules target=default-target: (ensure-tools) (check-fixture-lock) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-restore target)
+test-native-modules target=default-target: (check-fixture-lock) (_test-native-modules-unit target) (_test-native-modules-manifest target) (_test-native-modules-restore target)
 
 [private]
 _test-native-modules-unit target=default-target:
     cargo test --manifest-path=./src/hyperlight-js-runtime/Cargo.toml --test=native_modules --profile={{ if target == "debug" {"dev"} else { target } }}
 
 [private]
-_test-native-modules-build-guest target=default-target:
-    cargo hyperlight build \
-        --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
-        --profile={{ if target == "debug" {"dev"} else { target } }} \
-        --target-dir src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target
-
-[private]
-_test-native-modules-vm target=default-target:
-    {{ set-env-command }}HYPERLIGHT_JS_RUNTIME_PATH="{{extended_runtime_target}}/{{ if target == "debug" {"debug"} else { target } }}/extended-runtime" {{ if os() == "windows" { ";" } else { "&&" } }} cargo test -p hyperlight-js --test native_modules --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
+_test-native-modules-manifest target=default-target:
+    {{ set-env-command }}HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH="{{PWD}}/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml" {{ if os() == "windows" { ";" } else { "&&" } }} cargo test -p hyperlight-js --test native_modules --test runtime_build --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --nocapture
 
 [private]
 _test-native-modules-restore target=default-target:

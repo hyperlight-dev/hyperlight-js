@@ -15,8 +15,6 @@ limitations under the License.
 */
 //! Test for host modules / functions.
 
-#![allow(clippy::disallowed_macros)]
-
 use hyperlight_js::{SandboxBuilder, Script};
 
 #[test]

@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#![allow(clippy::disallowed_macros)] // allow assert!(..)
 
 // build.rs
 
@@ -28,6 +27,15 @@ limitations under the License.
 
 use std::path::{Path, PathBuf};
 use std::{env, fs};
+
+use serde_json::Value;
+
+mod runtime_build;
+use runtime_build::{runtime_source, select_binary, RuntimeSource};
+
+// cargo-hyperlight supplies libc headers. QuickJS still needs threading disabled
+// and the monotonic clock definitions enabled.
+const QUICKJS_CFLAGS: &str = "-D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK";
 
 fn main() {
     if env::var("DOCS_RS").is_ok() {
@@ -44,11 +52,15 @@ fn main() {
     bundle_runtime();
 }
 
-fn resolve_js_runtime_manifest_path() -> PathBuf {
-    // Use cargo metadata to obtain information about our dependencies
+fn read_cargo_metadata(manifest_path: Option<&Path>) -> Value {
+    // Inspect the custom guest when supplied, otherwise the host dependency graph.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let output = std::process::Command::new(&cargo)
-        .args(["metadata", "--format-version=1"])
+    let mut command = std::process::Command::new(&cargo);
+    command.args(["metadata", "--format-version=1"]);
+    if let Some(path) = manifest_path {
+        command.arg("--manifest-path").arg(path);
+    }
+    let output = command
         .output()
         .expect("Cargo is not installed or not found in PATH");
 
@@ -58,44 +70,24 @@ fn resolve_js_runtime_manifest_path() -> PathBuf {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Cargo metadata output is in JSON format, so we use serde_json to parse it.
-    // The output will look like this:
-    // {
-    //     "packages": [
-    //         ...,
-    //         {
-    //             "name": "hyperlight-js-runtime",
-    //             "manifest_path": "/path/to/hyperlight-js-runtime/Cargo.toml",
-    //             ...
-    //         },
-    //         ...
-    //     ],
-    //     ...
-    // }
-    // We only care about the name and manifest_path fields of the packages, so we
-    // define a minimal struct to deserialize the output.
-    #[derive(serde::Deserialize)]
-    struct CargoMetadata {
-        packages: Vec<CargoPackage>,
-    }
+    serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata")
+}
 
-    #[derive(serde::Deserialize)]
-    struct CargoPackage {
-        name: String,
-        manifest_path: PathBuf,
-    }
-
-    let metadata: CargoMetadata =
-        serde_json::from_slice(&output.stdout).expect("Failed to parse cargo metadata");
-
-    // find the package entry for hyperlight-js-runtime and get its manifest_path
-    let hyperlight_js_runtime = metadata
-        .packages
-        .into_iter()
-        .find(|pkg| pkg.name == "hyperlight-js-runtime")
+fn resolve_js_runtime_manifest_path(metadata: &Value) -> PathBuf {
+    // Reuse the host metadata to locate the default runtime. The same response
+    // also supplies binary targets and local dependencies for the guest build.
+    let hyperlight_js_runtime = metadata["packages"]
+        .as_array()
+        .expect("Missing packages in cargo metadata")
+        .iter()
+        .find(|pkg| pkg["name"] == "hyperlight-js-runtime")
         .expect("hyperlight-js-runtime crate not found in cargo metadata");
 
-    hyperlight_js_runtime.manifest_path
+    PathBuf::from(
+        hyperlight_js_runtime["manifest_path"]
+            .as_str()
+            .expect("Missing hyperlight-js-runtime manifest path in cargo metadata"),
+    )
 }
 
 fn find_target_dir() -> PathBuf {
@@ -122,7 +114,7 @@ fn find_target_dir() -> PathBuf {
     target_dir.to_path_buf()
 }
 
-fn build_js_runtime() -> PathBuf {
+fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
     let profile = env::var_os("PROFILE").unwrap();
 
     // Get the current target directory.
@@ -131,7 +123,12 @@ fn build_js_runtime() -> PathBuf {
     // and would result in a deadlock
     let target_dir = target_dir.join("hyperlight-js-runtime");
 
-    let manifest_path = resolve_js_runtime_manifest_path();
+    let is_custom = custom.is_some();
+    let metadata = read_cargo_metadata(custom.as_deref());
+    let manifest_path = custom.unwrap_or_else(|| resolve_js_runtime_manifest_path(&metadata));
+    let manifest_path = manifest_path
+        .canonicalize()
+        .expect("JS runtime manifest must point to an existing Cargo.toml");
 
     assert!(
         manifest_path.is_file(),
@@ -142,59 +139,96 @@ fn build_js_runtime() -> PathBuf {
         .parent()
         .expect("expected hyperlight-js-runtime manifest path to have a parent directory");
 
-    println!("cargo:rerun-if-changed={}", runtime_dir.display());
+    let packages = metadata["packages"].as_array().expect("Missing packages");
+    let package = packages
+        .iter()
+        .find(|package| {
+            package["manifest_path"]
+                .as_str()
+                .and_then(|path| Path::new(path).canonicalize().ok())
+                .as_ref()
+                == Some(&manifest_path)
+        })
+        .expect("Custom runtime manifest must identify a package, not a virtual workspace");
+    let bin = select_binary(package).unwrap_or_else(|error| panic!("{error}"));
+
+    // Track local dependencies too, including native modules outside the guest crate.
+    // Do not watch entire crate directories: they may contain the nested build output.
+    for package in packages
+        .iter()
+        .filter(|package| package["source"].is_null())
+    {
+        let manifest = Path::new(package["manifest_path"].as_str().unwrap());
+        let dir = manifest.parent().unwrap();
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        for entry in ["src", "build.rs", ".cargo"] {
+            let path = dir.join(entry);
+            if path.exists() {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+        for target in package["targets"].as_array().unwrap() {
+            println!(
+                "cargo:rerun-if-changed={}",
+                target["src_path"].as_str().unwrap()
+            );
+        }
+    }
+    let workspace = Path::new(metadata["workspace_root"].as_str().unwrap());
+    for entry in ["Cargo.toml", "Cargo.lock", ".cargo"] {
+        let path = workspace.join(entry);
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 
     // the PROFILE env var unfortunately only gives us 1 bit of "dev or release"
     let cargo_profile = if profile == "debug" { "dev" } else { "release" };
 
-    let stubs_inc = runtime_dir.join("include");
-    let cflags = format!(
-        "-I{} -D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK",
-        stubs_inc.display()
+    let target = format!(
+        "{}-hyperlight-none",
+        env::var("CARGO_CFG_TARGET_ARCH").unwrap()
     );
-
-    // in windows escape the backslash to make bindgen happy
-    // TODO(jprendes): this should probably go in cargo-hyperlight instead, where
-    // we already do something similar, but looks like its not enough.
-    let cflags = cflags.replace("\\", "\\\\");
 
     let mut cargo_cmd = cargo_hyperlight::cargo().unwrap();
     let cmd = cargo_cmd
-        .arg("build")
+        .arg(if is_custom { "rustc" } else { "build" })
         .arg("--profile")
         .arg(cargo_profile)
-        .arg("-v")
-        // Point the guest build at its own target directory. We set this *both* as a
-        // `--target-dir` flag and as the `CARGO_TARGET_DIR` env var below. The flag alone
-        // is not enough: cargo-hyperlight >= 0.1.12 strips `--target`/`--target-dir` from
-        // the forwarded cargo args (intending to re-inject them as env vars) but only
-        // re-applies `--target`, silently dropping `--target-dir`. Without the env var the
-        // guest build falls back to the workspace `target/<profile>` directory, which the
-        // host build already holds locked, causing a permanent `.cargo-lock` deadlock.
+        .arg("--bin")
+        .arg(&bin)
+        .arg("--target")
+        .arg(&target)
+        // The host Cargo process holds its target directory locked. Build the
+        // guest separately to avoid a deadlock; cargo-hyperlight forwards this flag.
         .arg("--target-dir")
         .arg(&target_dir)
         .arg("--manifest-path")
-        .arg(manifest_path)
+        .arg(&manifest_path)
         .arg("--locked")
         .env_clear_cargo()
-        // Belt-and-braces for the cargo-hyperlight arg-stripping behaviour described above:
-        // an explicit env var is applied last by the wrapper and reaches the inner cargo
-        // intact, keeping the guest build in its own directory regardless of wrapper version.
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .env("HYPERLIGHT_CFLAGS", cflags);
+        .current_dir(runtime_dir)
+        .env("HYPERLIGHT_CFLAGS", QUICKJS_CFLAGS);
 
     if std::env::var("CARGO_FEATURE_TRACE_GUEST").is_ok() {
-        cmd.arg("--features").arg("trace_guest");
+        cmd.arg("--features").arg(if is_custom {
+            "hyperlight-js-runtime/trace_guest"
+        } else {
+            "trace_guest"
+        });
+    }
+    // Dependency build scripts do not pass linker arguments to this binary.
+    // Scope the clock override to the guest: RUSTFLAGS would also affect
+    // cargo-hyperlight's native sysroot wrappers.
+    if is_custom {
+        cmd.arg("--").arg("-Clink-arg=--wrap=clock_gettime");
     }
 
     cmd.status().unwrap_or_else(|e| {
         panic!("Could not run `cargo build` for the js runtime: {e:?}\n{cmd:?}")
     });
 
-    let resource = target_dir
-        .join("x86_64-hyperlight-none")
-        .join(profile)
-        .join("hyperlight-js-runtime");
+    let resource = target_dir.join(target).join(profile).join(bin);
 
     if let Ok(path) = resource.canonicalize() {
         path
@@ -208,32 +242,15 @@ fn build_js_runtime() -> PathBuf {
 
 fn bundle_runtime() {
     // Always rerun if the environment variable changes, even if it's currently unset.
-    println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH");
+    println!("cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH");
 
-    // `HYPERLIGHT_JS_RUNTIME_PATH` may be given as either an absolute path or a
-    // path relative to this build script's working directory (the
-    // `src/hyperlight-js` crate root). It is resolved with `canonicalize()`,
-    // which normalises a relative path to absolute and requires the target file
-    // to already exist. An absolute path is recommended to avoid any ambiguity
-    // about the base directory.
-    let js_runtime_resource = match env::var("HYPERLIGHT_JS_RUNTIME_PATH") {
-        Ok(path) if !path.trim().is_empty() => {
-            let canonical = PathBuf::from(&path)
-                .canonicalize()
-                .expect("HYPERLIGHT_JS_RUNTIME_PATH must point to a valid file");
-            assert!(
-                canonical.is_file(),
-                "HYPERLIGHT_JS_RUNTIME_PATH must point to a file, not a directory: {}",
-                canonical.display()
-            );
-            println!(
-                "cargo:warning=Using custom JS runtime: {}",
-                canonical.display()
-            );
-            println!("cargo:rerun-if-changed={}", canonical.display());
-            canonical
-        }
-        _ => build_js_runtime(),
+    // Relative manifest paths resolve from this build script's working directory
+    // (the hyperlight-js crate root), not the invoking host project. Prefer an
+    // absolute path. build_js_runtime canonicalizes it and requires it to exist.
+    let source = runtime_source(env::var_os("HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH"));
+    let js_runtime_resource = match source {
+        RuntimeSource::Manifest { path } => build_js_runtime(Some(path)),
+        RuntimeSource::Default => build_js_runtime(None),
     };
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -243,6 +260,7 @@ fn bundle_runtime() {
 
     fs::write(dest_path, contents).unwrap();
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=runtime_build.rs");
 }
 
 fn bundle_dummy() {

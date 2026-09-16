@@ -35,14 +35,14 @@
   },
   "license": "Apache-2.0",
   "optionalDependencies": {
-    "@hyperlight-dev/js-host-api-linux-x64-gnu": "0.3.3",
-    "@hyperlight-dev/js-host-api-linux-x64-musl": "0.3.3",
-    "@hyperlight-dev/js-host-api-win32-x64-msvc": "0.3.3"
+    "@hyperlight-dev/js-host-api-linux-x64-gnu": "0.4.0",
+    "@hyperlight-dev/js-host-api-linux-x64-musl": "0.4.0",
+    "@hyperlight-dev/js-host-api-win32-x64-msvc": "0.4.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@napi-rs/cli": "^3.6.1",
-    "eslint": "^10.2.0",
+    "eslint": "^10.10.0",
     "prettier": "^3.8.1",
     "vitest": "^5.0.0"
   },

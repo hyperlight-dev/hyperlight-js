@@ -1,7 +1,12 @@
 name: Label Checker
+# No `branches:` filter, for the same reason as ValidatePullRequests.yml.
+# `check-labels` is a required check on `main`, and base retargeting raises an
+# `edited` event, which is absent from the types below. A layer labelled while
+# it still targets the layer below would therefore never run this check, and
+# after retargeting nothing re-fires it, leaving a required check permanently
+# pending. Running on every base keeps the result attached to the head SHA.
 on:
   pull_request:
-    branches: main
     types: [opened, labeled, unlabeled, synchronize, reopened]
 permissions:
   pull-requests: read

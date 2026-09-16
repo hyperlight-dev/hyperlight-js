@@ -93,8 +93,12 @@ export HYPERLIGHT_CFLAGS=$(node -e "
 # Build the custom runtime for the hyperlight target
 cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml --release
 
-# Tell hyperlight-js to embed the custom runtime (not the default one)
-export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/x86_64-hyperlight-none/release/my-custom-runtime
+# Tell hyperlight-js to embed the custom runtime (not the default one).
+# The guest target matches the host architecture: x86_64-hyperlight-none on
+# x86_64, aarch64-hyperlight-none on Apple Silicon and other aarch64 hosts.
+# Note: macOS `uname -m` prints `arm64`, so normalise it to Rust's `aarch64`.
+GUEST_ARCH=$(uname -m | sed 's/^arm64$/aarch64/')
+export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/${GUEST_ARCH}-hyperlight-none/release/my-custom-runtime
 
 # Rebuild hyperlight-js so the embedded runtime is updated
 cargo build -p hyperlight-js --release
@@ -245,8 +249,11 @@ export HYPERLIGHT_CFLAGS=$(node -e "
 # Build your custom runtime for the hyperlight target
 cargo hyperlight build --manifest-path my-custom-runtime/Cargo.toml --release
 
-# Point hyperlight-js at your custom runtime binary
-export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/x86_64-hyperlight-none/release/my-custom-runtime
+# Point hyperlight-js at your custom runtime binary (the guest target matches
+# the host architecture — aarch64-hyperlight-none on Apple Silicon).
+# Note: macOS `uname -m` prints `arm64`, so normalise it to Rust's `aarch64`.
+GUEST_ARCH=$(uname -m | sed 's/^arm64$/aarch64/')
+export HYPERLIGHT_JS_RUNTIME_PATH=my-custom-runtime/target/${GUEST_ARCH}-hyperlight-none/release/my-custom-runtime
 
 # Clean stale builds so build.rs re-embeds the runtime
 cd "${HYPERLIGHT_DIR}/src/hyperlight-js" && cargo clean -p hyperlight-js

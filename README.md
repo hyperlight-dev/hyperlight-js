@@ -36,11 +36,36 @@ For Azure Linux:
     sudo dnf install clang18-tools-extra -y
 ```
 
-In addition on Linux you will need to install the `x86_64-unknown-none` target:
+For macOS:
 
 ```bash
-    rustup target add x86_64-unknown-none
+    xcode-select --install
 ```
+
+In addition on Linux and macOS you will need to install the bare-metal target matching
+your architecture, which `cargo-hyperlight` derives the guest target from:
+
+```bash
+    # x86_64 hosts
+    rustup target add x86_64-unknown-none
+    # Apple Silicon / other aarch64 hosts
+    rustup target add aarch64-unknown-none
+```
+
+## Supported platforms
+
+| Host OS | Architecture | Hypervisor |
+| ------- | ------------ | ---------- |
+| Linux   | x86_64       | KVM or MSHV |
+| Linux   | aarch64      | KVM |
+| Windows | x86_64       | Windows Hypervisor Platform (WHP) |
+| macOS   | aarch64      | Hypervisor.framework |
+
+The guest runs on the same architecture as the host, so an aarch64 host builds
+and runs an `aarch64-hyperlight-none` guest.
+
+Note that MSHV is x86_64-only in practice: `hyperlight-host` compiles an aarch64
+MSHV backend, but it is a stub whose hypervisor detection always reports absent.
 
 ## Building
 

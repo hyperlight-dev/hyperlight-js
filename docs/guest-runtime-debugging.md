@@ -6,6 +6,10 @@ This guide provides instructions on how to debug `hyperlight-js-runtime` using G
 
 To enable debugging, you need to build the `hyperlight-js` library in **debug mode** and with the `gdb` feature enabled. This will include the necessary debug symbols and enable the GDB server in the runtime.
 
+> **Note:** guest debugging is currently x86_64 only — `hyperlight-host` gates its `gdb`
+> feature on `target_arch = "x86_64"`, so it is unavailable on aarch64 hosts such as
+> Apple Silicon macOS.
+
 When the `gdb` feature is enabled, you can specify a port for the GDB server to listen on when creating the sandbox.
 ```rust
 let proto_sandbox = SandboxBuilder::new()

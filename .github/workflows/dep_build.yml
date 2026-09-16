@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        build: [windows-2025-debug, linux-kvm-debug, linux-hyperv3-debug, windows-2025-release, linux-kvm-release, linux-hyperv3-release]
+        build: [windows-2025-debug, linux-kvm-debug, linux-kvm-arm64-debug, linux-hyperv3-debug, macos-hvf-debug, windows-2025-release, linux-kvm-release, linux-kvm-arm64-release, linux-hyperv3-release, macos-hvf-release]
         include:
           - build: windows-2025-debug
             os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
@@ -28,10 +28,20 @@ jobs:
           - build: linux-kvm-debug
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
             hypervisor: kvm
+            arch: X64
+            config: debug
+          - build: linux-kvm-arm64-debug
+            os: [self-hosted, Linux, arm64, kvm]
+            hypervisor: kvm
+            arch: arm64
             config: debug
           - build: linux-hyperv3-debug
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
             hypervisor: hyperv3
+            config: debug
+          - build: macos-hvf-debug
+            os: [self-hosted, macos, arm64, hvf]
+            hypervisor: hvf
             config: debug
           - build: windows-2025-release
             os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
@@ -40,13 +50,26 @@ jobs:
           - build: linux-kvm-release
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
             hypervisor: kvm
+            arch: X64
+            config: release
+          - build: linux-kvm-arm64-release
+            os: [self-hosted, Linux, arm64, kvm]
+            hypervisor: kvm
+            arch: arm64
             config: release
           - build: linux-hyperv3-release
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-azlinux3-mshv-amd"]
             hypervisor: hyperv3
             config: release
-    runs-on: ${{ fromJson(
-      format('["self-hosted", "{0}", "X64", "1ES.Pool=hld-{1}-amd", "JobId=build-{2}-{3}-{4}-{5}"]',
+          - build: macos-hvf-release
+            os: [self-hosted, macos, arm64, hvf]
+            hypervisor: hvf
+            config: release
+    runs-on: ${{ fromJson(matrix.hypervisor == 'hvf'
+      && '["self-hosted", "macos", "arm64", "hvf"]'
+      || matrix.arch == 'arm64'
+      && '["self-hosted", "Linux", "arm64", "kvm"]'
+      || format('["self-hosted", "{0}", "X64", "1ES.Pool=hld-{1}-amd", "JobId=build-{2}-{3}-{4}-{5}"]',
         matrix.hypervisor == 'whp' && 'Windows' || 'Linux',
         matrix.hypervisor == 'whp' && 'win2025' || matrix.hypervisor == 'hyperv3' && 'azlinux3-mshv' || 'kvm',
         matrix.build,

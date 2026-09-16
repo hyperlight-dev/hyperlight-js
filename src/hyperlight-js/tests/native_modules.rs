@@ -17,7 +17,8 @@ limitations under the License.
 //! Integration tests for custom native modules in the Hyperlight VM.
 //!
 //! These tests require a custom runtime (the `extended_runtime` fixture)
-//! built for `x86_64-hyperlight-none` and embedded in `hyperlight-js` via
+//! built for the host's guest target (`x86_64-hyperlight-none` on x86_64,
+//! `aarch64-hyperlight-none` on aarch64) and embedded in `hyperlight-js` via
 //! `HYPERLIGHT_JS_RUNTIME_PATH`. They are marked `#[ignore]` because they
 //! cannot run with a normal `cargo test`.
 //!

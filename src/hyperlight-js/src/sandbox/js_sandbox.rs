@@ -346,6 +346,10 @@ impl JSSandbox {
     /// This is only available when the `crashdump` feature is enabled and then only if the sandbox
     /// is also configured to allow core dumps (which is the default behavior).
     ///
+    /// hyperlight-host only implements crash dumps on x86_64, so this method is not compiled on
+    /// other architectures (for example aarch64 macOS or Linux).
+    ///
+    ///
     /// This can be useful for generating a crash dump from gdb when trying to debug issues in the
     /// guest that dont cause crashes (e.g. a guest function that does not return)
     ///
@@ -369,8 +373,8 @@ impl JSSandbox {
     /// ```
     /// The crashdump should be available in crash dump directory (see `HYPERLIGHT_CORE_DUMP_DIR` env var).
     ///
-    #[cfg(feature = "crashdump")]
-    pub fn generate_crashdump(&self) -> Result<()> {
+    #[cfg(crashdump)]
+    pub fn generate_crashdump(&mut self) -> Result<()> {
         self.inner.generate_crashdump()
     }
 }

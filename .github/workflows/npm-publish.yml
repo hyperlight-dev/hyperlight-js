@@ -83,6 +83,33 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
 
+      # Building js-host-api runs hyperlight-js's build.rs, which builds the JS
+      # guest runtime for a bare-metal ELF target. macOS's system archiver
+      # cannot produce ELF archives, and cargo-hyperlight silently falls back to
+      # it when llvm-ar is absent from PATH, leaving every QuickJS and libc
+      # symbol undefined at the guest link. Take llvm-ar from rustup's
+      # llvm-tools component so this does not depend on a package manager.
+      - name: Set up LLVM guest toolchain (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          llvm_bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+          for attempt in 1 2 3; do
+            if [ -x "$llvm_bin/llvm-ar" ]; then
+              break
+            fi
+            echo "Installing llvm-tools (attempt $attempt)"
+            rustup component add llvm-tools || true
+            [ -x "$llvm_bin/llvm-ar" ] || sleep $((attempt * 10))
+          done
+          if [ ! -x "$llvm_bin/llvm-ar" ]; then
+            echo "llvm-ar not found in $llvm_bin" >&2
+            exit 1
+          fi
+          echo "$llvm_bin" >> "$GITHUB_PATH"
+          "$llvm_bin/llvm-ar" --version
+
       - name: Install dependencies
         working-directory: ${{ env.WORKING_DIR }}
         run: npm ci --ignore-scripts --omit=optional

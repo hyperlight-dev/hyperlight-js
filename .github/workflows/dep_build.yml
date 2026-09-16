@@ -126,6 +126,23 @@ jobs:
         cache: 'npm'
         cache-dependency-path: 'src/js-host-api/package-lock.json'
 
+    # The cargo runner in .cargo/config.toml only signs binaries cargo itself
+    # launches, so the js-host-api tests -- which run under node via vitest --
+    # still hit HV_DENIED. Sign a private copy rather than the shared tool
+    # cache: these runners are not ephemeral.
+    - name: Sign node for Hypervisor.framework (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        signed_bin="$RUNNER_TEMP/node-signed"
+        mkdir -p "$signed_bin"
+        cp "$(command -v node)" "$signed_bin/node"
+        codesign -f -s - --entitlements dev/macos-entitlements.plist "$signed_bin/node"
+        codesign -d --entitlements - "$signed_bin/node"
+        echo "$signed_bin" >> "$GITHUB_PATH"
+        "$signed_bin/node" --version
+
     - name: fmt
       run: just fmt-check
 

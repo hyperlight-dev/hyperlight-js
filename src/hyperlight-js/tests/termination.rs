@@ -15,8 +15,6 @@ limitations under the License.
 */
 //! Test manual termination of the sandbox (i.e., without using a monitor)
 
-#![allow(clippy::disallowed_macros)]
-
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;

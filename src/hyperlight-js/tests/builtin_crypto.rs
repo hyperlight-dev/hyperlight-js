@@ -15,8 +15,6 @@ limitations under the License.
 */
 //! Test the built-in crypto module
 
-#![allow(clippy::disallowed_macros)]
-
 use hyperlight_js::{SandboxBuilder, Script};
 
 #[test]

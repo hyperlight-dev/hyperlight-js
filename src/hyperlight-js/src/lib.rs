@@ -18,7 +18,7 @@ limitations under the License.
 #![cfg_attr(not(any(test, debug_assertions)), warn(clippy::panic))]
 #![cfg_attr(not(any(test, debug_assertions)), warn(clippy::expect_used))]
 #![cfg_attr(not(any(test, debug_assertions)), warn(clippy::unwrap_used))]
-#![cfg_attr(any(test, debug_assertions), allow(clippy::disallowed_macros))]
+#![cfg_attr(not(any(test, debug_assertions)), warn(clippy::disallowed_macros))]
 
 mod resolver;
 mod script;

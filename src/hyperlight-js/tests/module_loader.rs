@@ -15,8 +15,6 @@ limitations under the License.
 */
 //! Tests for the module loader that import files from the embedded filesystem.
 
-#![allow(clippy::disallowed_macros)]
-
 use hyperlight_js::{embed_modules, SandboxBuilder, Script};
 
 #[test]

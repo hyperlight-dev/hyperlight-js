@@ -87,6 +87,38 @@ jobs:
           rust-toolchain: "1.90"
           just-version: "1.51"
 
+    # Unlike upstream hyperlight, which builds its guests once per architecture
+    # and ships them to the test jobs as artifacts, hyperlight-js builds the JS
+    # guest runtime from build.rs during every `cargo build`. That makes a
+    # bare-metal ELF toolchain a hard requirement on macOS too.
+    #
+    # macOS's system archiver cannot produce ELF archives. cargo-hyperlight
+    # prefers llvm-ar on macOS for exactly that reason, but silently falls back
+    # to /usr/bin/ar when llvm-ar is missing from PATH, which yields a guest
+    # link with every QuickJS and libc symbol undefined. The runners have no
+    # package manager, so take llvm-ar from rustup's llvm-tools component,
+    # which is version-matched to the pinned toolchain.
+    - name: Set up LLVM guest toolchain (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        llvm_bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+        for attempt in 1 2 3; do
+          if [ -x "$llvm_bin/llvm-ar" ]; then
+            break
+          fi
+          echo "Installing llvm-tools (attempt $attempt)"
+          rustup component add llvm-tools || true
+          [ -x "$llvm_bin/llvm-ar" ] || sleep $((attempt * 10))
+        done
+        if [ ! -x "$llvm_bin/llvm-ar" ]; then
+          echo "llvm-ar not found in $llvm_bin" >&2
+          exit 1
+        fi
+        echo "$llvm_bin" >> "$GITHUB_PATH"
+        "$llvm_bin/llvm-ar" --version
+
     - name: install nodejs
       uses: actions/setup-node@v7
       with:

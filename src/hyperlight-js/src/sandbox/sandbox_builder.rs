@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#[cfg(target_os = "linux")]
+#[cfg(any(kvm, mshv3, hvf))]
 use std::time::Duration;
 
 use hyperlight_host::sandbox::SandboxConfiguration;
@@ -124,7 +124,10 @@ impl SandboxBuilder {
 
     /// Sets the interrupt retry delay
     /// This controls the delay between sending signals to the VCPU thread to interrupt it.
-    #[cfg(target_os = "linux")]
+    ///
+    /// Only available for the hypervisor backends that use retrying interrupts
+    /// (KVM and MSHV on Linux, Hypervisor.framework on macOS).
+    #[cfg(any(kvm, mshv3, hvf))]
     pub fn with_interrupt_retry_delay(mut self, delay: Duration) -> Self {
         self.config.set_interrupt_retry_delay(delay);
         self
@@ -138,7 +141,7 @@ impl SandboxBuilder {
     /// Enable or disable crashdump generation for the sandbox
     /// When enabled, core dumps will be generated when the guest crashes
     /// This requires the `crashdump` feature to be enabled
-    #[cfg(feature = "crashdump")]
+    #[cfg(crashdump)]
     pub fn with_crashdump_enabled(mut self, enabled: bool) -> Self {
         self.config.set_guest_core_dump(enabled);
         self
@@ -157,9 +160,10 @@ impl SandboxBuilder {
     ///    .expect("Failed to build sandbox");
     /// ```
     /// # Note:
-    /// This method is only available when the `gdb` feature is enabled
-    /// and the code is compiled in debug mode.
-    #[cfg(all(feature = "gdb", debug_assertions))]
+    /// This method is only available when the `gdb` feature is enabled, the
+    /// code is compiled in debug mode, and the target architecture is x86_64.
+    /// hyperlight-host only implements the gdb debug stub on x86_64.
+    #[cfg(gdb)]
     pub fn with_debugging_enabled(mut self, port: u16) -> Self {
         let debug_info = hyperlight_host::sandbox::config::DebugInfo { port };
         self.config.set_guest_debug_info(debug_info);

@@ -5,14 +5,20 @@ updates:
     schedule:
       interval: "daily"
       time: "03:00"
+    cooldown:
+      default-days: 7
     labels:
       - "kind/dependencies"
   - package-ecosystem: "cargo"
     directories: 
       - "/"
+      # Standalone workspace with its own Cargo.lock, validated by `just check-fixture-lock`
+      - "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime"
     schedule:
       interval: "daily"
       time: "03:00"
+    cooldown:
+      default-days: 7
     labels:
       - "kind/dependencies"
   - package-ecosystem: "npm"
@@ -22,5 +28,7 @@ updates:
     schedule:
       interval: "daily"
       time: "03:00"
+    cooldown:
+      default-days: 7
     labels:
       - "kind/dependencies"

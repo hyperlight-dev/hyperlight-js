@@ -255,14 +255,20 @@ impl ThreadCpuHandle {
 // macOS
 // ---------------------------------------------------------------------------
 
-/// `mach_port_deallocate` is not re-exported by the `libc` crate, but it lives in
-/// libSystem which is already linked, so declare it here.
+// These mach symbols are either not re-exported by the `libc` crate or are
+// deprecated there in favour of the `mach2` crate. They live in libSystem, which
+// is already linked, so declare the three we need rather than take a new
+// dependency for them. `mach_task_self` is a C macro over the `mach_task_self_`
+// global, so declare the global itself; it is only ever read.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn mach_port_deallocate(
         task: libc::mach_port_t,
         name: libc::mach_port_t,
     ) -> libc::kern_return_t;
+    fn mach_thread_self() -> libc::mach_port_t;
+    #[allow(non_upper_case_globals)]
+    static mach_task_self_: libc::mach_port_t;
 }
 
 /// `libc::MACH_PORT_NULL` is typed `i32` while `mach_port_t` is `c_uint`, so use a
@@ -296,7 +302,7 @@ impl ThreadCpuHandle {
     pub fn for_current_thread() -> Option<Self> {
         // mach_thread_self() returns a send right that we own and must release
         // in Drop, unlike the Windows pseudo-handle from GetCurrentThread().
-        let thread_port = unsafe { libc::mach_thread_self() };
+        let thread_port = unsafe { mach_thread_self() };
         if thread_port == MACH_PORT_NULL {
             tracing::warn!("[CPU_TIME] mach_thread_self() returned a null port");
             return None;
@@ -368,7 +374,7 @@ impl Drop for ThreadCpuHandle {
     fn drop(&mut self) {
         if self.thread_port != MACH_PORT_NULL {
             // Release the send right acquired by mach_thread_self().
-            unsafe { mach_port_deallocate(libc::mach_task_self(), self.thread_port) };
+            unsafe { mach_port_deallocate(mach_task_self_, self.thread_port) };
         }
     }
 }

@@ -2,9 +2,15 @@
 
 name: Validate Pull Request
 
+# No `branches:` filter: PRs in a stack target the layer below them rather than
+# `main`, and the filter is evaluated against the PR's own base ref, so a
+# filtered trigger leaves every stacked layer without build or test coverage
+# until the layer below merges and GitHub retargets it. That serialises all
+# breakage to merge time. `report-ci-status` is a required check on `main`, and
+# check runs attach to the head SHA, so running here means the result is already
+# present when a layer is retargeted.
 on:
   pull_request:
-    branches: [ main, 'release/**' ]
 
 # Cancels old running job if a new one is triggered (e.g. by a push onto the same branch).
 # This will cancel dependent jobs as well, such as dep_build and dep_benchmarks

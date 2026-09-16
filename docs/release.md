@@ -10,7 +10,7 @@ Do this with the `just set-version` recipe. **Always use this instead of bumping
 
 - every workspace crate's `version` and the root `Cargo.lock`,
 - the excluded `extended_runtime` fixture's own `Cargo.lock` (a bare `cargo set-version` can't reach it, and a stale one fails the `native_modules --locked` build),
-- the npm main package and the three platform packages,
+- the npm main package and the five platform packages,
 - the root package version in `src/js-host-api/package-lock.json`.
 
 Keep `optionalDependencies` on the latest published version so `npm ci` can use
@@ -68,12 +68,13 @@ Trusted publishing is configured on [npmjs.com](https://www.npmjs.com/) for each
 3. Set **Organization**: `hyperlight-dev`, **Repository**: `hyperlight-js`, **Workflow**: `CreateRelease.yml`
 4. Save
 
-This must be done for all 5 packages:
+This must be done for all 6 packages:
 - `@hyperlight-dev/js-host-api`
 - `@hyperlight-dev/js-host-api-linux-x64-gnu`
 - `@hyperlight-dev/js-host-api-linux-x64-musl`
 - `@hyperlight-dev/js-host-api-win32-x64-msvc`
 - `@hyperlight-dev/js-host-api-darwin-arm64`
+- `@hyperlight-dev/js-host-api-linux-arm64-gnu`
 
 > **Note:** Trusted publishers are configured per package, and npm cannot configure one for a
 > package that does not exist yet. The publish workflow therefore has a temporary
@@ -113,12 +114,13 @@ If you need to publish npm packages manually via `workflow_dispatch`, you'll nee
 1. **Temporarily allow token-based publishing on npmjs.com**
    - Go to each package on [npmjs.com](https://www.npmjs.com/) → Settings → Publishing access
    - Change from "Require two-factor authentication and disallow tokens" to "Require two-factor authentication or automation tokens"
-   - Do this for all 5 packages:
+   - Do this for all 6 packages:
      - `@hyperlight-dev/js-host-api`
      - `@hyperlight-dev/js-host-api-linux-x64-gnu`
      - `@hyperlight-dev/js-host-api-linux-x64-musl`
      - `@hyperlight-dev/js-host-api-win32-x64-msvc`
      - `@hyperlight-dev/js-host-api-darwin-arm64`
+     - `@hyperlight-dev/js-host-api-linux-arm64-gnu`
 
 2. **Create an npm automation token**
    - Go to [npmjs.com](https://www.npmjs.com/) → Access Tokens → Generate New Token → Granular Access Token
@@ -140,5 +142,5 @@ If you need to publish npm packages manually via `workflow_dispatch`, you'll nee
 5. **Clean up immediately after publishing**
    - Delete the `NPM_TOKEN` repo secret on GitHub → Settings → Secrets and variables → Actions
    - Revoke the npm token on npmjs.com → Access Tokens
-   - Re-enable "Require two-factor authentication and disallow tokens" on all 5 packages
+   - Re-enable "Require two-factor authentication and disallow tokens" on all 6 packages
    - Verify the packages published correctly: `npm view @hyperlight-dev/js-host-api versions`

@@ -226,12 +226,13 @@ set-version version:
     cargo update \
         --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
         -p hyperlight-js-runtime -p hyperlight-js-common
-    # npm: main + the 4 platform package.json versions (--ignore-scripts avoids needing node_modules)
+    # npm: main + the 5 platform package.json versions (--ignore-scripts avoids needing node_modules)
     cd src/js-host-api && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/linux-x64-gnu && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/linux-x64-musl && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/win32-x64-msvc && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/darwin-arm64 && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
+    cd src/js-host-api/npm/linux-arm64-gnu && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     # Verify the npm lockfile
     cd src/js-host-api && npm ci --dry-run --omit=optional --ignore-scripts
 

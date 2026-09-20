@@ -55,6 +55,7 @@ Creates and configures a new sandbox.
 - `setScratchSize(bytes: number)` → `this` — Set guest scratch size, includes stack (must be > 0, chainable)
 - `setInputBufferSize(bytes: number)` → `this` — Set guest input buffer size (must be > 0, chainable)
 - `setOutputBufferSize(bytes: number)` → `this` — Set guest output buffer size (must be > 0, chainable)
+- `setRuntimePath(path: string)` → `this` — Use a custom Hyperlight guest runtime binary (chainable)
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
 
 ```javascript
@@ -63,6 +64,20 @@ const builder = new SandboxBuilder()
     .setScratchSize(1024 * 1024);
 const protoSandbox = await builder.build();
 ```
+
+The published addon includes the default runtime, but can load a separately
+built custom runtime without rebuilding the addon:
+
+```javascript
+const protoSandbox = await new SandboxBuilder()
+    .setRuntimePath('/path/to/my-custom-runtime')
+    .build();
+```
+
+The custom runtime must be built for the Hyperlight guest target and must
+match the host architecture. See
+[Using js-host-api from a Downstream Node.js Project](../../docs/extending-runtime.md#using-js-host-api-from-a-downstream-nodejs-project)
+for the direct `cargo-hyperlight` build command.
 
 ### ProtoJSSandbox
 

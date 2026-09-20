@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ use crate::HostPrintFn;
 pub struct SandboxBuilder {
     config: SandboxConfiguration,
     host_print_fn: Option<HostPrintFn>,
+    runtime_path: Option<PathBuf>,
 }
 
 /// The minimum scratch size for the JS runtime sandbox.
@@ -61,7 +63,17 @@ impl SandboxBuilder {
         Self {
             config,
             host_print_fn: None,
+            runtime_path: None,
         }
+    }
+
+    /// Use a custom JavaScript runtime binary instead of the embedded default.
+    ///
+    /// The runtime must already be built for the Hyperlight guest target.
+    /// The path is resolved when [`Self::build`] creates the sandbox.
+    pub fn with_runtime_path(mut self, runtime_path: impl Into<PathBuf>) -> Self {
+        self.runtime_path = Some(runtime_path.into());
+        self
     }
 
     /// Set the host print function
@@ -171,7 +183,10 @@ impl SandboxBuilder {
         if !is_hypervisor_present() {
             return Err(HyperlightError::NoHypervisorFound());
         }
-        let guest_binary = GuestBinary::Buffer(super::JSRUNTIME.to_vec());
+        let guest_binary = match self.runtime_path {
+            Some(runtime_path) => GuestBinary::FilePath(runtime_path),
+            None => GuestBinary::Buffer(super::JSRUNTIME.to_vec()),
+        };
         let proto_js_sandbox =
             ProtoJSSandbox::new(guest_binary, Some(self.config), self.host_print_fn)?;
         Ok(proto_js_sandbox)

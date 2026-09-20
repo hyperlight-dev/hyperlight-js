@@ -168,17 +168,13 @@ test-js-host-api target=default-target features="": (build-js-host-api target fe
 # Test custom native modules:
 # 1. Runs the runtime crate's native_modules unit/pipeline tests (native binary)
 # 2. Builds the extended_runtime fixture for the hyperlight target
-# 3. Rebuilds hyperlight-js with the custom guest embedded via HYPERLIGHT_JS_RUNTIME_PATH
-# 4. Runs the ignored VM integration tests
-# 5. Rebuilds hyperlight-js with the default guest (unsets HYPERLIGHT_JS_RUNTIME_PATH)
-#
-# The build.rs in hyperlight-js has `cargo:rerun-if-env-changed=HYPERLIGHT_JS_RUNTIME_PATH`
-# so setting/unsetting the env var triggers a rebuild automatically.
+# 3. Runs the Rust and Node.js VM integration tests with the custom guest selected at runtime
 
 # Base path to the extended runtime fixture target directory
-extended_runtime_target := replace(justfile_dir(), "\\", "/") + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target/x86_64-hyperlight-none"
+extended_runtime_target_dir := absolute_path(env_var_or_default("CARGO_TARGET_DIR", justfile_dir() + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target"))
+extended_runtime_target := replace(extended_runtime_target_dir, "\\", "/") + "/x86_64-hyperlight-none"
 
-test-native-modules target=default-target: (ensure-tools) (check-fixture-lock) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-restore target)
+test-native-modules target=default-target: (ensure-tools) (check-fixture-lock) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-node target)
 
 [private]
 _test-native-modules-unit target=default-target:
@@ -189,16 +185,15 @@ _test-native-modules-build-guest target=default-target:
     cargo hyperlight build \
         --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
         --profile={{ if target == "debug" {"dev"} else { target } }} \
-        --target-dir src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target
+        --target-dir "{{extended_runtime_target_dir}}"
 
 [private]
 _test-native-modules-vm target=default-target:
-    {{ set-env-command }}HYPERLIGHT_JS_RUNTIME_PATH="{{extended_runtime_target}}/{{ if target == "debug" {"debug"} else { target } }}/extended-runtime" {{ if os() == "windows" { ";" } else { "&&" } }} cargo test -p hyperlight-js --test native_modules --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
+    {{ set-env-command }}HYPERLIGHT_JS_TEST_RUNTIME_PATH="{{extended_runtime_target}}/{{ if target == "debug" {"debug"} else { target } }}/extended-runtime" {{ if os() == "windows" { ";" } else { "&&" } }} cargo test -p hyperlight-js --test native_modules --profile={{ if target == "debug" {"dev"} else { target } }} -- --ignored --nocapture
 
 [private]
-_test-native-modules-restore target=default-target:
-    @echo "Rebuilding hyperlight-js with default guest runtime..."
-    cd src/hyperlight-js && cargo build --profile={{ if target == "debug" {"dev"} else { target } }}
+_test-native-modules-node target=default-target: (build-js-host-api target)
+    {{ set-env-command }}HYPERLIGHT_JS_TEST_RUNTIME_PATH="{{extended_runtime_target}}/{{ if target == "debug" {"debug"} else { target } }}/extended-runtime" {{ if os() == "windows" { ";" } else { "&&" } }} cd src/js-host-api {{ if os() == "windows" { ";" } else { "&&" } }} npm test -- --testNamePattern="custom runtime"
 
 # ── Version bumping & fixture-lock consistency ──────────────────────────────
 # The extended_runtime test fixture is a separate `[workspace]` that is excluded

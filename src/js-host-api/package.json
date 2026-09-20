@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@napi-rs/cli": "^3.6.1",
+    "@napi-rs/cli": "3.6.1",
     "eslint": "^10.10.0",
     "prettier": "^3.8.1",
     "vitest": "^5.0.0"
@@ -61,5 +61,8 @@
     "prepublishOnly": "napi prepublish -t npm --skip-optional-publish",
     "artifacts": "napi artifacts",
     "version": "napi version"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9"
   }
 }

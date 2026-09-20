@@ -482,6 +482,23 @@ impl SandboxBuilderWrapper {
         self.with_inner(|b| b.with_guest_heap_size(size as u64))
     }
 
+    /// Use a custom JavaScript runtime binary instead of the embedded default.
+    ///
+    /// The runtime must already be built for the Hyperlight guest target.
+    /// This allows the published Node.js addon to use custom native modules
+    /// without rebuilding the addon itself.
+    ///
+    /// @param path - Path to the custom Hyperlight guest binary
+    /// @returns this (for chaining)
+    /// @throws If path is empty
+    #[napi]
+    pub fn set_runtime_path(&self, path: String) -> napi::Result<&Self> {
+        if path.trim().is_empty() {
+            return Err(invalid_arg_error("Runtime path must not be empty"));
+        }
+        self.with_inner(|b| b.with_runtime_path(path))
+    }
+
     /// Build a `ProtoJSSandbox` from this builder's configuration.
     ///
     /// This allocates the sandbox VM resources. The builder is consumed

@@ -24,7 +24,8 @@ describe('SandboxBuilder', () => {
             .setHeapSize(8 * 1024 * 1024)
             .setScratchSize(1024 * 1024)
             .setInputBufferSize(4096)
-            .setOutputBufferSize(4096);
+            .setOutputBufferSize(4096)
+            .setRuntimePath('custom-runtime');
         expect(result).toBe(builder);
     });
 
@@ -67,6 +68,33 @@ describe('SandboxBuilder', () => {
         const builder = new SandboxBuilder();
         expectThrowsWithCode(() => builder.setOutputBufferSize(0), 'ERR_INVALID_ARG');
     });
+
+    it('should reject an empty runtime path', () => {
+        const builder = new SandboxBuilder();
+        expectThrowsWithCode(() => builder.setRuntimePath('  '), 'ERR_INVALID_ARG');
+    });
+
+    it.skipIf(!process.env.HYPERLIGHT_JS_TEST_RUNTIME_PATH)(
+        'should load a custom runtime without rebuilding the addon',
+        async () => {
+            const proto = await new SandboxBuilder()
+                .setRuntimePath(process.env.HYPERLIGHT_JS_TEST_RUNTIME_PATH)
+                .build();
+            const sandbox = await proto.loadRuntime();
+            sandbox.addHandler(
+                'custom-runtime',
+                `
+                import { add } from 'math';
+                export function handler(event) {
+                    return add(event.a, event.b);
+                }
+                `
+            );
+            const loaded = await sandbox.getLoadedSandbox();
+
+            await expect(loaded.callHandler('custom-runtime', { a: 20, b: 22 })).resolves.toBe(42);
+        }
+    );
 });
 
 // ── ProtoJSSandbox ───────────────────────────────────────────────────

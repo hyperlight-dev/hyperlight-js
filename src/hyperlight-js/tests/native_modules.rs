@@ -17,8 +17,8 @@ limitations under the License.
 //! Integration tests for custom native modules in the Hyperlight VM.
 //!
 //! These tests require a custom runtime (the `extended_runtime` fixture)
-//! built for `x86_64-hyperlight-none` and embedded in `hyperlight-js` via
-//! `HYPERLIGHT_JS_RUNTIME_PATH`. They are marked `#[ignore]` because they
+//! built for `x86_64-hyperlight-none` and selected through
+//! [`SandboxBuilder::with_runtime_path`]. They are marked `#[ignore]` because they
 //! cannot run with a normal `cargo test`.
 //!
 //! To run them, use:
@@ -26,13 +26,18 @@ limitations under the License.
 //! just test-native-modules
 //! ```
 //!
-//! This recipe builds the fixture with `cargo hyperlight build`, sets the
-//! env var, rebuilds `hyperlight-js` with the custom guest, and runs these
-//! tests.
+//! This recipe builds the fixture with `cargo hyperlight build`, then runs
+//! these tests with its path in `HYPERLIGHT_JS_TEST_RUNTIME_PATH`.
 
 #![allow(clippy::disallowed_macros)]
 
 use hyperlight_js::{SandboxBuilder, Script};
+
+fn custom_runtime_builder() -> SandboxBuilder {
+    let runtime_path = std::env::var_os("HYPERLIGHT_JS_TEST_RUNTIME_PATH")
+        .expect("HYPERLIGHT_JS_TEST_RUNTIME_PATH must point to the extended runtime fixture");
+    SandboxBuilder::new().with_runtime_path(runtime_path)
+}
 
 /// Test that a custom native module ("math") can be imported and used
 /// from a handler running inside the Hyperlight VM.
@@ -51,7 +56,7 @@ fn custom_native_module_works_in_vm() {
         "#,
     );
 
-    let mut sandbox = SandboxBuilder::new()
+    let mut sandbox = custom_runtime_builder()
         .build()
         .unwrap()
         .load_runtime()
@@ -87,7 +92,7 @@ fn builtin_modules_work_with_custom_native_module() {
         "#,
     );
 
-    let mut sandbox = SandboxBuilder::new()
+    let mut sandbox = custom_runtime_builder()
         .build()
         .unwrap()
         .load_runtime()
@@ -120,7 +125,7 @@ fn console_log_works_with_custom_native_module() {
         "#,
     );
 
-    let mut sandbox = SandboxBuilder::new()
+    let mut sandbox = custom_runtime_builder()
         .build()
         .unwrap()
         .load_runtime()

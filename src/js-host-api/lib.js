@@ -229,6 +229,7 @@ for (const method of [
     'setScratchSize',
     'setInputBufferSize',
     'setOutputBufferSize',
+    'setRuntimePath',
 ]) {
     const orig = SandboxBuilder.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: SandboxBuilder.${method}`);

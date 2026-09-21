@@ -146,6 +146,9 @@ jobs:
     - name: fmt
       run: just fmt-check
 
+    - name: lint
+      run: just lint ${{ matrix.config }}
+
     - name: Build
       run: |
           just build ${{ matrix.config }}
@@ -153,9 +156,6 @@ jobs:
     - name: Build js-host-api
       run: |
           just build-js-host-api ${{ matrix.config }}
-
-    - name: lint
-      run: just lint ${{ matrix.config }}
 
     - name: test
       run: just test-all ${{ matrix.config }}

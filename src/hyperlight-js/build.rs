@@ -216,7 +216,7 @@ fn bundle_runtime() {
     // which normalises a relative path to absolute and requires the target file
     // to already exist. An absolute path is recommended to avoid any ambiguity
     // about the base directory.
-    let js_runtime_resource = match env::var("HYPERLIGHT_JS_RUNTIME_PATH") {
+    let selected_runtime = match env::var("HYPERLIGHT_JS_RUNTIME_PATH") {
         Ok(path) if !path.trim().is_empty() => {
             let canonical = PathBuf::from(&path)
                 .canonicalize()
@@ -237,6 +237,9 @@ fn bundle_runtime() {
     };
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
+    let js_runtime_resource = Path::new(&out_dir).join("hyperlight-js-runtime");
+    fs::copy(&selected_runtime, &js_runtime_resource)
+        .expect("Failed to copy JS runtime to OUT_DIR");
     let dest_path = Path::new(&out_dir).join("host_resource.rs");
     let contents =
         format!("pub (super) static JSRUNTIME: &[u8] = include_bytes!({js_runtime_resource:?});");

@@ -503,16 +503,15 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compact_str"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
 dependencies = [
  "castaway",
  "cfg-if",
  "itoa",
- "rustversion",
- "ryu",
  "static_assertions",
+ "zmij",
 ]
 
 [[package]]
@@ -2643,11 +2642,10 @@ dependencies = [
 
 [[package]]
 name = "oxc_resolver"
-version = "11.23.0"
+version = "11.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "136a61141e3b45c8e5388464cbd85dc0e0437b79d6e496803f47210386cf18ea"
+checksum = "2c7fd0839a5ecee17c0d2c88c8006e8ab4dff25d4a79e3a0bf7a9f0cce17f4e3"
 dependencies = [
- "cfg-if",
  "compact_str",
  "dashmap",
  "fast-glob",
@@ -3596,9 +3594,9 @@ dependencies = [
 
 [[package]]
 name = "simd-json"
-version = "0.17.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4255126f310d2ba20048db6321c81ab376f6a6735608bf11f0785c41f01f64e3"
+checksum = "6ebe141eb4a23ecc4d5de93fa5b139ac65dc07c38037a2fe9a8fb7c9d36bd832"
 dependencies = [
  "halfbrown",
  "ref-cast",

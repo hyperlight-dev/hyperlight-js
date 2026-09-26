@@ -30,8 +30,24 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn main() {
+    // Mirror the hypervisor cfg aliases used by hyperlight-host so that
+    // `#[cfg(kvm)]` etc. mean "feature enabled *and* on the platform that
+    // provides that hypervisor". Never use `#[cfg(feature = "kvm")]` directly.
+    cfg_aliases::cfg_aliases! {
+        kvm: { all(feature = "kvm", target_os = "linux") },
+        mshv3: { all(feature = "mshv3", target_os = "linux") },
+        hvf: { all(feature = "hvf", target_os = "macos") },
+        whp: { target_os = "windows" },
+        // hyperlight-host only implements crash dumps and the gdb debug stub on
+        // x86_64, so mirror its aliases — otherwise enabling either feature on
+        // aarch64 (e.g. macOS) would expose a wrapper around a method that does
+        // not exist.
+        crashdump: { all(feature = "crashdump", target_arch = "x86_64") },
+        gdb: { all(feature = "gdb", debug_assertions, target_arch = "x86_64") },
+    }
+
     if env::var("DOCS_RS").is_ok() {
-        // docs.rs runs offline, so we can't prepare the sysroot for x86_64-hyperlight-none in there.
+        // docs.rs runs offline, so we can't prepare the sysroot for the guest target in there.
         // just bundle an empty resource to make sure the docs build correctly.
         bundle_dummy();
         return;
@@ -122,8 +138,25 @@ fn find_target_dir() -> PathBuf {
     target_dir.to_path_buf()
 }
 
+/// The hyperlight guest target triple to build the JS runtime for.
+///
+/// The guest runs inside the VM on the same architecture as the host, so this is
+/// derived from the host crate's target arch rather than hardcoded. We pass it to
+/// `cargo hyperlight` explicitly instead of relying on its default, because its
+/// default is the arch of the `cargo-hyperlight` binary itself, which need not
+/// match the arch we are building the host for.
+fn guest_target() -> String {
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH is not set");
+    assert!(
+        matches!(arch.as_str(), "x86_64" | "aarch64"),
+        "unsupported host architecture for hyperlight-js: {arch}"
+    );
+    format!("{arch}-hyperlight-none")
+}
+
 fn build_js_runtime() -> PathBuf {
     let profile = env::var_os("PROFILE").unwrap();
+    let guest_target = guest_target();
 
     // Get the current target directory.
     let target_dir = find_target_dir();
@@ -161,6 +194,8 @@ fn build_js_runtime() -> PathBuf {
     let mut cargo_cmd = cargo_hyperlight::cargo().unwrap();
     let cmd = cargo_cmd
         .arg("build")
+        .arg("--target")
+        .arg(&guest_target)
         .arg("--profile")
         .arg(cargo_profile)
         .arg("-v")
@@ -192,7 +227,7 @@ fn build_js_runtime() -> PathBuf {
     });
 
     let resource = target_dir
-        .join("x86_64-hyperlight-none")
+        .join(&guest_target)
         .join(profile)
         .join("hyperlight-js-runtime");
 

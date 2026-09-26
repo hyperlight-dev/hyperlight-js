@@ -60,6 +60,8 @@ use super::ExecutionMonitor;
 /// # Platform Support
 ///
 /// - **Linux**: Uses `pthread_getcpuclockid` and `clock_gettime` (nanosecond precision)
+/// - **macOS**: Uses a mach thread port and `thread_info(THREAD_BASIC_INFO)`, summing
+///   user + system time (microsecond precision).
 /// - **Windows**: Uses `QueryThreadCycleTime` (reference cycles at CPU base frequency).
 ///   The timeout is converted to a cycle budget once at setup using the CPU's nominal
 ///   frequency from the Windows registry (`HKLM\...\CentralProcessor\0\~MHz`).
@@ -178,6 +180,7 @@ impl ExecutionMonitor for CpuTimeMonitor {
 /// unit-agnostic and just compares `u64` ticks against a deadline.
 ///
 /// - **Linux**: Ticks are nanoseconds (from `clock_gettime`)
+/// - **macOS**: Ticks are nanoseconds (from `thread_info`, microsecond resolution)
 /// - **Windows**: Ticks are TSC reference cycles (from `QueryThreadCycleTime`)
 #[cfg(target_os = "linux")]
 pub(crate) struct ThreadCpuHandle {
@@ -248,9 +251,140 @@ impl ThreadCpuHandle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// macOS
+// ---------------------------------------------------------------------------
+
+// These mach symbols are either not re-exported by the `libc` crate or are
+// deprecated there in favour of the `mach2` crate. They live in libSystem, which
+// is already linked, so declare the three we need rather than take a new
+// dependency for them. `mach_task_self` is a C macro over the `mach_task_self_`
+// global, so declare the global itself; it is only ever read.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn mach_port_deallocate(
+        task: libc::mach_port_t,
+        name: libc::mach_port_t,
+    ) -> libc::kern_return_t;
+    fn mach_thread_self() -> libc::mach_port_t;
+    #[allow(non_upper_case_globals)]
+    static mach_task_self_: libc::mach_port_t;
+}
+
+/// `libc::MACH_PORT_NULL` is typed `i32` while `mach_port_t` is `c_uint`, so use a
+/// correctly typed constant instead.
+#[cfg(target_os = "macos")]
+const MACH_PORT_NULL: libc::mach_port_t = 0;
+
+/// Handle for reading a specific thread's CPU time on macOS.
+///
+/// macOS has no `pthread_getcpuclockid`, and `CLOCK_THREAD_CPUTIME_ID` only ever
+/// reports the *calling* thread — which is no use here, because the monitor future
+/// is polled on a different thread from the vCPU thread it is watching. Instead we
+/// capture a mach send right to the thread at setup time and query it with
+/// `thread_info(THREAD_BASIC_INFO)`, which is readable from any thread.
+///
+/// Ticks are nanoseconds, though the underlying counters only have microsecond
+/// resolution.
+#[cfg(target_os = "macos")]
+pub(crate) struct ThreadCpuHandle {
+    // Send/Sync are correctly auto-derived here, unlike the Linux and Windows
+    // backends which need an explicit `unsafe impl`: `mach_port_t` is a bare
+    // `u32` name, not a pointer. Mach port rights are scoped to the task, so
+    // `thread_info` and `mach_port_deallocate` are safe to call on this name
+    // from any thread in the process.
+    thread_port: libc::mach_port_t,
+}
+
+#[cfg(target_os = "macos")]
+impl ThreadCpuHandle {
+    /// Create a handle for the current thread's CPU time.
+    pub fn for_current_thread() -> Option<Self> {
+        // mach_thread_self() returns a send right that we own and must release
+        // in Drop, unlike the Windows pseudo-handle from GetCurrentThread().
+        let thread_port = unsafe { mach_thread_self() };
+        if thread_port == MACH_PORT_NULL {
+            tracing::warn!("[CPU_TIME] mach_thread_self() returned a null port");
+            return None;
+        }
+
+        let handle = Self { thread_port };
+
+        // Verify up-front that the port is actually queryable, so that a broken
+        // setup is reported as "no CPU monitoring" rather than failing mid-run.
+        handle.elapsed()?;
+
+        Some(handle)
+    }
+
+    /// Get the elapsed CPU ticks (nanoseconds) for this thread.
+    ///
+    /// This is the thread's cumulative user + system time, matching the absolute
+    /// semantics of the Linux backend.
+    pub fn elapsed(&self) -> Option<u64> {
+        // SAFETY: an all-zero thread_basic_info is a valid initial value; every
+        // field is a plain integer. thread_info() overwrites it on success.
+        let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
+        let mut count = libc::THREAD_BASIC_INFO_COUNT;
+
+        let result = unsafe {
+            libc::thread_info(
+                self.thread_port,
+                libc::THREAD_BASIC_INFO as libc::thread_flavor_t,
+                &mut info as *mut libc::thread_basic_info as libc::thread_info_t,
+                &mut count,
+            )
+        };
+
+        // KERN_SUCCESS
+        if result != 0 {
+            tracing::warn!(
+                "[CPU_TIME] thread_info() failed with kern_return_t {}",
+                result
+            );
+            return None;
+        }
+
+        let to_nanos = |t: libc::time_value_t| {
+            (t.seconds.max(0) as u64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add((t.microseconds.max(0) as u64).saturating_mul(1_000))
+        };
+
+        Some(to_nanos(info.user_time).saturating_add(to_nanos(info.system_time)))
+    }
+
+    /// Convert a `Duration` timeout into a tick budget in the platform's native unit.
+    ///
+    /// On macOS, ticks are nanoseconds so this is an identity conversion.
+    pub fn deadline_for(&self, timeout: Duration) -> Option<u64> {
+        Some(timeout.as_nanos() as u64)
+    }
+
+    /// Convert ticks to approximate nanoseconds (for logging and sleep calculations).
+    ///
+    /// On macOS, ticks are nanoseconds so this is an identity conversion.
+    pub fn ticks_to_approx_nanos(&self, ticks: u64) -> u64 {
+        ticks
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ThreadCpuHandle {
+    fn drop(&mut self) {
+        if self.thread_port != MACH_PORT_NULL {
+            // Release the send right acquired by mach_thread_self().
+            unsafe { mach_port_deallocate(mach_task_self_, self.thread_port) };
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows
+// ---------------------------------------------------------------------------
+
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::WindowsProgramming::QueryThreadCycleTime;
-
 #[cfg(target_os = "windows")]
 pub(crate) struct ThreadCpuHandle {
     thread_handle: windows_sys::Win32::Foundation::HANDLE,

@@ -41,6 +41,10 @@ concurrency:
 
 env:
   WORKING_DIR: src/js-host-api
+  # Comma-delimited npm package names that have not yet been published and
+  # therefore cannot have a trusted publisher configured. Remove each package
+  # in a follow-up PR after its first release and trusted-publisher setup.
+  FIRST_TIME_PACKAGES: ",@hyperlight-dev/js-host-api-darwin-arm64,"
 
 jobs:
   build:
@@ -57,6 +61,9 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
             build_name: win32-x64-msvc
+          - target: aarch64-apple-darwin
+            os: macos-15
+            build_name: darwin-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -75,6 +82,33 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      # Building js-host-api runs hyperlight-js's build.rs, which builds the JS
+      # guest runtime for a bare-metal ELF target. macOS's system archiver
+      # cannot produce ELF archives, and cargo-hyperlight silently falls back to
+      # it when llvm-ar is absent from PATH, leaving every QuickJS and libc
+      # symbol undefined at the guest link. Take llvm-ar from rustup's
+      # llvm-tools component so this does not depend on a package manager.
+      - name: Set up LLVM guest toolchain (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          llvm_bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+          for attempt in 1 2 3; do
+            if [ -x "$llvm_bin/llvm-ar" ]; then
+              break
+            fi
+            echo "Installing llvm-tools (attempt $attempt)"
+            rustup component add llvm-tools || true
+            [ -x "$llvm_bin/llvm-ar" ] || sleep $((attempt * 10))
+          done
+          if [ ! -x "$llvm_bin/llvm-ar" ]; then
+            echo "llvm-ar not found in $llvm_bin" >&2
+            exit 1
+          fi
+          echo "$llvm_bin" >> "$GITHUB_PATH"
+          "$llvm_bin/llvm-ar" --version
 
       - name: Install dependencies
         working-directory: ${{ env.WORKING_DIR }}
@@ -173,6 +207,12 @@ jobs:
           name: bindings-win32-x64-msvc
           path: ${{ env.WORKING_DIR }}/artifacts/win32-x64-msvc
 
+      - name: Download macOS arm64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: bindings-darwin-arm64
+          path: ${{ env.WORKING_DIR }}/artifacts/darwin-arm64
+
       - name: Download JS bindings
         uses: actions/download-artifact@v8
         with:
@@ -189,9 +229,11 @@ jobs:
           mv artifacts/linux-x64-gnu/*.node npm/linux-x64-gnu/js-host-api.linux-x64-gnu.node
           mv artifacts/linux-x64-musl/*.node npm/linux-x64-musl/js-host-api.linux-x64-musl.node
           mv artifacts/win32-x64-msvc/*.node npm/win32-x64-msvc/js-host-api.win32-x64-msvc.node
+          mv artifacts/darwin-arm64/*.node npm/darwin-arm64/js-host-api.darwin-arm64.node
           ls -la npm/linux-x64-gnu/
           ls -la npm/linux-x64-musl/
           ls -la npm/win32-x64-msvc/
+          ls -la npm/darwin-arm64/
 
       - name: Set package versions
         working-directory: ${{ env.WORKING_DIR }}
@@ -203,6 +245,7 @@ jobs:
           cd npm/linux-x64-gnu && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../linux-x64-musl && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../win32-x64-msvc && npm version "$VERSION" --no-git-tag-version --allow-same-version
+          cd ../darwin-arm64 && npm version "$VERSION" --no-git-tag-version --allow-same-version
         env:
           VERSION: ${{ inputs.version }}
 
@@ -239,66 +282,55 @@ jobs:
         run: ./test-pack.sh
 
       # ── Authentication strategy ────────────────────────────────────
-      # Production releases via CreateRelease.yml use trusted publishing
-      # (OIDC) — npm auto-detects the id-token and exchanges it for a
-      # short-lived publish credential. Provenance attestations are
-      # generated automatically. The --provenance flag is added explicitly
-      # so the build fails loudly if OIDC is misconfigured.
-      #
-      # Manual workflow_dispatch requires an NPM_TOKEN repo secret because
-      # trusted publishing is configured for CreateRelease.yml only.
-      # Provenance is NOT available for token-based publishing.
-      # You should almost never need to publish manually — if you do,
-      # see docs/release.md for the full (deliberately painful) steps.
-      - name: Validate NPM_TOKEN for manual dispatch
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
+      # Established packages use trusted publishing (OIDC). Packages listed
+      # in FIRST_TIME_PACKAGES use NPM_TOKEN for this release only because
+      # npm has no trusted-publisher configuration until the package exists.
+      # Token-published packages cannot receive npm provenance attestations.
+      - name: Validate NPM_TOKEN for token-published packages
+        if: ${{ !inputs.dry_run && (github.event_name == 'workflow_dispatch' || env.FIRST_TIME_PACKAGES != '') }}
         run: |
           if [ -z "$NPM_TOKEN" ]; then
-            echo "::error::NPM_TOKEN repo secret is required for manual workflow_dispatch publishing."
-            echo "::error::See docs/release.md 'Manual npm publishing (emergency only)' for instructions."
+            echo "::error::NPM_TOKEN repo secret is required for manual publishing or first-time packages."
+            echo "::error::See docs/release.md for the first-time package bootstrap procedure."
             exit 1
           fi
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # Set provenance flag once — OIDC path gets --provenance (fails loud
-      # if misconfigured), token path skips it (not supported).
-      - name: Set publish flags
-        id: publish-flags
-        run: |
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo "provenance=--provenance" >> "$GITHUB_OUTPUT"
-          else
-            echo "provenance=" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish Linux GNU package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu
-        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
+        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-x64-gnu,')) && '' || '--provenance' }}
         env:
-          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-x64-gnu,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Linux musl package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-musl
-        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
+        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-x64-musl,')) && '' || '--provenance' }}
         env:
-          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-x64-musl,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Windows package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/win32-x64-msvc
-        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
+        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-win32-x64-msvc,')) && '' || '--provenance' }}
         env:
-          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-win32-x64-msvc,')) && secrets.NPM_TOKEN || '' }}
+
+      - name: Publish macOS arm64 package
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ env.WORKING_DIR }}/npm/darwin-arm64
+        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-darwin-arm64,')) && '' || '--provenance' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-darwin-arm64,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish main package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm publish --access public --ignore-scripts ${{ steps.publish-flags.outputs.provenance }}
+        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api,')) && '' || '--provenance' }}
         env:
-          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && secrets.NPM_TOKEN || '' }}
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Verify all packages published
         if: ${{ !inputs.dry_run }}
@@ -309,7 +341,8 @@ jobs:
           for pkg in "@hyperlight-dev/js-host-api" \
                      "@hyperlight-dev/js-host-api-linux-x64-gnu" \
                      "@hyperlight-dev/js-host-api-linux-x64-musl" \
-                     "@hyperlight-dev/js-host-api-win32-x64-msvc"; do
+                     "@hyperlight-dev/js-host-api-win32-x64-msvc" \
+                     "@hyperlight-dev/js-host-api-darwin-arm64"; do
             if npm view "$pkg@$VERSION" version > /dev/null 2>&1; then
               echo "✅ $pkg@$VERSION published"
             else
@@ -338,6 +371,9 @@ jobs:
           echo ""
           echo "--- @hyperlight-dev/js-host-api-win32-x64-msvc ---"
           npm pack ./npm/win32-x64-msvc --dry-run
+          echo ""
+          echo "--- @hyperlight-dev/js-host-api-darwin-arm64 ---"
+          npm pack ./npm/darwin-arm64 --dry-run
           echo ""
           echo "--- @hyperlight-dev/js-host-api ---"
           npm pack --dry-run

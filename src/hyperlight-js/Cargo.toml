@@ -29,7 +29,7 @@ tracing = "0.1.44"
 # Optional dependencies for execution monitors
 tokio = { version = "1.52", features = ["rt-multi-thread", "time", "sync", "macros"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -37,6 +37,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [build-dependencies]
 cargo-hyperlight = "0.1.14"
+cfg_aliases = "0.2.1"
 serde_json = { version = "1.0" }
 serde = { version = "1.0", features = ["derive"] }
 
@@ -67,12 +68,16 @@ tracing-tracy = { version = "0.11", features = ["timer-fallback", "ondemand"] }
 uuid = "1.23.3"
 
 [features]
-default = ["function_call_metrics", "kvm", "mshv3"]
+default = ["function_call_metrics", "kvm", "mshv3", "hvf"]
 crashdump = ["hyperlight-host/crashdump"]
 gdb = ["hyperlight-host/gdb"]
 function_call_metrics = []
+# Hypervisor backends. Each is only active on the platform that provides it
+# (`kvm`/`mshv3` on Linux, `hvf` on macOS, WHP is always on for Windows), so
+# enabling all three by default is what makes a single build work everywhere.
 kvm = ["hyperlight-host/kvm"]
 mshv3 = ["hyperlight-host/mshv3"]
+hvf = ["hyperlight-host/hvf"]
 print_debug = ["hyperlight-host/print_debug"]
 trace_guest = ["hyperlight-host/trace_guest"]
 guest-call-stats = []

@@ -1,0 +1,27 @@
+{
+  "name": "@hyperlight-dev/js-host-api-darwin-arm64",
+  "version": "0.4.0",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "js-host-api.darwin-arm64.node",
+  "files": [
+    "js-host-api.darwin-arm64.node"
+  ],
+  "description": "Node.js API bindings for Hyperlight JS - macOS arm64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyperlight-dev/hyperlight-js.git"
+  },
+  "homepage": "https://github.com/hyperlight-dev/hyperlight-js#readme",
+  "bugs": {
+    "url": "https://github.com/hyperlight-dev/hyperlight-js/issues"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

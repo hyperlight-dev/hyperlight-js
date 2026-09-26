@@ -8,7 +8,9 @@ latest-release:= if os() == "windows" {"$(git tag -l --sort=v:refname | select -
 PWD := replace(justfile_dir(), "\\", "/")
 
 # Set the HYPERLIGHT_CFLAGS so cargo-hyperlight applies them when building the runtimes:
-# * include the stubs required by hyperlight-js-runtime
+# * include the headers required by hyperlight-js-runtime (notably the <math.h>
+#   shim that keeps newlib's classification macros off the long double path,
+#   which would otherwise need soft-float builtins the guest does not link)
 # * define __wasi__ as this disables threading support in quickjs
 export HYPERLIGHT_CFLAGS := \
     "-I" + PWD + "/src/hyperlight-js-runtime/include " + \
@@ -17,6 +19,10 @@ export HYPERLIGHT_CFLAGS := \
 
 # On Windows, use Ninja generator for CMake to avoid aws-lc-sys build issues with Visual Studio generator
 export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
+
+# The hyperlight guest target. The guest runs on the same architecture as the
+# host, so derive it rather than hardcoding x86_64.
+guest-target := arch() + "-hyperlight-none"
 
 ensure-tools:
     cargo install cargo-hyperlight --locked
@@ -41,6 +47,7 @@ check-license-headers:
 
 clippy target=default-target features="": (ensure-tools)
     cargo hyperlight clippy -p hyperlight-js-runtime \
+            --target={{ guest-target }} \
             --profile={{ if target == "debug" {"dev"} else { target } }} \
             -- -D warnings
     cargo clippy --all-targets \
@@ -176,7 +183,7 @@ test-js-host-api target=default-target features="": (build-js-host-api target fe
 # so setting/unsetting the env var triggers a rebuild automatically.
 
 # Base path to the extended runtime fixture target directory
-extended_runtime_target := replace(justfile_dir(), "\\", "/") + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target/x86_64-hyperlight-none"
+extended_runtime_target := replace(justfile_dir(), "\\", "/") + "/src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target/" + guest-target
 
 test-native-modules target=default-target: (ensure-tools) (check-fixture-lock) (_test-native-modules-unit target) (_test-native-modules-build-guest target) (_test-native-modules-vm target) (_test-native-modules-restore target)
 
@@ -187,6 +194,7 @@ _test-native-modules-unit target=default-target:
 [private]
 _test-native-modules-build-guest target=default-target:
     cargo hyperlight build \
+        --target={{ guest-target }} \
         --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
         --profile={{ if target == "debug" {"dev"} else { target } }} \
         --target-dir src/hyperlight-js-runtime/tests/fixtures/extended_runtime/target
@@ -218,11 +226,12 @@ set-version version:
     cargo update \
         --manifest-path src/hyperlight-js-runtime/tests/fixtures/extended_runtime/Cargo.toml \
         -p hyperlight-js-runtime -p hyperlight-js-common
-    # npm: main + the 3 platform package.json versions (--ignore-scripts avoids needing node_modules)
+    # npm: main + the 4 platform package.json versions (--ignore-scripts avoids needing node_modules)
     cd src/js-host-api && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/linux-x64-gnu && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/linux-x64-musl && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     cd src/js-host-api/npm/win32-x64-msvc && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
+    cd src/js-host-api/npm/darwin-arm64 && npm version {{ version }} --no-git-tag-version --allow-same-version --ignore-scripts
     # Verify the npm lockfile
     cd src/js-host-api && npm ci --dry-run --omit=optional --ignore-scripts
 

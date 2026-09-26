@@ -1,0 +1,6 @@
+# Hypervisor.framework requires the com.apple.security.hypervisor entitlement,
+# so run macOS host binaries through a wrapper that ad-hoc signs them first.
+# Cargo resolves this path relative to this file, not the working directory,
+# so it also applies to the recipes that cd into src/hyperlight-js.
+[target.'cfg(target_os = "macos")']
+runner = "dev/macos-sign-and-run.sh"

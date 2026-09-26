@@ -44,7 +44,7 @@ env:
   # Comma-delimited npm package names that have not yet been published and
   # therefore cannot have a trusted publisher configured. Remove each package
   # in a follow-up PR after its first release and trusted-publisher setup.
-  FIRST_TIME_PACKAGES: ",@hyperlight-dev/js-host-api-darwin-arm64,"
+  FIRST_TIME_PACKAGES: ",@hyperlight-dev/js-host-api-darwin-arm64,@hyperlight-dev/js-host-api-linux-arm64-gnu,"
 
 jobs:
   build:
@@ -64,6 +64,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-15
             build_name: darwin-arm64
+          - target: aarch64-unknown-linux-gnu
+            os: [self-hosted, Linux, arm64, kvm]
+            build_name: linux-arm64-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -213,6 +216,12 @@ jobs:
           name: bindings-darwin-arm64
           path: ${{ env.WORKING_DIR }}/artifacts/darwin-arm64
 
+      - name: Download Linux arm64 GNU artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: bindings-linux-arm64-gnu
+          path: ${{ env.WORKING_DIR }}/artifacts/linux-arm64-gnu
+
       - name: Download JS bindings
         uses: actions/download-artifact@v8
         with:
@@ -230,10 +239,12 @@ jobs:
           mv artifacts/linux-x64-musl/*.node npm/linux-x64-musl/js-host-api.linux-x64-musl.node
           mv artifacts/win32-x64-msvc/*.node npm/win32-x64-msvc/js-host-api.win32-x64-msvc.node
           mv artifacts/darwin-arm64/*.node npm/darwin-arm64/js-host-api.darwin-arm64.node
+          mv artifacts/linux-arm64-gnu/*.node npm/linux-arm64-gnu/js-host-api.linux-arm64-gnu.node
           ls -la npm/linux-x64-gnu/
           ls -la npm/linux-x64-musl/
           ls -la npm/win32-x64-msvc/
           ls -la npm/darwin-arm64/
+          ls -la npm/linux-arm64-gnu/
 
       - name: Set package versions
         working-directory: ${{ env.WORKING_DIR }}
@@ -246,6 +257,7 @@ jobs:
           cd ../linux-x64-musl && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../win32-x64-msvc && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../darwin-arm64 && npm version "$VERSION" --no-git-tag-version --allow-same-version
+          cd ../linux-arm64-gnu && npm version "$VERSION" --no-git-tag-version --allow-same-version
         env:
           VERSION: ${{ inputs.version }}
 
@@ -325,6 +337,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-darwin-arm64,')) && secrets.NPM_TOKEN || '' }}
 
+      - name: Publish Linux arm64 GNU package
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ env.WORKING_DIR }}/npm/linux-arm64-gnu
+        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-arm64-gnu,')) && '' || '--provenance' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-arm64-gnu,')) && secrets.NPM_TOKEN || '' }}
+
       - name: Publish main package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
@@ -342,7 +361,8 @@ jobs:
                      "@hyperlight-dev/js-host-api-linux-x64-gnu" \
                      "@hyperlight-dev/js-host-api-linux-x64-musl" \
                      "@hyperlight-dev/js-host-api-win32-x64-msvc" \
-                     "@hyperlight-dev/js-host-api-darwin-arm64"; do
+                     "@hyperlight-dev/js-host-api-darwin-arm64" \
+                     "@hyperlight-dev/js-host-api-linux-arm64-gnu"; do
             if npm view "$pkg@$VERSION" version > /dev/null 2>&1; then
               echo "✅ $pkg@$VERSION published"
             else
@@ -374,6 +394,9 @@ jobs:
           echo ""
           echo "--- @hyperlight-dev/js-host-api-darwin-arm64 ---"
           npm pack ./npm/darwin-arm64 --dry-run
+          echo ""
+          echo "--- @hyperlight-dev/js-host-api-linux-arm64-gnu ---"
+          npm pack ./npm/linux-arm64-gnu --dry-run
           echo ""
           echo "--- @hyperlight-dev/js-host-api ---"
           npm pack --dry-run

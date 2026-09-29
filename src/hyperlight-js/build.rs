@@ -291,7 +291,7 @@ fn bundle_runtime() {
     // (the hyperlight-js crate root), not the invoking host project. Prefer an
     // absolute path. build_js_runtime canonicalizes it and requires it to exist.
     let source = runtime_source(env::var_os("HYPERLIGHT_JS_RUNTIME_MANIFEST_PATH"));
-    let js_runtime_resource = match source {
+    let selected_runtime = match source {
         RuntimeSource::Manifest { path } => build_js_runtime(Some(path)),
         RuntimeSource::Default => build_js_runtime(None),
     };

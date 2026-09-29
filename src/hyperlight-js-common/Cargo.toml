@@ -16,3 +16,4 @@ crate (which compiles for `x86_64-hyperlight-none`).
 
 [dependencies]
 # no_std + alloc only — no std, no serde, no anyhow
+bytes = { version = "1", default-features = false }

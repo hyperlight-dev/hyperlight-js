@@ -214,11 +214,137 @@ fn host_fn_with_unusual_names() {
     assert!(res == "42");
 }
 
+/// Minimum pools allow external event data and a callback larger than a small slot.
+#[test]
+fn minimum_pool_pages_support_host_callbacks() {
+    let event = serde_json::to_string(&"x".repeat(1024)).unwrap();
+
+    for (size, input_pages, output_pages) in [
+        (256, 1, 2),
+        (3001, 2, 3),
+        (16 * 1024, 8, 9),
+        (32 * 1024, 16, 17),
+    ] {
+        let builder = SandboxBuilder::new()
+            .with_input_transport_pool_pages(1)
+            .with_output_transport_pool_pages(1)
+            .with_input_transport_buffer_size(size)
+            .with_output_transport_buffer_size(size);
+
+        let config = builder.get_config();
+        assert_eq!(config.get_h2g_pool_pages(), input_pages);
+        assert_eq!(config.get_g2h_pool_pages(), output_pages);
+
+        let mut proto = builder.build().unwrap();
+        proto
+            .register("host", "echo", |value: String| value)
+            .unwrap();
+
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox
+            .add_handler(
+                "handler",
+                Script::from_content(
+                    "import { echo } from 'host'; function handler(event) { return echo(event); }",
+                ),
+            )
+            .unwrap();
+
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+        assert_eq!(
+            loaded.handle_event("handler", event.clone(), None).unwrap(),
+            event
+        );
+    }
+}
+
 // ── Binary data (register_js) tests ──────────────────────────────────
 //
 // These test the binary sidecar round-trip through the hypervisor using
 // register_js directly. register_js is #[doc(hidden)] but still pub —
 // it's the foundation of the NAPI bridge and needs integration coverage.
+
+/// Binary framing survives transport segmentation, queue reuse, and snapshots.
+#[test]
+fn register_js_chunked_sidecar_round_trip() {
+    let handler = Script::from_content(
+        r#"
+        import * as host from "host";
+        function handler(event) {
+            const source = new Uint8Array(event.size + 2);
+
+            for (let i = 0; i < source.length; i++) {
+                source[i] = i % 251;
+            }
+
+            const result = host.echo(
+                { payload: source.subarray(1, event.size + 1), empty: new Uint8Array(0) },
+                new Uint8Array([9, 8, 7]),
+            );
+            const valid = result instanceof Uint8Array
+                && result.length === event.size
+                && result.every((value, index) => value === (index + 1) % 251);
+            return { valid, length: result.length };
+        }
+        "#,
+    );
+
+    let mut proto = SandboxBuilder::new()
+        .with_input_transport_pool_pages(64)
+        .with_output_transport_pool_pages(128)
+        .with_guest_scratch_size(2 * 1024 * 1024)
+        .build()
+        .unwrap();
+
+    proto
+        .host_module("host")
+        .register_js("echo", |args, mut blobs| {
+            assert_eq!(
+                args,
+                serde_json::json!([
+                    { "payload": { "__bin__": 0 }, "empty": { "__bin__": 1 } },
+                    { "__bin__": 2 },
+                ])
+            );
+            assert_eq!(blobs.len(), 3);
+            assert!(blobs[1].is_empty());
+            assert_eq!(blobs[2], [9, 8, 7]);
+
+            for (index, byte) in blobs[0].iter().enumerate() {
+                assert_eq!(*byte as usize, (index + 1) % 251);
+            }
+
+            Ok(hyperlight_js::FnReturn::Binary(blobs.remove(0)))
+        });
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("handler", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+    let snapshot = loaded.snapshot().unwrap();
+
+    for _ in 0..8 {
+        for size in [
+            0,
+            1,
+            4095,
+            4096,
+            4097,
+            12 * 1024 + 13,
+            16383,
+            16384,
+            16385,
+            128 * 1024 + 13,
+        ] {
+            let result = loaded
+                .handle_event("handler", format!(r#"{{"size":{size}}}"#), None)
+                .unwrap();
+
+            assert_eq!(result, format!(r#"{{"valid":true,"length":{size}}}"#));
+        }
+
+        loaded.restore(snapshot.clone()).unwrap();
+    }
+}
 
 #[test]
 fn register_js_binary_arg_round_trip() {
@@ -709,6 +835,61 @@ fn host_fn_with_zero() {
 // ── Nested binary return tests (JsonWithBinaries) ────────────────────
 // These test the sidecar path for host functions that return objects or
 // arrays containing binary data alongside JSON fields.
+
+/// Borrowed return decoding still produces independently owned, mutable arrays.
+#[test]
+fn register_js_repeated_binary_returns_are_independent() {
+    let mut proto = SandboxBuilder::new().build().unwrap();
+
+    proto
+        .host_module("host")
+        .register_js("get_payload", |_, _| {
+            let sidecar = hyperlight_js_common::encode_binaries(&[b"ABC".as_slice(), b""])
+                .map_err(|error| hyperlight_js::HyperlightError::Error(error.to_string()))?;
+
+            Ok(hyperlight_js::FnReturn::JsonWithBinaries(
+                r#"{"first":{"__bin__":0},"again":{"__bin__":0},"empty":{"__bin__":1}}"#.into(),
+                sidecar,
+            ))
+        });
+
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox
+        .add_handler(
+            "handler",
+            Script::from_content(
+                r#"
+                import * as host from "host";
+                let retained;
+                function handler() {
+                    const result = host.get_payload();
+                    result.first[0] = 99;
+                    result.again[0] = 77;
+                    host.get_payload();
+                    const previousValid = !retained || retained[0] === 77;
+                    retained = result.again;
+                    return {
+                        independent: result.first[0] === 99 && result.again[0] === 77,
+                        previousValid,
+                        length: result.again.length,
+                        empty: result.empty.length,
+                    };
+                }
+                "#,
+            ),
+        )
+        .unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    for _ in 0..3 {
+        let result = loaded.handle_event("handler", "{}".into(), None).unwrap();
+
+        assert_eq!(
+            result,
+            r#"{"independent":true,"previousValid":true,"length":3,"empty":0}"#
+        );
+    }
+}
 
 #[test]
 fn register_js_nested_binary_return_in_object() {

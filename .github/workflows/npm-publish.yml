@@ -162,8 +162,72 @@ jobs:
             ${{ env.WORKING_DIR }}/index.d.ts
           if-no-files-found: error
 
-  publish:
+  validate-linux-arm64:
     needs: build
+    runs-on: [self-hosted, Linux, arm64, kvm]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.3'
+          cache: 'npm'
+          cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      - name: Verify Linux arm64 runner
+        run: |
+          test "$(uname -m)" = "aarch64"
+          test "$(node -p process.arch)" = "arm64"
+
+      - name: Download Linux arm64 GNU artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: bindings-linux-arm64-gnu
+          path: ${{ env.WORKING_DIR }}/artifacts/linux-arm64-gnu
+
+      - name: Download JS bindings
+        uses: actions/download-artifact@v8
+        with:
+          name: js-bindings
+          path: ${{ env.WORKING_DIR }}/js-bindings
+
+      - name: Prepare Linux arm64 package
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          mv artifacts/linux-arm64-gnu/*.node npm/linux-arm64-gnu/js-host-api.linux-arm64-gnu.node
+          mv js-bindings/index.js index.js
+          mv js-bindings/index.d.ts index.d.ts
+
+      - name: Set package versions
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
+          cd npm/linux-arm64-gnu
+          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
+        env:
+          VERSION: ${{ inputs.version }}
+
+      - name: Update Linux arm64 optional dependency version
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.optionalDependencies['@hyperlight-dev/js-host-api-linux-arm64-gnu'] = process.env.VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+        env:
+          VERSION: ${{ inputs.version }}
+
+      - name: Validate Linux arm64 release tarballs
+        working-directory: ${{ env.WORKING_DIR }}
+        run: ./test-pack.sh
+        env:
+          PLATFORM_PACKAGE: linux-arm64-gnu
+
+  publish:
+    needs: [build, validate-linux-arm64]
     # Trusted publishing (OIDC) requires GitHub-hosted runners.
     # The publish job only downloads pre-built artifacts and runs npm publish,
     # so it does not need self-hosted runners with KVM/Hyperlight.
@@ -351,7 +415,7 @@ jobs:
       - name: Publish Linux arm64 GNU package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-arm64-gnu
-        run: npm publish --access public --ignore-scripts ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-arm64-gnu,')) && '' || '--provenance' }}
+        run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-arm64-gnu,')) && secrets.NPM_TOKEN || '' }}
 

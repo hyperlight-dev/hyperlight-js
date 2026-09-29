@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACK_DIR="/tmp/hyperlight-npm-test-pack"
 INSTALL_DIR="/tmp/hyperlight-npm-test-install"
 MACOS_INSTALL_DIR="/tmp/hyperlight-npm-test-install-macos"
+PLATFORM_PACKAGE="${PLATFORM_PACKAGE:-linux-x64-gnu}"
+PLATFORM_BINARY="js-host-api.${PLATFORM_PACKAGE}.node"
 REQUIRE_MACOS_PACKAGE="${REQUIRE_MACOS_PACKAGE:-0}"
 
 # ── Cleanup ──────────────────────────────────────────────────────────
@@ -27,16 +29,16 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-# In CI the .node binary is already in npm/linux-x64-gnu/; locally it's in the project root.
-if ls npm/linux-x64-gnu/*.node 1>/dev/null 2>&1; then
-    echo "📦 Platform binary already present in npm/linux-x64-gnu/"
+# In CI the .node binary is already in its platform package; locally it's in the project root.
+if ls "npm/${PLATFORM_PACKAGE}"/*.node 1>/dev/null 2>&1; then
+    echo "📦 Platform binary already present in npm/${PLATFORM_PACKAGE}/"
 elif ls ./*.node 1>/dev/null 2>&1; then
     NATIVE_BINARY=$(ls ./*.node | head -1)
     BINARY_NAME=$(basename "${NATIVE_BINARY}")
     echo "📦 Copying ${BINARY_NAME} into platform package..."
-    cp "${NATIVE_BINARY}" npm/linux-x64-gnu/"${BINARY_NAME}"
+    cp "${NATIVE_BINARY}" "npm/${PLATFORM_PACKAGE}/${PLATFORM_BINARY}"
 else
-    echo "❌ Error: No .node binary found. Run 'npm run build' first, or ensure CI artifacts are staged." >&2
+    echo "❌ Error: No .node binary found for ${PLATFORM_PACKAGE}. Run 'npm run build' first, or ensure CI artifacts are staged." >&2
     exit 1
 fi
 
@@ -50,8 +52,8 @@ else
 fi
 
 # ── Step 1: Pack platform package ───────────────────────────────────
-echo "📦 Packing platform package (linux-x64-gnu)..."
-PLATFORM_TGZ=$(npm pack ./npm/linux-x64-gnu --pack-destination "${PACK_DIR}" 2>/dev/null)
+echo "📦 Packing platform package (${PLATFORM_PACKAGE})..."
+PLATFORM_TGZ=$(npm pack "./npm/${PLATFORM_PACKAGE}" --pack-destination "${PACK_DIR}" 2>/dev/null)
 PLATFORM_TGZ_PATH="${PACK_DIR}/${PLATFORM_TGZ}"
 echo "   → ${PLATFORM_TGZ_PATH}"
 
@@ -114,10 +116,10 @@ echo ""
 echo "✅ Validating platform package contents..."
 PLATFORM_FILES=$(tar tzf "${PLATFORM_TGZ_PATH}")
 
-if echo "${PLATFORM_FILES}" | grep -q '\.node$'; then
-    echo "   ✅ .node binary present"
+if echo "${PLATFORM_FILES}" | grep -q "^package/${PLATFORM_BINARY}$"; then
+    echo "   ✅ ${PLATFORM_BINARY} present"
 else
-    echo "   ❌ MISSING: .node binary" >&2
+    echo "   ❌ MISSING: ${PLATFORM_BINARY}" >&2
     exit 1
 fi
 

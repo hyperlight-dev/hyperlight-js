@@ -82,6 +82,7 @@ jobs:
   publish-npm-packages:
     needs: [build, benchmarks, set-version]
     uses: ./.github/workflows/npm-publish.yml
+    secrets: inherit
     with:
       version: ${{ needs.set-version.outputs.version }}
       dry_run: ${{ needs.set-version.outputs.dry_run != 'false' }}

@@ -12,10 +12,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACK_DIR="/tmp/hyperlight-npm-test-pack"
 INSTALL_DIR="/tmp/hyperlight-npm-test-install"
+MACOS_INSTALL_DIR="/tmp/hyperlight-npm-test-install-macos"
+REQUIRE_MACOS_PACKAGE="${REQUIRE_MACOS_PACKAGE:-0}"
 
 # ── Cleanup ──────────────────────────────────────────────────────────
-rm -rf "${PACK_DIR}" "${INSTALL_DIR}"
-mkdir -p "${PACK_DIR}" "${INSTALL_DIR}"
+rm -rf "${PACK_DIR}" "${INSTALL_DIR}" "${MACOS_INSTALL_DIR}"
+mkdir -p "${PACK_DIR}" "${INSTALL_DIR}" "${MACOS_INSTALL_DIR}"
 
 cd "${SCRIPT_DIR}"
 
@@ -38,11 +40,27 @@ else
     exit 1
 fi
 
+if ls npm/darwin-arm64/*.node 1>/dev/null 2>&1; then
+    HAS_MACOS_PACKAGE=1
+elif [ "${REQUIRE_MACOS_PACKAGE}" = "1" ]; then
+    echo "❌ Error: No macOS arm64 .node binary found in npm/darwin-arm64/." >&2
+    exit 1
+else
+    HAS_MACOS_PACKAGE=0
+fi
+
 # ── Step 1: Pack platform package ───────────────────────────────────
 echo "📦 Packing platform package (linux-x64-gnu)..."
 PLATFORM_TGZ=$(npm pack ./npm/linux-x64-gnu --pack-destination "${PACK_DIR}" 2>/dev/null)
 PLATFORM_TGZ_PATH="${PACK_DIR}/${PLATFORM_TGZ}"
 echo "   → ${PLATFORM_TGZ_PATH}"
+
+if [ "${HAS_MACOS_PACKAGE}" = "1" ]; then
+    echo "📦 Packing platform package (darwin-arm64)..."
+    MACOS_TGZ=$(npm pack ./npm/darwin-arm64 --pack-destination "${PACK_DIR}" 2>/dev/null)
+    MACOS_TGZ_PATH="${PACK_DIR}/${MACOS_TGZ}"
+    echo "   → ${MACOS_TGZ_PATH}"
+fi
 
 # ── Step 2: Pack main package ───────────────────────────────────────
 echo "📦 Packing main package..."
@@ -101,6 +119,25 @@ if echo "${PLATFORM_FILES}" | grep -q '\.node$'; then
 else
     echo "   ❌ MISSING: .node binary" >&2
     exit 1
+fi
+
+if [ "${HAS_MACOS_PACKAGE}" = "1" ]; then
+    echo ""
+    echo "✅ Validating macOS arm64 platform package contents..."
+    MACOS_FILES=$(tar tzf "${MACOS_TGZ_PATH}")
+    if echo "${MACOS_FILES}" | grep -q '^package/js-host-api\.darwin-arm64\.node$'; then
+        echo "   ✅ macOS arm64 .node binary present"
+    else
+        echo "   ❌ MISSING: macOS arm64 .node binary" >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "📥 Installing macOS arm64 tarball into ${MACOS_INSTALL_DIR}..."
+    cd "${MACOS_INSTALL_DIR}"
+    npm init -y --silent >/dev/null 2>&1
+    npm install "${MACOS_TGZ_PATH}" --no-save --force --ignore-scripts 2>&1 | sed 's/^/   /'
+    test -f "node_modules/@hyperlight-dev/js-host-api-darwin-arm64/js-host-api.darwin-arm64.node"
 fi
 
 # ── Step 6: Install from tarballs into a clean directory ────────────

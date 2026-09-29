@@ -55,7 +55,7 @@ Pushing a `vX.Y.Z` tag is the **only** manual trigger you need — you do **not*
 3. **Publishes the crates to crates.io** — in dependency order (`hyperlight-js-common` → `hyperlight-js-runtime` → `hyperlight-js`). Verify on the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js).
 4. **Publishes the npm packages to npmjs.com** — `@hyperlight-dev/js-host-api` and its platform-specific binary packages, with their versions set from the tag. Verify on the [npmjs.com package page](https://www.npmjs.com/package/@hyperlight-dev/js-host-api).
 
-Both crates.io and npm publishing use trusted publishing (OIDC), so no `NPM_TOKEN` or crates.io token secret is needed for the `CreateRelease` workflow. Provenance attestations are generated automatically for the npm packages.
+Both crates.io and established npm packages use trusted publishing (OIDC), so they do not need long-lived publishing tokens. A new npm package needs a short-lived `NPM_TOKEN` for its first release, as described below. Provenance attestations are generated for every npm package.
 
 > **Note:** Only a `vX.Y.Z` **tag** push triggers a real release. Pushing to `main`, or running the workflow manually with **Run workflow**, performs a **dry run** — it builds and validates everything but publishes nothing.
 
@@ -68,11 +68,34 @@ Trusted publishing is configured on [npmjs.com](https://www.npmjs.com/) for each
 3. Set **Organization**: `hyperlight-dev`, **Repository**: `hyperlight-js`, **Workflow**: `CreateRelease.yml`
 4. Save
 
-This must be done for all 4 packages:
+This must be done for all 5 packages:
 - `@hyperlight-dev/js-host-api`
 - `@hyperlight-dev/js-host-api-linux-x64-gnu`
 - `@hyperlight-dev/js-host-api-linux-x64-musl`
 - `@hyperlight-dev/js-host-api-win32-x64-msvc`
+- `@hyperlight-dev/js-host-api-darwin-arm64`
+
+> **Note:** Trusted publishers are configured per package, and npm cannot configure one for a
+> package that does not exist yet. The publish workflow therefore has a temporary
+> `FIRST_TIME_PACKAGES` list in `.github/workflows/npm-publish.yml`. Packages in that list use
+> the `NPM_TOKEN` repository secret for their first release; all other packages continue to use
+> trusted publishing (OIDC). Both authentication paths publish with npm provenance.
+>
+> For a new package, add its full npm name to `FIRST_TIME_PACKAGES`, ensure the short-lived
+> `NPM_TOKEN` secret is available, and release normally from the `CreateRelease` workflow. After
+> the release, configure the package's GitHub Actions trusted publisher using the settings above,
+> delete the `NPM_TOKEN` repository secret, revoke the short-lived npm token, then open a
+> follow-up PR that removes the package from `FIRST_TIME_PACKAGES` and regenerates
+> `src/js-host-api/package-lock.json` with:
+>
+> ```console
+> cd src/js-host-api
+> npm install --package-lock-only --ignore-scripts --os=darwin --cpu=arm64
+> ```
+>
+> Use the target package's platform and architecture for other packages. The regenerated lockfile
+> adds the package's `resolved` URL and `integrity` hash. This follow-up PR is required because
+> the hash cannot exist until npm has published the package; it is not a release-workflow failure.
 
 > **Note:** Trusted publishing only works via `CreateRelease.yml` (the production release path). Manual publishing is deliberately discouraged — see [Manual npm publishing (emergency only)](#manual-npm-publishing-emergency-only) below.
 
@@ -84,18 +107,19 @@ Once the PR is merged, then you should follow the instructions above. In this in
 
 ## Manual npm publishing (emergency only)
 
-> ⚠️ **Do not use this for regular releases.** Use the `CreateRelease` workflow instead. Manual publishing bypasses OIDC trusted publishing and will **not** generate provenance attestations — meaning publish will show up without the "Published via trusted publishing" badge on npmjs.com. Only use this if the automated release pipeline is broken and you need to ship an urgent fix.
+> ⚠️ **Do not use this for regular releases.** Use the `CreateRelease` workflow instead. Manual publishing uses `NPM_TOKEN` instead of OIDC trusted publishing. It still generates provenance attestations, but the release will not show the "Published via trusted publishing" badge on npmjs.com. Only use this if the automated release pipeline is broken and you need to ship an urgent fix.
 
 If you need to publish npm packages manually via `workflow_dispatch`, you'll need to:
 
 1. **Temporarily allow token-based publishing on npmjs.com**
    - Go to each package on [npmjs.com](https://www.npmjs.com/) → Settings → Publishing access
    - Change from "Require two-factor authentication and disallow tokens" to "Require two-factor authentication or automation tokens"
-   - Do this for all 4 packages:
+   - Do this for all 5 packages:
      - `@hyperlight-dev/js-host-api`
      - `@hyperlight-dev/js-host-api-linux-x64-gnu`
      - `@hyperlight-dev/js-host-api-linux-x64-musl`
      - `@hyperlight-dev/js-host-api-win32-x64-msvc`
+     - `@hyperlight-dev/js-host-api-darwin-arm64`
 
 2. **Create an npm automation token**
    - Go to [npmjs.com](https://www.npmjs.com/) → Access Tokens → Generate New Token → Granular Access Token
@@ -117,5 +141,5 @@ If you need to publish npm packages manually via `workflow_dispatch`, you'll nee
 5. **Clean up immediately after publishing**
    - Delete the `NPM_TOKEN` repo secret on GitHub → Settings → Secrets and variables → Actions
    - Revoke the npm token on npmjs.com → Access Tokens
-   - Re-enable "Require two-factor authentication and disallow tokens" on all 4 packages
+   - Re-enable "Require two-factor authentication and disallow tokens" on all 5 packages
    - Verify the packages published correctly: `npm view @hyperlight-dev/js-host-api versions`

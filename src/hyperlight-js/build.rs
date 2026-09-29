@@ -45,7 +45,6 @@ fn main() {
         kvm: { all(feature = "kvm", target_os = "linux") },
         mshv3: { all(feature = "mshv3", target_os = "linux") },
         hvf: { all(feature = "hvf", target_os = "macos") },
-        whp: { target_os = "windows" },
         // hyperlight-host only implements crash dumps and the gdb debug stub on
         // x86_64, so mirror its aliases — otherwise enabling either feature on
         // aarch64 (e.g. macOS) would expose a wrapper around a method that does

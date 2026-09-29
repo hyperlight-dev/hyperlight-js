@@ -227,6 +227,10 @@ SandboxBuilder.prototype.build = wrapAsync(SandboxBuilder.prototype.build);
 for (const method of [
     'setHeapSize',
     'setScratchSize',
+    'setInputTransportPoolPages',
+    'setOutputTransportPoolPages',
+    'setInputTransportBufferSize',
+    'setOutputTransportBufferSize',
     'setInputBufferSize',
     'setOutputBufferSize',
 ]) {

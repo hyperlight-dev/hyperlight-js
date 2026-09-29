@@ -18,6 +18,7 @@ use std::fmt::Debug;
 use std::time::SystemTime;
 
 use anyhow::Context;
+use hyperlight_host::func::Bytes;
 use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::{new_error, GuestBinary, Result, UninitializedSandbox};
 use serde::de::DeserializeOwned;
@@ -115,14 +116,14 @@ impl ProtoJSSandbox {
 
         self.inner.register(
             "LoadModule",
-            move |path: String| -> hyperlight_host::Result<String> {
+            move |path: String| -> hyperlight_host::Result<Vec<u8>> {
                 tracing::debug!(path = %path, "Loading module");
                 let path_buf = PathBuf::from(&path);
                 let source = file_system
                     .read_to_string(&path_buf)
                     .map_err(|e| new_error!("Failed to read module '{}': {}", path, e))?;
 
-                Ok(source)
+                Ok(source.into_bytes())
             },
         )?;
 
@@ -138,14 +139,17 @@ impl ProtoJSSandbox {
 
         // Register the host function that the guest calls for all host
         // function invocations. Binary data (if any) is carried in a
-        // length-prefixed sidecar alongside the JSON args.
+        // chunked length-prefixed sidecar alongside the JSON args.
         self.inner.register(
             "CallHostJsFunction",
             move |module_name: String,
                   func_name: String,
-                  args_json: String,
-                  binaries: Vec<u8>|
+                  args_json: Vec<u8>,
+                  binaries: Vec<Bytes>|
                   -> Result<Vec<u8>> {
+                let args_json = String::from_utf8(args_json).map_err(|error| {
+                    new_error!("Invalid UTF-8 in host function arguments: {error}")
+                })?;
                 let module = host_modules
                     .get(&module_name)
                     .ok_or_else(|| new_error!("Host module '{}' not found", module_name))?;

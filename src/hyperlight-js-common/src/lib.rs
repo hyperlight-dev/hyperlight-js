@@ -46,6 +46,10 @@ use alloc::fmt;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use bytes::Buf;
+/// Shared byte storage used by Hyperlight's `ByteChunks` transport values.
+pub use bytes::Bytes;
+
 // ── Constants ────────────────────────────────────────────────────────
 
 /// Tag byte indicating the return payload is JSON.
@@ -105,7 +109,40 @@ impl fmt::Display for DecodeError {
 /// `&[Vec<u8>]`, `&[&[u8]]`, `&[Box<[u8]>]` — so callers don't need to
 /// build an intermediate `Vec<&[u8]>` just to satisfy the signature.
 pub fn encode_binaries<B: AsRef<[u8]>>(blobs: &[B]) -> Result<Vec<u8>, DecodeError> {
-    // Validate that count fits in u32 — the wire format uses u32-le.
+    let mut buf = Vec::with_capacity(encoded_binaries_len(blobs)?);
+    buf.extend_from_slice(&(blobs.len() as u32).to_le_bytes());
+
+    for blob in blobs {
+        let bytes = blob.as_ref();
+        buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(bytes);
+    }
+
+    Ok(buf)
+}
+
+/// Encodes a sidecar as chunks without copying the owned binary payloads.
+///
+/// The chunks form the same logical byte stream as [`encode_binaries`].
+/// Headers are stored separately from the blobs, whose allocations are moved
+/// into [`Bytes`]. Chunk boundaries are not part of the wire format and may
+/// change during transport.
+pub fn encode_binaries_chunks(blobs: Vec<Vec<u8>>) -> Result<Vec<Bytes>, DecodeError> {
+    encoded_binaries_len(&blobs)?;
+
+    let mut chunks = Vec::with_capacity(1 + 2 * blobs.len());
+    chunks.push(Bytes::copy_from_slice(&(blobs.len() as u32).to_le_bytes()));
+
+    for blob in blobs {
+        chunks.push(Bytes::copy_from_slice(&(blob.len() as u32).to_le_bytes()));
+        chunks.push(Bytes::from(blob));
+    }
+
+    Ok(chunks)
+}
+
+/// Validates sidecar counts and lengths before calculating its encoded size.
+fn encoded_binaries_len<B: AsRef<[u8]>>(blobs: &[B]) -> Result<usize, DecodeError> {
     if blobs.len() > u32::MAX as usize {
         return Err(DecodeError::new(alloc::format!(
             "encode_binaries: blob count ({}) exceeds u32::MAX",
@@ -113,35 +150,20 @@ pub fn encode_binaries<B: AsRef<[u8]>>(blobs: &[B]) -> Result<Vec<u8>, DecodeErr
         )));
     }
 
-    // Calculate total size: 4 bytes for count + (4 bytes length + data) per blob.
-    // Use checked arithmetic to detect overflow — a corrupt or adversarial
-    // input could otherwise wrap `usize` and cause an undersized allocation.
-    let total_size = blobs
-        .iter()
-        .try_fold(4usize, |acc, b| {
-            acc.checked_add(4)?.checked_add(b.as_ref().len())
-        })
-        .ok_or_else(|| DecodeError::new("encode_binaries: total sidecar size overflowed usize"))?;
-
-    let mut buf = Vec::with_capacity(total_size);
-
-    // Write count
-    buf.extend_from_slice(&(blobs.len() as u32).to_le_bytes());
-
-    // Write each blob with length prefix
-    for blob in blobs {
+    blobs.iter().try_fold(4usize, |size, blob| {
         let bytes = blob.as_ref();
+
         if bytes.len() > u32::MAX as usize {
             return Err(DecodeError::new(alloc::format!(
                 "encode_binaries: blob length ({}) exceeds u32::MAX",
                 bytes.len()
             )));
         }
-        buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(bytes);
-    }
 
-    Ok(buf)
+        size.checked_add(4)
+            .and_then(|size| size.checked_add(bytes.len()))
+            .ok_or_else(|| DecodeError::new("encode_binaries: total sidecar size overflowed usize"))
+    })
 }
 
 /// Encodes a JSON return value with the appropriate tag.
@@ -193,72 +215,99 @@ pub fn encode_json_with_binaries_return(
 /// Returns a [`DecodeError`] if the buffer is malformed (truncated,
 /// invalid lengths, or suspiciously large blob counts).
 pub fn decode_binaries(data: &[u8]) -> Result<Vec<Vec<u8>>, DecodeError> {
-    if data.len() < 4 {
+    decode_binaries_from_buf(data)
+}
+
+/// Borrows blobs from a contiguous sidecar without copying their payloads.
+///
+/// The slices remain valid only while the input buffer is alive. Framing and
+/// lengths are validated identically to [`decode_binaries`].
+pub fn decode_binaries_ref(data: &[u8]) -> Result<Vec<&[u8]>, DecodeError> {
+    decode_binaries_buf(data, |data, len| {
+        let (blob, remaining) = (*data).split_at(len);
+        *data = remaining;
+        blob
+    })
+}
+
+/// Decodes a chunked sidecar without first flattening the entire stream.
+///
+/// Headers and blobs may span any number of chunks, including empty chunks.
+/// Each decoded blob is copied once into the owned buffer required by the
+/// host-function bridge; transport-owned memory is never exposed to JavaScript.
+pub fn decode_binaries_from_buf(data: impl Buf) -> Result<Vec<Vec<u8>>, DecodeError> {
+    decode_binaries_buf(data, copy_blob)
+}
+
+/// Validates sidecar framing before reading each blob using the selected
+/// ownership strategy. The reader must consume exactly the validated length.
+fn decode_binaries_buf<B: Buf, T>(
+    mut data: B,
+    mut read_blob: impl FnMut(&mut B, usize) -> T,
+) -> Result<Vec<T>, DecodeError> {
+    if data.remaining() < 4 {
         return Err(DecodeError::new(
             "Binary sidecar too short for count header",
         ));
     }
 
-    let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let count = data.get_u32_le() as usize;
 
     // Sanity check: each blob needs at least 4 bytes for length header.
     // This prevents allocation of a huge Vec when count is maliciously large.
-    let max_possible_blobs = (data.len().saturating_sub(4)) / 4;
+    let max_possible_blobs = data.remaining() / 4;
+
     if count > max_possible_blobs {
         return Err(DecodeError::new(alloc::format!(
             "Binary sidecar count ({count}) exceeds maximum possible ({max_possible_blobs})"
         )));
     }
 
-    let mut offset: usize = 4;
     let mut blobs = Vec::with_capacity(count);
 
     for i in 0..count {
-        let header_end = offset.checked_add(4).ok_or_else(|| {
-            DecodeError::new(alloc::format!(
-                "Binary sidecar offset overflow at blob {i} length header"
-            ))
-        })?;
-        if header_end > data.len() {
+        if data.remaining() < 4 {
             return Err(DecodeError::new(alloc::format!(
                 "Binary sidecar truncated at blob {i} length header"
             )));
         }
 
-        let len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
+        let len = data.get_u32_le() as usize;
 
-        let blob_end = offset.checked_add(len).ok_or_else(|| {
-            DecodeError::new(alloc::format!(
-                "Binary sidecar offset overflow at blob {i} data"
-            ))
-        })?;
-        if blob_end > data.len() {
+        if len > data.remaining() {
             return Err(DecodeError::new(alloc::format!(
                 "Binary sidecar truncated at blob {i} data (need {len} bytes, have {})",
-                data.len() - offset
+                data.remaining()
             )));
         }
 
-        blobs.push(data[offset..blob_end].to_vec());
-        offset = blob_end;
+        blobs.push(read_blob(&mut data, len));
     }
 
     // Reject trailing data — the sidecar should be fully consumed.
     // Trailing bytes could indicate a version mismatch or corruption.
-    if offset != data.len() {
+    if data.has_remaining() {
         return Err(DecodeError::new(alloc::format!(
             "Binary sidecar has {} trailing bytes after all {count} blobs",
-            data.len() - offset
+            data.remaining()
         )));
     }
 
     Ok(blobs)
+}
+
+/// Copies a validated blob directly into its final owned allocation.
+fn copy_blob(data: &mut impl Buf, len: usize) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(len);
+
+    while blob.len() < len {
+        let chunk = data.chunk();
+        let take = chunk.len().min(len - blob.len());
+        blob.extend_from_slice(&chunk[..take]);
+        data.advance(take);
+    }
+
+    blob
 }
 
 /// Maximum recursion depth for JSON tree traversal.
@@ -279,11 +328,36 @@ pub enum FnReturn {
     JsonWithBinaries(String, Vec<u8>),
 }
 
+/// A tagged return value borrowing its payload from the input buffer.
+#[derive(Debug, Clone, Copy)]
+pub enum FnReturnRef<'a> {
+    /// JSON string payload without embedded binary data.
+    Json(&'a str),
+    /// Raw binary payload.
+    Binary(&'a [u8]),
+    /// JSON with placeholders referencing a borrowed binary sidecar.
+    JsonWithBinaries(&'a str, &'a [u8]),
+}
+
 /// Decodes a tagged return value from the host.
 ///
 /// The first byte is a tag (see [`TAG_JSON`] / [`TAG_BINARY`]),
 /// the rest is the payload.
 pub fn decode_return(data: &[u8]) -> Result<FnReturn, DecodeError> {
+    Ok(match decode_return_ref(data)? {
+        FnReturnRef::Json(json) => FnReturn::Json(json.into()),
+        FnReturnRef::Binary(bytes) => FnReturn::Binary(bytes.to_vec()),
+        FnReturnRef::JsonWithBinaries(json, sidecar) => {
+            FnReturn::JsonWithBinaries(json.into(), sidecar.to_vec())
+        }
+    })
+}
+
+/// Validates and borrows a tagged return without allocating payload copies.
+///
+/// Consumers must copy binary data before exposing it as independently mutable
+/// JavaScript arrays. JSON can be parsed directly from the borrowed string.
+pub fn decode_return_ref(data: &[u8]) -> Result<FnReturnRef<'_>, DecodeError> {
     if data.is_empty() {
         return Err(DecodeError::new("Empty return payload"));
     }
@@ -293,11 +367,12 @@ pub fn decode_return(data: &[u8]) -> Result<FnReturn, DecodeError> {
             let json = core::str::from_utf8(&data[1..]).map_err(|e| {
                 DecodeError::new(alloc::format!("Invalid UTF-8 in JSON return: {e}"))
             })?;
-            Ok(FnReturn::Json(json.into()))
+            Ok(FnReturnRef::Json(json))
         }
-        TAG_BINARY => Ok(FnReturn::Binary(data[1..].to_vec())),
+        TAG_BINARY => Ok(FnReturnRef::Binary(&data[1..])),
         TAG_JSON_WITH_BINARIES => {
             // [0x02] [sidecar_len: u32-le] [sidecar...] [json...]
+
             if data.len() < 5 {
                 return Err(DecodeError::new(
                     "JSON-with-binaries return too short for sidecar length header",
@@ -307,19 +382,20 @@ pub fn decode_return(data: &[u8]) -> Result<FnReturn, DecodeError> {
             let sidecar_end = 5usize.checked_add(sidecar_len).ok_or_else(|| {
                 DecodeError::new("JSON-with-binaries sidecar length overflows usize")
             })?;
+
             if data.len() < sidecar_end {
                 return Err(DecodeError::new(alloc::format!(
                     "JSON-with-binaries return truncated: need {sidecar_end} bytes, have {}",
                     data.len()
                 )));
             }
-            let sidecar = data[5..sidecar_end].to_vec();
+            let sidecar = &data[5..sidecar_end];
             let json = core::str::from_utf8(&data[sidecar_end..]).map_err(|e| {
                 DecodeError::new(alloc::format!(
                     "Invalid UTF-8 in JSON-with-binaries return: {e}"
                 ))
             })?;
-            Ok(FnReturn::JsonWithBinaries(json.into(), sidecar))
+            Ok(FnReturnRef::JsonWithBinaries(json, sidecar))
         }
         tag => Err(DecodeError::new(alloc::format!(
             "Unknown return tag: 0x{tag:02x}"
@@ -376,6 +452,169 @@ mod tests {
 
         let decoded = decode_binaries(&encoded).unwrap();
         assert_eq!(decoded, blobs);
+    }
+
+    /// Chunked encoding retains the payload allocations and existing wire format.
+    #[test]
+    fn chunked_encoding_reuses_binary_allocations() {
+        let mut first = Vec::with_capacity(32);
+        first.extend_from_slice(b"ABC");
+        let second = b"XY".to_vec();
+        let first_ptr = first.as_ptr();
+        let second_ptr = second.as_ptr();
+        let expected = encode_binaries(&[first.as_slice(), second.as_slice()]).unwrap();
+        let chunks = encode_binaries_chunks(vec![first, second]).unwrap();
+
+        assert_eq!(chunks[2].as_ptr(), first_ptr);
+        assert_eq!(chunks[4].as_ptr(), second_ptr);
+        assert_eq!(chunks.concat(), expected);
+        assert_eq!(
+            decode_binaries(&chunks.concat()).unwrap(),
+            decode_binaries(&expected).unwrap()
+        );
+    }
+
+    /// Empty blobs and an empty blob list keep distinct sidecar counts.
+    #[test]
+    fn chunked_encoding_preserves_empty_blobs() {
+        for blobs in [Vec::new(), vec![Vec::new()], vec![Vec::new(), Vec::new()]] {
+            let chunks = encode_binaries_chunks(blobs.clone()).unwrap();
+
+            assert_eq!(decode_binaries(&chunks.concat()).unwrap(), blobs);
+        }
+    }
+
+    /// Every possible split, including within headers, decodes identically.
+    #[test]
+    fn chunked_decoding_handles_arbitrary_boundaries() {
+        let blobs = vec![b"ABC".to_vec(), Vec::new(), b"XYZ".to_vec()];
+        let encoded = Bytes::from(encode_binaries(&blobs).unwrap());
+
+        for split in 0..=encoded.len() {
+            let chunks = Bytes::new()
+                .chain(encoded.slice(..split))
+                .chain(Bytes::new())
+                .chain(encoded.slice(split..))
+                .chain(Bytes::new());
+
+            assert_eq!(decode_binaries_from_buf(chunks).unwrap(), blobs);
+        }
+    }
+
+    /// Truncation is rejected regardless of which chunk contains the last byte.
+    #[test]
+    fn chunked_decoding_rejects_truncated_sidecars() {
+        let encoded = Bytes::from(encode_binaries(&[b"ABC", b"XYZ"]).unwrap());
+
+        for end in 0..encoded.len() {
+            let split = end / 2;
+            let chunks = encoded
+                .slice(..split)
+                .chain(Bytes::new())
+                .chain(encoded.slice(split..end));
+
+            assert!(
+                decode_binaries_from_buf(chunks).is_err(),
+                "prefix length {end}"
+            );
+        }
+    }
+
+    /// Malformed counts, lengths, and trailing bytes cannot bypass validation.
+    #[test]
+    fn chunked_decoding_rejects_malformed_sidecars() {
+        let malformed = [
+            vec![255, 255, 255, 255],
+            vec![1, 0, 0, 0, 255, 255, 255, 255],
+            vec![2, 0, 0, 0, 4, 0, 0, 0, 1, 2, 3, 4],
+            vec![0, 0, 0, 0, 99],
+        ];
+
+        for bytes in malformed {
+            let expected = decode_binaries(&bytes).unwrap_err().to_string();
+            let encoded = Bytes::from(bytes);
+
+            for split in 0..=encoded.len() {
+                let chunks = encoded
+                    .slice(..split)
+                    .chain(Bytes::new())
+                    .chain(encoded.slice(split..));
+
+                let error = decode_binaries_from_buf(chunks).unwrap_err();
+                assert_eq!(error.to_string(), expected);
+            }
+        }
+    }
+
+    /// Borrowed decoding retains slices into the original sidecar allocation.
+    #[test]
+    fn borrowed_binaries_reuse_sidecar_storage() {
+        let encoded = encode_binaries(&[b"ABC".as_slice(), b"", b"XYZ"]).unwrap();
+        let blobs = decode_binaries_ref(&encoded).unwrap();
+
+        assert_eq!(blobs, [b"ABC".as_slice(), b"", b"XYZ"]);
+        assert_eq!(blobs[0].as_ptr(), encoded[8..].as_ptr());
+        assert_eq!(blobs[2].as_ptr(), encoded[19..].as_ptr());
+    }
+
+    /// All tagged return variants borrow their payloads without reallocation.
+    #[test]
+    fn borrowed_returns_reuse_payload_storage() {
+        let encoded = encode_json_return(r#"{"value":42}"#);
+        let FnReturnRef::Json(json) = decode_return_ref(&encoded).unwrap() else {
+            panic!("Expected JSON return");
+        };
+
+        assert_eq!(json.as_ptr(), encoded[1..].as_ptr());
+
+        let encoded = encode_binary_return(b"ABC");
+        let FnReturnRef::Binary(bytes) = decode_return_ref(&encoded).unwrap() else {
+            panic!("Expected binary return");
+        };
+
+        assert_eq!(bytes, b"ABC");
+        assert_eq!(bytes.as_ptr(), encoded[1..].as_ptr());
+
+        let sidecar = encode_binaries(&[b"ABC"]).unwrap();
+        let encoded = encode_json_with_binaries_return(r#"{"__bin__":0}"#, &sidecar).unwrap();
+        let FnReturnRef::JsonWithBinaries(json, borrowed) = decode_return_ref(&encoded).unwrap()
+        else {
+            panic!("Expected JSON-with-binaries return");
+        };
+
+        assert_eq!(borrowed, sidecar);
+        assert_eq!(borrowed.as_ptr(), encoded[5..].as_ptr());
+        assert_eq!(json.as_ptr(), encoded[5 + sidecar.len()..].as_ptr());
+    }
+
+    /// Borrowing preserves the owned decoders' rejection of malformed input.
+    #[test]
+    fn borrowed_decoders_preserve_validation() {
+        for bytes in [
+            vec![],
+            vec![255, 255, 255, 255],
+            vec![1, 0, 0, 0, 255, 255, 255, 255],
+            vec![0, 0, 0, 0, 99],
+        ] {
+            assert_eq!(
+                decode_binaries_ref(&bytes).unwrap_err().to_string(),
+                decode_binaries(&bytes).unwrap_err().to_string()
+            );
+        }
+
+        for bytes in [
+            vec![],
+            vec![TAG_JSON, 255],
+            vec![TAG_JSON_WITH_BINARIES, 1, 2, 3],
+            vec![TAG_JSON_WITH_BINARIES, 4, 0, 0, 0],
+            vec![TAG_JSON_WITH_BINARIES, 0, 0, 0, 0, 255],
+            vec![255],
+        ] {
+            assert_eq!(
+                decode_return_ref(&bytes).unwrap_err().to_string(),
+                decode_return(&bytes).unwrap_err().to_string()
+            );
+        }
     }
 
     #[test]

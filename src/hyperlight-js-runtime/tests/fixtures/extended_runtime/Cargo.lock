@@ -99,7 +99,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools",
+ "itertools 0.13.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -430,9 +430,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-common"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ad5576d6ef947dc2822c2f5038ddff8325c158ddef4cbabf9d0b125294cdb0f"
+checksum = "360d5876788b26af66bf055bca6b4f2c9c930a0fdcaebda4bd7f808c6bd93068"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -449,22 +449,23 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "816f673f3f8ef6d5703796bf92927b85177ad1baac6f391551a88451a9e46a7e"
+checksum = "7faceeab52cbc0f128e75fa4b0ee9fce17c3c462d7776feca66f41e98bf2a4bb"
 dependencies = [
  "anyhow",
  "flatbuffers",
  "hyperlight-common",
+ "itertools 0.15.0",
  "serde_json",
  "tracing",
 ]
 
 [[package]]
 name = "hyperlight-guest-bin"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c2d0ea739be89822992706da9dc6812ce359b654b328efd6141ba1549751907"
+checksum = "e7eff3c3b94ae4da51f03d535e9a13a4132f5f87694a19514c038a9517cfd750"
 dependencies = [
  "buddy_system_allocator",
  "flatbuffers",
@@ -481,9 +482,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-macro"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875d03a9e4d302f29d8feb57faff937f80c6f69ec9d31b32f41c41721144e25d"
+checksum = "f957baa8d97e2787589bf084a18096c08ab4dd22d4f5a040f153f9f719330ec3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -493,9 +494,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-tracing"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f43a3d5d3fa245ce0fccee8a48ad7d94ec479e0898fc8f91fd440a1d65830c6"
+checksum = "6a12c240f87acd92e80ea08e9a405e781e4a15b9f38fee5fe261e9ce69b816d3"
 dependencies = [
  "hyperlight-common",
  "spin 0.12.0",
@@ -506,6 +507,9 @@ dependencies = [
 [[package]]
 name = "hyperlight-js-common"
 version = "0.4.0"
+dependencies = [
+ "bytes",
+]
 
 [[package]]
 name = "hyperlight-js-runtime"
@@ -533,9 +537,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-libc"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "108dd0e7335821a2ef0dfa375c08236c3302a117045822e2aa68c64147f8e895"
+checksum = "a74af1c1cc60140c000a6ebd4eba3121bc2b8f56f134163c25eadca1146b73e0"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -570,6 +574,15 @@ name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]

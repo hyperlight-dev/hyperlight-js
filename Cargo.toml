@@ -12,10 +12,11 @@ repository = "https://github.com/hyperlight-dev/hyperlight-js"
 readme = "README.md"
 
 [workspace.dependencies]
-hyperlight-guest-bin = { version = "0.17.0", features = ["libc"] }
-hyperlight-host = { version = "0.17.0", default-features = false }
-hyperlight-common = { version = "0.17.0", default-features = false }
-hyperlight-guest = { version = "0.17.0" }
+# Keep the host and guest on the same release for transport compatibility.
+hyperlight-guest-bin = { version = "0.18.0", features = ["libc"] }
+hyperlight-host = { version = "0.18.0", default-features = false }
+hyperlight-common = { version = "0.18.0", default-features = false }
+hyperlight-guest = { version = "0.18.0" }
 
 hyperlight-js = { version = "0.4.0", path = "src/hyperlight-js" }
 hyperlight-js-runtime = { version = "0.4.0", path = "src/hyperlight-js-runtime" }

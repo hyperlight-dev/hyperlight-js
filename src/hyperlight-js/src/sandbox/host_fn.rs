@@ -15,6 +15,8 @@ limitations under the License.
 */
 use std::collections::HashMap;
 
+use hyperlight_common::virtq::Segments;
+use hyperlight_js_common::Bytes;
 use serde::de::DeserializeOwned;
 use serde::ser::SerializeSeq;
 use serde::Serialize;
@@ -89,10 +91,17 @@ fn type_erased<Output: Serialize, Args: DeserializeOwned>(
 
 /// Decodes the sidecar binary format into individual blobs.
 ///
-/// Thin wrapper around [`hyperlight_js_common::decode_binaries`] that maps
+/// Uses Hyperlight's segmented cursor without flattening the payload, mapping
 /// the common crate's `DecodeError` into the host's `HyperlightError`.
-pub(crate) fn decode_binaries(data: &[u8]) -> crate::Result<Vec<Vec<u8>>> {
-    hyperlight_js_common::decode_binaries(data)
+pub(crate) fn decode_binaries(data: Vec<Bytes>) -> crate::Result<Vec<Vec<u8>>> {
+    // Segments::as_buf() sums lengths without checked arithmetic.
+    data.iter()
+        .try_fold(0usize, |size, chunk| size.checked_add(chunk.len()))
+        .ok_or_else(|| crate::new_error!("Binary sidecar size overflowed usize"))?;
+
+    let segments = Segments::new(data);
+
+    hyperlight_js_common::decode_binaries_from_buf(segments.as_buf())
         .map_err(|e| crate::HyperlightError::Error(e.to_string()))
 }
 
@@ -174,10 +183,10 @@ impl HostModule {
         &self,
         name: &str,
         args_json: String,
-        binaries: Option<Vec<u8>>,
+        binaries: Option<Vec<Bytes>>,
     ) -> crate::Result<Vec<u8>> {
         let blobs = if let Some(bin_data) = binaries {
-            decode_binaries(&bin_data)?
+            decode_binaries(bin_data)?
         } else {
             Vec::new()
         };
@@ -226,6 +235,27 @@ impl HostModule {
 mod tests {
     use super::*;
 
+    /// Hyperlight's cursor handles byte-sized segments and interspersed empties.
+    #[test]
+    fn decode_binaries_uses_hyperlight_segments() {
+        let blobs = vec![b"ABC".to_vec(), Vec::new(), b"XYZ".to_vec()];
+        let encoded = Bytes::from(hyperlight_js_common::encode_binaries(&blobs).unwrap());
+
+        for end in 0..=encoded.len() {
+            let chunks = (0..end)
+                .flat_map(|offset| [Bytes::new(), encoded.slice(offset..offset + 1)])
+                .chain([Bytes::new()])
+                .collect();
+
+            let result = decode_binaries(chunks);
+            if end == encoded.len() {
+                assert_eq!(result.unwrap(), blobs);
+            } else {
+                assert!(result.is_err(), "prefix length {end}");
+            }
+        }
+    }
+
     #[test]
     fn call_typed_no_binaries() {
         let mut module = HostModule::default();
@@ -234,7 +264,7 @@ mod tests {
         // count=0 sidecar
         let sidecar = vec![0u8, 0, 0, 0];
         let result = module
-            .call("add", "[3,4]".to_string(), Some(sidecar))
+            .call("add", "[3,4]".to_string(), Some(vec![Bytes::from(sidecar)]))
             .unwrap();
         assert_eq!(result[0], hyperlight_js_common::TAG_JSON);
         assert_eq!(&result[1..], b"7");
@@ -248,7 +278,7 @@ mod tests {
         // Sidecar with one blob — typed functions should reject this
         let sidecar = hyperlight_js_common::encode_binaries(&[b"ABC" as &[u8]]).unwrap();
         let err = module
-            .call("add", "[1,2]".to_string(), Some(sidecar))
+            .call("add", "[1,2]".to_string(), Some(vec![Bytes::from(sidecar)]))
             .unwrap_err();
         assert!(err.to_string().contains("binary argument"));
         assert!(err.to_string().contains("register_js"));
@@ -273,7 +303,9 @@ mod tests {
         // Args contain an object with the reserved key but no actual binary
         let args = r#"[{"__bin__": 0}]"#.to_string();
         let sidecar = vec![0u8, 0, 0, 0]; // count=0, no blobs
-        let result = module.call("echo", args.clone(), Some(sidecar)).unwrap();
+        let result = module
+            .call("echo", args.clone(), Some(vec![Bytes::from(sidecar)]))
+            .unwrap();
         assert_eq!(result[0], hyperlight_js_common::TAG_JSON);
         // The returned JSON should contain the __bin__ key as-is
         let returned_json = std::str::from_utf8(&result[1..]).unwrap();

@@ -34,9 +34,11 @@ use anyhow::{anyhow, Context as _};
 use hashbrown::HashMap;
 use hyperlight_guest_bin::error::{ErrorCode, HyperlightGuestError, Result};
 use hyperlight_guest_bin::{guest_function, host_function, main};
+use hyperlight_js_common::Bytes;
 use spin::Mutex;
 use tracing::instrument;
 
+use crate::host_fn::HostFunction;
 use crate::JsRuntime;
 
 mod stubs;
@@ -55,6 +57,16 @@ impl<T> CatchGuestErrorExt for Result<T> {
     }
 }
 
+/// Validates an external text payload while retaining its owned allocation.
+fn decode_utf8(bytes: Vec<u8>, label: &str) -> Result<String> {
+    String::from_utf8(bytes).map_err(|error| {
+        HyperlightGuestError::new(
+            ErrorCode::GuestError,
+            format!("Invalid UTF-8 in {label}: {error}"),
+        )
+    })
+}
+
 impl crate::host::Host for Host {
     fn resolve_module(&self, base: String, name: String) -> anyhow::Result<String> {
         #[host_function("ResolveModule")]
@@ -67,9 +79,10 @@ impl crate::host::Host for Host {
 
     fn load_module(&self, name: String) -> anyhow::Result<String> {
         #[host_function("LoadModule")]
-        fn load_module(name: String) -> Result<String>;
+        fn load_module(name: String) -> Result<Vec<u8>>;
 
         load_module(name.clone())
+            .and_then(|bytes| decode_utf8(bytes, "module source"))
             .catch()
             .with_context(|| format!("Loading module {name:?}"))
     }
@@ -88,22 +101,28 @@ pub extern "C" fn hyperlight_main() {
     let _ = &*RUNTIME;
 }
 
+/// Registers a handler from an externally transported UTF-8 source buffer.
 #[guest_function("register_handler")]
 #[instrument(skip_all, level = "info")]
 fn register_handler(
     function_name: String,
-    handler_script: String,
+    handler_script: Vec<u8>,
     handler_pwd: String,
 ) -> Result<()> {
+    let handler_script = decode_utf8(handler_script, "handler source")?;
+
     RUNTIME
         .lock()
         .register_handler(function_name, handler_script, handler_pwd)?;
     Ok(())
 }
 
+/// Registers a user module from an externally transported UTF-8 source buffer.
 #[guest_function("register_module")]
 #[instrument(skip_all, level = "info")]
-fn register_module(module_name: String, module_source: String) -> Result<()> {
+fn register_module(module_name: String, module_source: Vec<u8>) -> Result<()> {
+    let module_source = decode_utf8(module_source, "module source")?;
+
     RUNTIME.lock().register_module(module_name, module_source)?;
     Ok(())
 }
@@ -112,8 +131,8 @@ fn register_module(module_name: String, module_source: String) -> Result<()> {
 fn call_host_js_function(
     module_name: String,
     func_name: String,
-    args_json: String,
-    binaries: Vec<u8>,
+    args_json: Vec<u8>,
+    binaries: Vec<Bytes>,
 ) -> Result<Vec<u8>>;
 
 #[guest_function("RegisterHostModules")]
@@ -133,36 +152,43 @@ fn register_host_modules(host_modules_json: String) -> Result<()> {
     for (module_name, functions) in host_modules {
         for function_name in functions {
             let module_name = module_name.clone();
-            // Register binary-capable host function that can handle Uint8Array/Buffer
-            runtime.register_binary_host_function(
+            runtime.add_host_function(
                 module_name.clone(),
                 function_name.clone(),
-                move |args_json: String, binaries: Vec<u8>| -> anyhow::Result<Vec<u8>> {
-                    call_host_js_function(
-                        module_name.clone(),
-                        function_name.clone(),
-                        args_json,
-                        binaries,
-                    )
-                    .map_err(|e| {
-                        // Use e.message directly — {e:#?} would expand into a
-                        // huge Debug struct that exceeds the hyperlight
-                        // guest↔host error buffer and gets truncated.
-                        // Include the error kind for diagnostics.
-                        anyhow!(
-                            "Calling host function {module_name:?} {function_name:?} failed ({:?}): {}",
-                            e.kind,
-                            e.message
+                HostFunction::new_bin_chunks(
+                    move |args_json: String, binaries: Vec<Bytes>| -> anyhow::Result<Vec<u8>> {
+                        call_host_js_function(
+                            module_name.clone(),
+                            function_name.clone(),
+                            args_json.into_bytes(),
+                            binaries,
                         )
-                    })
-                },
+                        .map_err(|e| {
+                            // Use e.message directly — {e:#?} would expand into a
+                            // huge Debug struct that exceeds the hyperlight
+                            // guest↔host error buffer and gets truncated.
+                            // Include the error kind for diagnostics.
+                            anyhow!(
+                                "Calling host function {module_name:?} {function_name:?} failed ({:?}): {}",
+                                e.kind,
+                                e.message
+                            )
+                        })
+                    },
+                ),
             )?;
         }
     }
     Ok(())
 }
 
+/// Runs a handler with external UTF-8 JSON input and returns external JSON bytes.
 #[guest_function("RunHandler")]
-fn run_handler(function_name: String, event: String, run_gc: bool) -> Result<String> {
-    Ok(RUNTIME.lock().run_handler(function_name, event, run_gc)?)
+fn run_handler(function_name: String, event: Vec<u8>, run_gc: bool) -> Result<Vec<u8>> {
+    let event = decode_utf8(event, "event JSON")?;
+
+    Ok(RUNTIME
+        .lock()
+        .run_handler(function_name, event, run_gc)?
+        .into_bytes())
 }

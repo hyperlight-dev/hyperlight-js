@@ -67,6 +67,7 @@ The npm release consists of the following packages:
 | `@hyperlight-dev/js-host-api-linux-x64-musl` | Linux x86_64 (musl/Alpine) native binary |
 | `@hyperlight-dev/js-host-api-win32-x64-msvc` | Windows x86_64 native binary |
 | `@hyperlight-dev/js-host-api-darwin-arm64` | macOS aarch64 (Apple Silicon) native binary |
+| `@hyperlight-dev/js-host-api-linux-arm64-gnu` | Linux aarch64 (glibc) native binary |
 
 ### How Platform Selection Works
 

@@ -216,15 +216,11 @@ impl JsRuntime {
         Args: DeserializeOwned,
         Output: Serialize,
     {
-        self.context.with(|ctx| {
-            ctx.userdata::<HostModuleLoader>()
-                .context("HostModuleLoader not found in context")?
-                .borrow_mut()
-                .entry(module_name.into())
-                .or_default()
-                .add_function(function_name.into(), HostFunction::new_serde(function));
-            Ok(())
-        })
+        self.add_host_function(
+            module_name,
+            function_name,
+            HostFunction::new_serde(function),
+        )
     }
 
     /// Register a binary-capable host function in the specified module.
@@ -246,15 +242,7 @@ impl JsRuntime {
         function_name: impl Into<String>,
         function: impl Fn(String, Vec<u8>) -> anyhow::Result<Vec<u8>> + 'static,
     ) -> anyhow::Result<()> {
-        self.context.with(|ctx| {
-            ctx.userdata::<HostModuleLoader>()
-                .context("HostModuleLoader not found in context")?
-                .borrow_mut()
-                .entry(module_name.into())
-                .or_default()
-                .add_function(function_name.into(), HostFunction::new_bin(function));
-            Ok(())
-        })
+        self.add_host_function(module_name, function_name, HostFunction::new_bin(function))
     }
 
     /// Register a handler function with the runtime.
@@ -267,7 +255,7 @@ impl JsRuntime {
         handler_pwd: impl Into<String>,
     ) -> anyhow::Result<()> {
         let function_name = function_name.into();
-        let handler_script = handler_script.into();
+        let mut handler_script = handler_script.into();
         let handler_pwd = handler_pwd.into();
 
         // If the handler script doesn't already contain an ES export statement,
@@ -278,11 +266,9 @@ impl JsRuntime {
         // rather than using a naive `.contains("export")`, which would false-positive
         // on string literals (e.g. '<config mode="export">'), comments
         // (e.g. // TODO: export data), or identifiers (e.g. exportPath).
-        let handler_script = if !has_export_statement(&handler_script) {
-            format!("{}\nexport {{ handler }};", handler_script)
-        } else {
-            handler_script
-        };
+        if !has_export_statement(&handler_script) {
+            handler_script.push_str("\nexport { handler };");
+        }
 
         // We create a "virtual" path for the handler module based on the function name and the provided handler directory.
         let handler_path = make_handler_path(&function_name, &handler_pwd);
@@ -290,8 +276,7 @@ impl JsRuntime {
         let func = self.context.with(|ctx| -> anyhow::Result<_> {
             // Declare the module for the handler script, and evaluate it to get the exported handler function.
             let module =
-                Module::declare(ctx.clone(), handler_path.as_str(), handler_script.clone())
-                    .catch(&ctx)?;
+                Module::declare(ctx.clone(), handler_path.as_str(), handler_script).catch(&ctx)?;
 
             let (module, promise) = module.eval().catch(&ctx)?;
 
@@ -391,6 +376,24 @@ impl JsRuntime {
                 .context("The handler function did not return a value")?
                 .to_string()
                 .catch(&ctx)
+        })
+    }
+
+    /// Installs a host function in the runtime's module loader.
+    fn add_host_function(
+        &mut self,
+        mod_name: impl Into<String>,
+        fn_name: impl Into<String>,
+        func: HostFunction,
+    ) -> anyhow::Result<()> {
+        self.context.with(|ctx| {
+            ctx.userdata::<HostModuleLoader>()
+                .context("HostModuleLoader not found in context")?
+                .borrow_mut()
+                .entry(mod_name.into())
+                .or_default()
+                .add_function(fn_name.into(), func);
+            Ok(())
         })
     }
 }

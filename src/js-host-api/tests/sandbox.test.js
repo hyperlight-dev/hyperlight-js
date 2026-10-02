@@ -24,7 +24,11 @@ describe('SandboxBuilder', () => {
             .setHeapSize(8 * 1024 * 1024)
             .setScratchSize(1024 * 1024)
             .setInputBufferSize(4096)
-            .setOutputBufferSize(4096);
+            .setOutputBufferSize(4096)
+            .setInputTransportPoolPages(4)
+            .setOutputTransportPoolPages(4)
+            .setInputTransportBufferSize(3001)
+            .setOutputTransportBufferSize(4096);
         expect(result).toBe(builder);
     });
 
@@ -44,6 +48,10 @@ describe('SandboxBuilder', () => {
         const builder = new SandboxBuilder();
         await builder.build();
         expectThrowsWithCode(() => builder.setHeapSize(1024), 'ERR_CONSUMED');
+        expectThrowsWithCode(() => builder.setInputTransportPoolPages(4), 'ERR_CONSUMED');
+        expectThrowsWithCode(() => builder.setOutputTransportPoolPages(4), 'ERR_CONSUMED');
+        expectThrowsWithCode(() => builder.setInputTransportBufferSize(4096), 'ERR_CONSUMED');
+        expectThrowsWithCode(() => builder.setOutputTransportBufferSize(4096), 'ERR_CONSUMED');
     });
 
     // ── Validation ───────────────────────────────────────────────────
@@ -61,11 +69,15 @@ describe('SandboxBuilder', () => {
     it('should reject zero input buffer size', () => {
         const builder = new SandboxBuilder();
         expectThrowsWithCode(() => builder.setInputBufferSize(0), 'ERR_INVALID_ARG');
+        expectThrowsWithCode(() => builder.setInputTransportPoolPages(0), 'ERR_INVALID_ARG');
+        expectThrowsWithCode(() => builder.setInputTransportBufferSize(0), 'ERR_INVALID_ARG');
     });
 
     it('should reject zero output buffer size', () => {
         const builder = new SandboxBuilder();
         expectThrowsWithCode(() => builder.setOutputBufferSize(0), 'ERR_INVALID_ARG');
+        expectThrowsWithCode(() => builder.setOutputTransportPoolPages(0), 'ERR_INVALID_ARG');
+        expectThrowsWithCode(() => builder.setOutputTransportBufferSize(0), 'ERR_INVALID_ARG');
     });
 });
 

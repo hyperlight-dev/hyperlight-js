@@ -495,6 +495,44 @@ fn full_pipeline_console_log_with_custom_modules() {
     assert_eq!(lines, ["computed: 54", "Handler result: 54"]);
 }
 
+/// The native binary-host-function API still accepts a contiguous sidecar.
+#[test]
+fn native_binary_host_function_round_trip() {
+    let mut runtime = hyperlight_js_runtime::JsRuntime::new(NoOpHost).unwrap();
+
+    runtime
+        .register_binary_host_function("binary", "echo", |args, sidecar| {
+            assert_eq!(args, r#"[{"__bin__":0}]"#);
+
+            let blobs = hyperlight_js_common::decode_binaries(&sidecar)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+            assert_eq!(blobs, [vec![1, 2, 3]]);
+
+            Ok(hyperlight_js_common::encode_binary_return(&blobs[0]))
+        })
+        .unwrap();
+
+    runtime
+        .register_handler(
+            "handler",
+            r#"
+            import { echo } from "binary";
+            export function handler() {
+                return Array.from(echo(new Uint8Array([1, 2, 3])));
+            }
+            "#,
+            ".",
+        )
+        .unwrap();
+
+    let result = runtime
+        .run_handler("handler".into(), "{}".into(), true)
+        .unwrap();
+
+    assert_eq!(result, "[1,2,3]");
+}
+
 // ── custom_globals! tests ──────────────────────────────────────────────────
 
 #[test]

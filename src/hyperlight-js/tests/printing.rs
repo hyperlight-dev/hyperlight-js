@@ -15,8 +15,6 @@ limitations under the License.
 */
 //! Tests for output printing from the sandbox
 
-#![allow(clippy::disallowed_macros)]
-
 use std::sync::mpsc::channel;
 
 use hyperlight_js::{SandboxBuilder, Script};

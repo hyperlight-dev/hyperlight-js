@@ -16,7 +16,6 @@ limitations under the License.
 //! Execution Monitor Integration Tests
 
 #![cfg(any(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]
-#![allow(clippy::disallowed_macros)]
 
 use std::time::{Duration, Instant};
 

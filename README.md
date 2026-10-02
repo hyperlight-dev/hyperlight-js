@@ -44,6 +44,19 @@ For macOS:
     xcode-select --install
 ```
 
+`cargo-hyperlight` 0.1.14 searches `PATH` for `llvm-ar`; otherwise it may find
+Apple's incompatible archiver. Add a provisioned compatible LLVM installation
+to `PATH`, or add the active Rust toolchain's LLVM directory:
+
+```bash
+    export PATH="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
+```
+
+```powershell
+    $hostTriple = (rustc -vV | Select-String '^host: ').Line.Substring(6)
+    $env:Path = "$(rustc --print sysroot)\lib\rustlib\$hostTriple\bin;$env:Path"
+```
+
 In addition on Linux and macOS you will need to install the bare-metal target matching
 your architecture, which `cargo-hyperlight` derives the guest target from:
 

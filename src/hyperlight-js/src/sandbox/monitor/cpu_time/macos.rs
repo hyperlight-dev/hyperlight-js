@@ -36,6 +36,8 @@ pub(crate) struct ThreadCpuHandle {
 
 impl ThreadCpuHandle {
     pub(crate) fn for_current_thread() -> Option<Self> {
+        // SAFETY: Returns a new send right owned by this handle. Mach port names
+        // are task-wide, so the monitor thread may use the right to inspect this thread.
         let thread_port = unsafe { mach_thread_self() };
         if thread_port == MACH_PORT_NULL {
             tracing::warn!("[CPU_TIME] mach_thread_self() returned a null port");
@@ -49,9 +51,14 @@ impl ThreadCpuHandle {
     }
 
     pub(crate) fn elapsed(&self) -> Option<u64> {
+        // SAFETY: thread_basic_info contains only integer C fields, for which all-zero
+        // bit patterns are valid; thread_info initializes the requested fields below.
         let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
         let mut count = libc::THREAD_BASIC_INFO_COUNT;
 
+        // SAFETY: info is the structure required by THREAD_BASIC_INFO and count is its
+        // size in natural_t units. The task-wide send right remains valid until Drop,
+        // and Mach permits querying the represented thread from the monitor thread.
         let result = unsafe {
             libc::thread_info(
                 self.thread_port,
@@ -90,6 +97,8 @@ impl ThreadCpuHandle {
 impl Drop for ThreadCpuHandle {
     fn drop(&mut self) {
         if self.thread_port != MACH_PORT_NULL {
+            // SAFETY: Self exclusively owns the send right returned by mach_thread_self.
+            // ThreadCpuHandle is not Clone, and Drop consumes that right exactly once.
             unsafe { mach_port_deallocate(mach_task_self_, self.thread_port) };
         }
     }

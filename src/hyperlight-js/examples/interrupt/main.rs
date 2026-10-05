@@ -22,8 +22,6 @@ limitations under the License.
 //!
 //! Run with: cargo run --example interrupt
 
-#![allow(clippy::disallowed_macros)]
-
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;

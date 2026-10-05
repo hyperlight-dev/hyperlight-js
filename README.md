@@ -4,6 +4,8 @@ Provides a capability to run JavaScript inside of Hyperlight using quickjs as th
 
 ## Documentation
 
+- [Custom guest runtimes](docs/extending-runtime.md) - Extend with native modules and build and embed a custom guest using cargo-hyperlight
+
 - [Execution Monitors](docs/execution-monitors.md) - Timeout and resource limit enforcement for handler execution
 - [Observability](docs/observability.md) - Metrics and tracing
 - [Crashdumps](docs/create-and-analyse-guest-crashdumps.md) - Creating and analyzing guest crash dumps

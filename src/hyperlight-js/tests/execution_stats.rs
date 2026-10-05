@@ -20,7 +20,6 @@ limitations under the License.
 //! and without execution monitors.
 
 #![cfg(feature = "guest-call-stats")]
-#![allow(clippy::disallowed_macros)]
 
 use std::time::Duration;
 

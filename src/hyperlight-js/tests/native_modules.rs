@@ -157,7 +157,11 @@ fn persistent_snapshot_restores_custom_native_module() {
         }
         "#,
     );
-
+    let mut sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     let directory = tempfile::tempdir().unwrap();
     sandbox.add_handler("compute", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();

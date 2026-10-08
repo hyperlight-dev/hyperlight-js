@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 import { readFile, writeFile } from 'node:fs/promises';
+import { URL } from 'node:url';
 
 const declarationsPath = new URL('../index.d.ts', import.meta.url);
 const publicTypes = [

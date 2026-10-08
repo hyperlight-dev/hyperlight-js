@@ -21,20 +21,18 @@ limitations under the License.
 import native from './lib.js';
 
 export const {
+    __napiBindingTarget,
+    HostFunctionModule,
     HostModule,
-    HostModuleWrapper,
     InterruptHandle,
-    InterruptHandleWrapper,
     JSSandbox,
-    JSSandboxWrapper,
     LoadedJSSandbox,
-    LoadedJSSandboxWrapper,
     ProtoJSSandbox,
-    ProtoJSSandboxWrapper,
     SandboxBuilder,
-    SandboxBuilderWrapper,
+    SandboxRestorer,
+    SandboxStatus,
     Snapshot,
-    SnapshotWrapper,
+    SnapshotRequirementStatus,
 } = native;
 
 export default native;

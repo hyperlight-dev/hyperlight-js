@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 #[cfg(all(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]
 use hyperlight_js::{CpuTimeMonitor, WallClockMonitor};
-use hyperlight_js::{SandboxBuilder, Script};
+use hyperlight_js::{SandboxBuilder, Script, Snapshot};
 
 fn js_load_handler_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("js_get_loaded_sandbox");
@@ -344,6 +344,54 @@ fn full_lifecycle_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+fn persistent_snapshot_benchmark(c: &mut Criterion) {
+    let mut sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    sandbox
+        .add_handler(
+            "counter",
+            Script::from_content(
+                r#"
+                let count = 0;
+                function handler(event) {
+                    event.count = ++count;
+                    return event;
+                }
+                "#,
+            ),
+        )
+        .unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+    loaded
+        .handle_event("counter", "{}".to_owned(), None)
+        .unwrap();
+    let snapshot = loaded.snapshot().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    snapshot.save(directory.path(), "benchmark").unwrap();
+
+    let mut group = c.benchmark_group("persistent_snapshots");
+    group.bench_function("save_loaded_snapshot", |b| {
+        b.iter(|| snapshot.save(directory.path(), "benchmark").unwrap())
+    });
+    group.bench_function("checked_load", |b| {
+        b.iter(|| Snapshot::load(directory.path(), "benchmark").unwrap())
+    });
+    group.bench_function("restore_loaded_sandbox", |b| {
+        b.iter(|| {
+            let snapshot = Snapshot::load(directory.path(), "benchmark").unwrap();
+            SandboxBuilder::new()
+                .build_from_snapshot(snapshot)
+                .unwrap()
+                .restore::<hyperlight_js::LoadedJSSandbox>()
+                .unwrap()
+        })
+    });
+    group.finish();
+}
+
 // =============================================================================
 // Monitor overhead benchmark
 // =============================================================================
@@ -449,7 +497,7 @@ fn monitor_overhead_benchmark(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().measurement_time(Duration::from_secs(20));
-    targets = js_load_handler_benchmark, handle_events_benchmark, full_lifecycle_benchmark
+    targets = js_load_handler_benchmark, handle_events_benchmark, full_lifecycle_benchmark, persistent_snapshot_benchmark
 }
 
 #[cfg(all(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]

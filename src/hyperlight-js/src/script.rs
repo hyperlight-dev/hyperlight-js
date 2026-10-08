@@ -74,6 +74,17 @@ impl Script {
         Arc::unwrap_or_clone(self.content).into_bytes()
     }
 
+    pub(crate) fn shared_content(&self) -> Arc<String> {
+        Arc::clone(&self.content)
+    }
+
+    pub(crate) fn from_shared_content(content: Arc<String>) -> Self {
+        Self {
+            content,
+            base_path: None,
+        }
+    }
+
     /// Get the base path for module resolution, if any
     pub fn base_path(&self) -> Option<&Path> {
         self.base_path.as_deref()

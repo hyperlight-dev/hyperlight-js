@@ -28,7 +28,7 @@ limitations under the License.
 //!
 //! This recipe builds the custom runtime automatically during the host build.
 
-use hyperlight_js::{SandboxBuilder, Script};
+use hyperlight_js::{SandboxBuilder, Script, Snapshot};
 
 /// Test that a custom native module ("math") can be imported and used
 /// from a handler running inside the Hyperlight VM.
@@ -132,6 +132,66 @@ fn console_log_works_with_custom_native_module() {
     assert_eq!(result, "54");
 }
 
+/// Test that a persisted, disk-backed snapshot of a `LoadedJSSandbox` using a
+/// custom native module ("math") restores correctly and keeps the custom
+/// module callable afterwards.
+///
+/// Custom native modules are compiled directly into the guest binary, unlike
+/// host functions, which execute in the host process. Persistent restoration
+/// builds directly from the Hyperlight snapshot, so the captured guest runtime
+/// already contains the native module and requires no capability reattachment.
+#[test]
+#[ignore]
+fn persistent_snapshot_restores_custom_native_module() {
+    let handler = Script::from_content(
+        r#"
+        import { add, multiply } from "math";
+        let calls = 0;
+        function handler(event) {
+            calls += 1;
+            return {
+                sum: add(event.a, event.b),
+                product: multiply(event.a, event.b),
+                calls,
+            };
+        }
+        "#,
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    sandbox.add_handler("compute", handler).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    // Exercise the custom module once before snapshotting so the restored
+    // state's `calls` counter proves guest state (not just the module) came
+    // back correctly.
+    let result = loaded
+        .handle_event("compute", r#"{"a":6,"b":7}"#.to_string(), None)
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(result["sum"], 13.0);
+    assert_eq!(result["product"], 42.0);
+    assert_eq!(result["calls"], 1);
+
+    let snapshot = loaded.snapshot().unwrap();
+    snapshot
+        .save(directory.path(), "custom-module-ready")
+        .unwrap();
+
+    let snapshot = Snapshot::load(directory.path(), "custom-module-ready").unwrap();
+    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
+    let mut restored = restorer
+        .restore::<hyperlight_js::LoadedJSSandbox>()
+        .unwrap();
+
+    let result = restored
+        .handle_event("compute", r#"{"a":10,"b":32}"#.to_string(), None)
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(result["sum"], 42.0);
+    assert_eq!(result["product"], 320.0);
+    assert_eq!(result["calls"], 2);
+}
 #[test]
 #[ignore]
 fn custom_globals_and_host_clock_work_in_vm() {

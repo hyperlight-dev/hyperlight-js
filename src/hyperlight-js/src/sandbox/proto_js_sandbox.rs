@@ -19,19 +19,31 @@ use std::time::SystemTime;
 
 use anyhow::Context;
 use hyperlight_host::sandbox::SandboxConfiguration;
-use hyperlight_host::{new_error, GuestBinary, Result, UninitializedSandbox};
+use hyperlight_host::{GuestBinary, Result, UninitializedSandbox};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::{instrument, Level};
 
 use super::js_sandbox::JSSandbox;
 use super::sandbox_builder::SandboxBuilder;
-use crate::sandbox::host_fn::{Function, HostModule};
+use crate::sandbox::host_fn::{
+    host_function_dispatch, host_function_manifest, Function, HostModule,
+};
 use crate::sandbox::metrics::SandboxMetricsGuard;
+use crate::sandbox::module_loader::ExternalModuleLoader;
 use crate::HostPrintFn;
 
-/// A Hyperlight Sandbox with no JavaScript run time loaded and no guest code.
-/// This is used to register new host functions prior to loading the JavaScript run time.
+pub(super) fn current_time_micros() -> hyperlight_host::Result<u64> {
+    Ok(SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .with_context(|| "Unable to get duration since epoch")
+        .map(|duration| duration.as_micros() as u64)?)
+}
+
+/// A fresh Hyperlight sandbox before the JavaScript runtime is loaded.
+///
+/// Register host resources, then call [`Self::load_runtime`] to create a
+/// [`JSSandbox`]. Snapshot restoration uses [`crate::SandboxRestorer`] instead.
 pub struct ProtoJSSandbox {
     inner: UninitializedSandbox,
     host_modules: HashMap<String, HostModule>,
@@ -45,6 +57,8 @@ impl ProtoJSSandbox {
         guest_binary: GuestBinary,
         cfg: Option<SandboxConfiguration>,
         host_print_writer: Option<HostPrintFn>,
+        host_modules: HashMap<String, HostModule>,
+        module_loader: Option<ExternalModuleLoader>,
     ) -> Result<Self> {
         let mut usbox: UninitializedSandbox = UninitializedSandbox::new(guest_binary, cfg)?;
 
@@ -53,19 +67,14 @@ impl ProtoJSSandbox {
             usbox.register_print(host_print_writer)?;
         }
 
-        // host function used by rquickjs for Date.now()
-        fn current_time_micros() -> hyperlight_host::Result<u64> {
-            Ok(SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .with_context(|| "Unable to get duration since epoch")
-                .map(|d| d.as_micros() as u64)?)
-        }
-
         usbox.register("CurrentTimeMicros", current_time_micros)?;
+        if let Some(module_loader) = module_loader {
+            module_loader.register(&mut usbox)?;
+        }
 
         Ok(Self {
             inner: usbox,
-            host_modules: HashMap::new(),
+            host_modules,
             _metric_guard: SandboxMetricsGuard::new(),
         })
     }
@@ -78,95 +87,28 @@ impl ProtoJSSandbox {
         mut self,
         file_system: Fs,
     ) -> Result<Self> {
-        use std::path::PathBuf;
-
-        use oxc_resolver::{ResolveOptions, ResolverGeneric};
-
-        let resolver = ResolverGeneric::new_with_file_system(
-            file_system.clone(),
-            ResolveOptions {
-                extensions: vec![".js".into(), ".mjs".into()],
-                condition_names: vec!["import".into(), "module".into()],
-                ..Default::default()
-            },
-        );
-
-        self.inner.register(
-            "ResolveModule",
-            move |base: String, specifier: String| -> hyperlight_host::Result<String> {
-                tracing::debug!(
-                    base = %base,
-                    specifier = %specifier,
-                    "Resolving module"
-                );
-
-                let resolved = resolver.resolve(&base, &specifier).map_err(|e| {
-                    new_error!(
-                        "Failed to resolve module '{}' from '{}': {:?}",
-                        specifier,
-                        base,
-                        e
-                    )
-                })?;
-
-                Ok(resolved.path().to_string_lossy().to_string())
-            },
-        )?;
-
-        self.inner.register(
-            "LoadModule",
-            move |path: String| -> hyperlight_host::Result<String> {
-                tracing::debug!(path = %path, "Loading module");
-                let path_buf = PathBuf::from(&path);
-                let source = file_system
-                    .read_to_string(&path_buf)
-                    .map_err(|e| new_error!("Failed to read module '{}': {}", path, e))?;
-
-                Ok(source)
-            },
-        )?;
-
+        ExternalModuleLoader::new(file_system).register(&mut self.inner)?;
         Ok(self)
     }
 
     /// Load the JavaScript runtime into the sandbox.
     #[instrument(err(Debug), skip(self), level=Level::INFO)]
     pub fn load_runtime(mut self) -> Result<JSSandbox> {
+        let host_functions = host_function_manifest(&self.host_modules);
+        let host_modules_json = serde_json::to_string(&self.host_modules)?;
         let host_modules = self.host_modules;
-
-        let host_modules_json = serde_json::to_string(&host_modules)?;
 
         // Register the host function that the guest calls for all host
         // function invocations. Binary data (if any) is carried in a
         // length-prefixed sidecar alongside the JSON args.
-        self.inner.register(
-            "CallHostJsFunction",
-            move |module_name: String,
-                  func_name: String,
-                  args_json: String,
-                  binaries: Vec<u8>|
-                  -> Result<Vec<u8>> {
-                let module = host_modules
-                    .get(&module_name)
-                    .ok_or_else(|| new_error!("Host module '{}' not found", module_name))?;
-                module
-                    .call(&func_name, args_json, Some(binaries))
-                    .map_err(|e| {
-                        new_error!(
-                            "Error calling host function '{}' in module '{}': {}",
-                            func_name,
-                            module_name,
-                            e
-                        )
-                    })
-            },
-        )?;
+        self.inner
+            .register("CallHostJsFunction", host_function_dispatch(host_modules))?;
 
         let mut multi_use_sandbox = self.inner.evolve()?;
 
         let _: () = multi_use_sandbox.call("RegisterHostModules", host_modules_json)?;
 
-        JSSandbox::new(multi_use_sandbox)
+        JSSandbox::new(multi_use_sandbox, host_functions)
     }
 
     /// Register a host module that can be called from the guest JavaScript code.

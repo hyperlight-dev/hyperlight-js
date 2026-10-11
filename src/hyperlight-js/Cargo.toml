@@ -22,7 +22,7 @@ hyperlight-js-runtime = { workspace = true }
 metrics = "0.24.6"
 oxc_resolver = "11.21.0"
 phf = { version = "0.14", features = ["macros"] }
-serde = { version = "1.0" }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0" }
 tracing = "0.1.44"
 
@@ -133,6 +133,11 @@ test = false
 [[example]]
 name = "user_modules"
 path = "examples/user_modules/main.rs"
+test = false
+
+[[example]]
+name = "persistent_snapshot"
+path = "examples/persistent_snapshot/main.rs"
 test = false
 
 [[bench]]

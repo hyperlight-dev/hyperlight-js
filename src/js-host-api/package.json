@@ -50,19 +50,23 @@
     "prettier": "^3.8.1",
     "vitest": "^5.0.0"
   },
+  "overrides": {
+    "source-map-js": "https://github.com/7rulnik/source-map-js/archive/0a1d334fd1e55a47df97fcd60a7915d46df3b08a.tar.gz"
+  },
   "engines": {
     "node": ">= 18"
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release && npm run normalize:types",
+    "build:debug": "napi build --platform && npm run normalize:types",
+    "normalize:types": "node scripts/normalize-generated-types.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint lib.js tests/ examples/",
-    "lint:fix": "eslint lib.js tests/ examples/ --fix",
-    "fmt": "prettier --write \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"*.config.{js,mjs}\"",
-    "fmt:check": "prettier --check \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"*.config.{js,mjs}\"",
-    "prepublishOnly": "napi prepublish -t npm --skip-optional-publish",
+    "lint": "eslint lib.js tests/ examples/ scripts/",
+    "lint:fix": "eslint lib.js tests/ examples/ scripts/ --fix",
+    "fmt": "prettier --write \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"scripts/**/*.mjs\" \"*.config.{js,mjs}\"",
+    "fmt:check": "prettier --check \"lib.js\" \"tests/**/*.js\" \"examples/**/*.js\" \"scripts/**/*.mjs\" \"*.config.{js,mjs}\"",
+    "prepublishOnly": "napi prepublish -t npm --skip-optional-publish && npm run normalize:types",
     "artifacts": "napi artifacts",
     "version": "napi version"
   }

@@ -23,7 +23,9 @@ use core::ptr::NonNull;
 
 use anyhow::{bail, ensure, Context as _};
 use hashbrown::HashMap;
-use hyperlight_js_common::{FnReturn, MAX_JSON_DEPTH, PLACEHOLDER_BIN};
+#[cfg(hyperlight)]
+use hyperlight_js_common::Bytes;
+use hyperlight_js_common::{FnReturnRef, MAX_JSON_DEPTH, PLACEHOLDER_BIN};
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::prelude::Rest;
@@ -297,7 +299,7 @@ fn json_to_plain_value<'js>(
 fn json_to_value_with_blobs<'js>(
     ctx: &Ctx<'js>,
     value: serde_json::Value,
-    blobs: &[Vec<u8>],
+    blobs: &[&[u8]],
     depth: usize,
 ) -> anyhow::Result<Value<'js>> {
     json_to_js_value(
@@ -311,7 +313,7 @@ fn json_to_value_with_blobs<'js>(
             {
                 let idx = idx as usize;
                 if idx < blobs.len() {
-                    let array = TypedArray::<u8>::new(ctx.clone(), blobs[idx].clone())?;
+                    let array = TypedArray::<u8>::new_copy(ctx.clone(), blobs[idx])?;
                     return Ok(Some(array.into_value()));
                 }
                 anyhow::bail!(
@@ -462,46 +464,11 @@ impl HostFunction {
     /// - `0x00` + JSON = JSON return value
     /// - `0x01` + bytes = raw binary return (becomes `Uint8Array` on JS side)
     pub fn new_bin(func: impl Fn(String, Vec<u8>) -> anyhow::Result<Vec<u8>> + 'static) -> Self {
-        Self::new(
-            move |ctx: &Ctx, args: Rest<Value>| -> anyhow::Result<Value> {
-                // Extract binary blobs and replace with placeholders
-                let (json_args, binaries) = extract_binaries(ctx, args.into_inner())?;
-
-                // Encode binaries into sidecar format — encode_binaries
-                // accepts &[Vec<u8>] directly, no intermediate Vec<&[u8]> needed
-                let packed = hyperlight_js_common::encode_binaries(&binaries)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-                // Call the host function
-                let result = func(json_args, packed).context("Calling binary host function")?;
-
-                // Decode the tagged return value
-                match hyperlight_js_common::decode_return(&result)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-                {
-                    FnReturn::Json(json) => {
-                        // Plain JSON return — no binary markers to resolve.
-                        let json_value: serde_json::Value =
-                            serde_json::from_str(&json).context("Parsing JSON return from host")?;
-                        json_to_plain_value(ctx, json_value, 0)
-                    }
-                    FnReturn::JsonWithBinaries(json, sidecar) => {
-                        // Optimised sidecar path: decode blobs and resolve
-                        // {"__bin__": N} placeholders by index lookup.
-                        let blobs = hyperlight_js_common::decode_binaries(&sidecar)
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
-                        let json_value: serde_json::Value = serde_json::from_str(&json)
-                            .context("Parsing JSON-with-binaries return from host")?;
-                        json_to_value_with_blobs(ctx, json_value, &blobs, 0)
-                    }
-                    FnReturn::Binary(data) => {
-                        // Create a Uint8Array from the binary data
-                        let array = TypedArray::<u8>::new(ctx.clone(), data)?;
-                        Ok(array.into_value())
-                    }
-                }
-            },
-        )
+        Self::new_bin_with_blobs(move |json_args, binaries| {
+            let packed = hyperlight_js_common::encode_binaries(&binaries)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            func(json_args, packed)
+        })
     }
 
     /// Create a new `HostFunction` from a closure that takes and returns any type that can be
@@ -533,6 +500,62 @@ impl HostFunction {
         args: Rest<Value<'js>>,
     ) -> rquickjs::Result<Value<'js>> {
         (self.func)(ctx, args)
+    }
+
+    /// Creates a guest bridge that passes the sidecar as `ByteChunks`.
+    ///
+    /// Binary allocations move into the transport chunks without first
+    /// copying them into a contiguous sidecar. Return values remain owned.
+    #[cfg(hyperlight)]
+    pub(crate) fn new_bin_chunks(
+        func: impl Fn(String, Vec<Bytes>) -> anyhow::Result<Vec<u8>> + 'static,
+    ) -> Self {
+        Self::new_bin_with_blobs(move |json_args, binaries| {
+            let chunks = hyperlight_js_common::encode_binaries_chunks(binaries)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            func(json_args, chunks)
+        })
+    }
+
+    /// Extracts JSON and binary arguments, invokes the selected encoder and
+    /// bridge, then converts the tagged result back into a JavaScript value.
+    fn new_bin_with_blobs(
+        func: impl Fn(String, Vec<Vec<u8>>) -> anyhow::Result<Vec<u8>> + 'static,
+    ) -> Self {
+        Self::new(
+            move |ctx: &Ctx, args: Rest<Value>| -> anyhow::Result<Value> {
+                // Extract binary blobs and replace with placeholders
+                let (json_args, binaries) = extract_binaries(ctx, args.into_inner())?;
+
+                let result = func(json_args, binaries).context("Calling binary host function")?;
+
+                // Decode the tagged return value
+                match hyperlight_js_common::decode_return_ref(&result)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                {
+                    FnReturnRef::Json(json) => {
+                        // Plain JSON return — no binary markers to resolve.
+                        let json_value: serde_json::Value =
+                            serde_json::from_str(json).context("Parsing JSON return from host")?;
+                        json_to_plain_value(ctx, json_value, 0)
+                    }
+                    FnReturnRef::JsonWithBinaries(json, sidecar) => {
+                        // Optimised sidecar path: decode blobs and resolve
+                        // {"__bin__": N} placeholders by index lookup.
+                        let blobs = hyperlight_js_common::decode_binaries_ref(sidecar)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        let json_value: serde_json::Value = serde_json::from_str(json)
+                            .context("Parsing JSON-with-binaries return from host")?;
+                        json_to_value_with_blobs(ctx, json_value, &blobs, 0)
+                    }
+                    FnReturnRef::Binary(data) => {
+                        // Create a Uint8Array from the binary data
+                        let array = TypedArray::<u8>::new_copy(ctx.clone(), data)?;
+                        Ok(array.into_value())
+                    }
+                }
+            },
+        )
     }
 }
 

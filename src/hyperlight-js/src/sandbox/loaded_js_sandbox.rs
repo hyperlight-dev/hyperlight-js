@@ -111,7 +111,15 @@ impl LoadedJSSandbox {
 
         let result = self
             .inner
-            .call("RunHandler", (func_name.clone(), event, should_gc));
+            .call::<Vec<u8>>(
+                "RunHandler",
+                (func_name.clone(), event.into_bytes(), should_gc),
+            )
+            .and_then(|bytes| {
+                String::from_utf8(bytes).map_err(|err| {
+                    HyperlightError::Error(format!("Invalid UTF-8 in handler result: {err}"))
+                })
+            });
 
         // --- guest-call-stats: record timing after the call ---
         // CPU time is read first so the wall-clock measurement fully wraps it.

@@ -17,6 +17,7 @@ It is built on top of Hyperlight.
 hyperlight-js-common = { workspace = true }
 anyhow = "1.0.102"
 fn-traits = "0.2.0"
+hyperlight-common = { workspace = true }
 hyperlight-host = { workspace = true }
 hyperlight-js-runtime = { workspace = true }
 metrics = "0.24.6"

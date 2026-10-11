@@ -316,20 +316,19 @@ impl JSSandbox {
         // because modules are lazily compiled by the UserModuleLoader when first
         // imported — registration order does not affect resolution.
         for (qualified_name, script) in std::mem::take(&mut self.modules) {
-            let content = script.content().to_owned();
             self.inner
-                .call::<()>("register_module", (qualified_name, content))?;
+                .call::<()>("register_module", (qualified_name, script.into_bytes()))?;
         }
 
         for (function_name, script) in std::mem::take(&mut self.handlers) {
-            let content = script.content().to_owned();
-
             let path = script
                 .base_path()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            self.inner
-                .call::<()>("register_handler", (function_name, content, path))?;
+            self.inner.call::<()>(
+                "register_handler",
+                (function_name, script.into_bytes(), path),
+            )?;
         }
 
         LoadedJSSandbox::new(self.inner, self.snapshot)
@@ -392,6 +391,63 @@ impl Debug for JSSandbox {
 mod tests {
     use super::*;
     use crate::SandboxBuilder;
+
+    /// Byte-based RPCs reject invalid UTF-8 without poisoning the runtime.
+    #[test]
+    fn external_text_rejects_invalid_utf8() {
+        let mut sandbox = SandboxBuilder::new()
+            .build()
+            .unwrap()
+            .load_runtime()
+            .unwrap();
+
+        let err_msg = sandbox
+            .inner
+            .call::<()>(
+                "register_handler",
+                ("handler".to_string(), vec![0xff_u8], String::new()),
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(err_msg.contains("Invalid UTF-8 in handler source"));
+
+        let err_msg = sandbox
+            .inner
+            .call::<()>(
+                "register_module",
+                ("user:module".to_string(), vec![0xff_u8]),
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(err_msg.contains("Invalid UTF-8 in module source"));
+
+        let err_msg = sandbox
+            .inner
+            .call::<Vec<u8>>("RunHandler", ("handler".to_string(), vec![0xff_u8], true))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err_msg.contains("Invalid UTF-8 in event JSON"));
+        assert!(!sandbox.status().is_poisoned());
+
+        sandbox
+            .add_handler(
+                "handler",
+                Script::from_content("function handler(event) { return event; }"),
+            )
+            .unwrap();
+
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        assert_eq!(
+            loaded
+                .handle_event("handler", r#"{"ok":true}"#.into(), None)
+                .unwrap(),
+            r#"{"ok":true}"#
+        );
+    }
 
     #[test]
     fn test_add_handler() {

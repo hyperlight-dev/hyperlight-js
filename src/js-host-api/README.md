@@ -53,14 +53,22 @@ Creates and configures a new sandbox.
 **Methods:**
 - `setHeapSize(bytes: number)` → `this` — Set guest heap size (must be > 0, chainable)
 - `setScratchSize(bytes: number)` → `this` — Set guest scratch size, includes stack (must be > 0, chainable)
-- `setInputBufferSize(bytes: number)` → `this` — Set guest input buffer size (must be > 0, chainable)
-- `setOutputBufferSize(bytes: number)` → `this` — Set guest output buffer size (must be > 0, chainable)
+- `setInputTransportPoolPages(pages: number)` → `this` — Set the host-to-guest buffer pool size in 4 KiB pages (must be > 0, chainable)
+- `setOutputTransportPoolPages(pages: number)` → `this` — Set the guest-to-host buffer pool size in 4 KiB pages (must be > 0, chainable)
+- `setInputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each host-to-guest transport buffer (must be > 0, chainable)
+- `setOutputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each large guest-to-host transport buffer (must be > 0, chainable)
+- `setInputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy input/host-reply capacity in bytes; use `setInputTransportPoolPages` and `setOutputTransportPoolPages` for explicit pool budgets
+- `setOutputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy output/host-request capacity in bytes; use `setOutputTransportPoolPages`
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
 
 ```javascript
 const builder = new SandboxBuilder()
     .setHeapSize(8 * 1024 * 1024)
-    .setScratchSize(1024 * 1024);
+    .setScratchSize(1024 * 1024)
+    .setInputTransportBufferSize(16 * 1024)
+    .setOutputTransportBufferSize(16 * 1024)
+    .setInputTransportPoolPages(8)
+    .setOutputTransportPoolPages(9);
 const protoSandbox = await builder.build();
 ```
 
@@ -530,11 +538,15 @@ const result = await loaded.callHandler('handler', {});
 
 **How it works under the hood:**
 
-1. Guest `Uint8Array` args are extracted from the QuickJS VM and packed
-   into a length-prefixed binary sidecar alongside JSON placeholders
-2. The sidecar crosses the hypervisor boundary as raw bytes (no encoding)
+1. Guest `Uint8Array` args are extracted from the QuickJS VM into owned buffers
+   and referenced by JSON placeholders. Length headers and payload buffers form
+   a chunked sidecar without copying the payloads into one contiguous buffer.
+2. Hyperlight carries this sidecar as `ByteChunks` (`Vec<Bytes>`). The host
+   decodes its length-prefixed stream across arbitrary transport chunk boundaries.
 3. On the host side, placeholders are replaced with native Node.js `Buffer`
-   objects via the NAPI API — your callback receives real Buffers
+   objects by transferring owned allocations through napi-rs. Engines that
+   disallow external buffers use napi-rs's copy fallback. Repeated references
+   to a blob still produce independent mutable Buffers.
 4. `Buffer` returns (including Buffers nested inside returned objects/arrays)
    are detected recursively, extracted into the sidecar, and arrive on the
    guest side as `Uint8Array` with JSON placeholders restored

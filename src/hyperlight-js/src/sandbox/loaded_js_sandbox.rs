@@ -17,7 +17,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use hyperlight_host::hypervisor::InterruptHandle;
-use hyperlight_host::sandbox::snapshot::Snapshot;
+use hyperlight_host::sandbox::snapshot::Snapshot as HyperlightSnapshot;
 use hyperlight_host::HyperlightError::{self, JsonConversionFailure};
 use hyperlight_host::{MultiUseSandbox, Result, SandboxStatus};
 use tokio::task::JoinHandle;
@@ -29,6 +29,7 @@ use super::js_sandbox::JSSandbox;
 use super::metrics::{METRIC_SANDBOX_LOADS, METRIC_SANDBOX_UNLOADS};
 use super::monitor::runtime::get_monitor_runtime;
 use super::monitor::MonitorSet;
+use super::snapshot::{HostFunctionManifest, Snapshot, SnapshotKind, SnapshotMetadata};
 #[cfg(feature = "function_call_metrics")]
 use crate::sandbox::metrics::EventHandlerMetricGuard;
 use crate::sandbox::metrics::SandboxMetricsGuard;
@@ -38,7 +39,13 @@ pub struct LoadedJSSandbox {
     inner: MultiUseSandbox,
     // Snapshot of state before the sandbox was loaded and before any handlers were added.
     // This is used to restore state back to a JSSandbox.
-    snapshot: Arc<Snapshot>,
+    snapshot: Arc<HyperlightSnapshot>,
+    // Metadata for the currently captured loaded guest state. Its host-function
+    // manifest records only the capabilities required by that state.
+    snapshot_metadata: Arc<SnapshotMetadata>,
+    // Builder-selected callbacks available to host dispatch. These become the
+    // capability manifest if this sandbox is unloaded back to a JSSandbox.
+    available_host_functions: HostFunctionManifest,
     // metric drop guard to manage sandbox metric
     _metric_guard: SandboxMetricsGuard<LoadedJSSandbox>,
     // Stats from the most recent handle_event / handle_event_with_monitor call.
@@ -63,15 +70,44 @@ impl Drop for MonitorTask {
 
 impl LoadedJSSandbox {
     #[instrument(err(Debug), skip_all, level=Level::INFO)]
-    pub(super) fn new(inner: MultiUseSandbox, snapshot: Arc<Snapshot>) -> Result<LoadedJSSandbox> {
+    pub(super) fn new(
+        inner: MultiUseSandbox,
+        snapshot: Arc<HyperlightSnapshot>,
+        snapshot_metadata: Arc<SnapshotMetadata>,
+        available_host_functions: HostFunctionManifest,
+    ) -> Result<LoadedJSSandbox> {
         metrics::counter!(METRIC_SANDBOX_LOADS).increment(1);
         Ok(LoadedJSSandbox {
             inner,
             snapshot,
+            snapshot_metadata,
+            available_host_functions,
             _metric_guard: SandboxMetricsGuard::new(),
             #[cfg(feature = "guest-call-stats")]
             last_call_stats: None,
         })
+    }
+
+    pub(crate) fn from_snapshot(
+        inner: MultiUseSandbox,
+        snapshot: &Snapshot,
+        available_host_functions: HostFunctionManifest,
+    ) -> Result<LoadedJSSandbox> {
+        if snapshot.kind() != SnapshotKind::LoadedJsSandbox {
+            return Err(crate::new_error!(
+                "Cannot restore a {:?} snapshot as a LoadedJSSandbox",
+                snapshot.kind()
+            ));
+        }
+        let base = snapshot.base().ok_or_else(|| {
+            crate::new_error!("LoadedJSSandbox snapshot is missing its base snapshot")
+        })?;
+        Self::new(
+            inner,
+            base,
+            Arc::new(snapshot.metadata().clone()),
+            available_host_functions,
+        )
     }
 
     /// Handles an event by calling the specified function with the event data.
@@ -167,22 +203,39 @@ impl LoadedJSSandbox {
     /// Unloads the Handlers from the sandbox and returns a `JSSandbox` with the JavaScript runtime loaded.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
     pub fn unload(self) -> Result<JSSandbox> {
-        JSSandbox::from_loaded(self.inner, self.snapshot).inspect(|_| {
-            metrics::counter!(METRIC_SANDBOX_UNLOADS).increment(1);
-        })
+        JSSandbox::from_loaded(self.inner, self.snapshot, self.available_host_functions)
+            .inspect(|_| metrics::counter!(METRIC_SANDBOX_UNLOADS).increment(1))
     }
 
     /// Take a snapshot of the the current state of the sandbox.
     /// This can be used to restore the state of the sandbox later.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn snapshot(&mut self) -> Result<Arc<Snapshot>> {
-        self.inner.snapshot()
+    pub fn snapshot(&mut self) -> Result<Snapshot> {
+        let inner = self.inner.snapshot()?;
+        Ok(Snapshot::new(
+            inner,
+            Some(Arc::clone(&self.snapshot)),
+            Arc::clone(&self.snapshot_metadata),
+        ))
     }
 
     /// Restore the state of the sandbox to a previous snapshot.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn restore(&mut self, snapshot: Arc<Snapshot>) -> Result<()> {
-        self.inner.restore(snapshot)?;
+    pub fn restore(&mut self, snapshot: Snapshot) -> Result<()> {
+        if snapshot.kind() != SnapshotKind::LoadedJsSandbox {
+            return Err(crate::new_error!(
+                "Cannot restore a {:?} snapshot into a LoadedJSSandbox",
+                snapshot.kind()
+            ));
+        }
+        snapshot
+            .metadata()
+            .validate_host_functions(&self.available_host_functions)?;
+        self.inner.restore(snapshot.inner())?;
+        self.snapshot = snapshot.base().ok_or_else(|| {
+            crate::new_error!("LoadedJSSandbox snapshot is missing its base snapshot")
+        })?;
+        self.snapshot_metadata = Arc::new(snapshot.metadata().clone());
         Ok(())
     }
 

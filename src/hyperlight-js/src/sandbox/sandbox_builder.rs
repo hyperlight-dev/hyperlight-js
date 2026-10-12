@@ -19,13 +19,20 @@ use std::time::Duration;
 use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::{is_hypervisor_present, GuestBinary, HyperlightError, Result};
 
+use super::host_fn::{select_host_function_modules, HostFunctionFilter, HostFunctionModule};
+use super::module_loader::ExternalModuleLoader;
 use super::proto_js_sandbox::ProtoJSSandbox;
+use super::sandbox_restorer::SandboxRestorer;
+use super::snapshot::Snapshot;
 use crate::HostPrintFn;
 
-/// A builder for a ProtoJSSandbox
+/// Configures fresh JavaScript sandboxes and snapshot restoration.
 pub struct SandboxBuilder {
     config: SandboxConfiguration,
     host_print_fn: Option<HostPrintFn>,
+    host_function_modules: Vec<HostFunctionModule>,
+    host_function_filter: HostFunctionFilter,
+    module_loader: Option<ExternalModuleLoader>,
 }
 
 /// The minimum scratch size for the JS runtime sandbox.
@@ -61,7 +68,57 @@ impl SandboxBuilder {
         Self {
             config,
             host_print_fn: None,
+            host_function_modules: Vec::new(),
+            host_function_filter: HostFunctionFilter::All,
+            module_loader: None,
         }
+    }
+
+    /// Define the host-function modules for this sandbox.
+    ///
+    /// The factory is invoked once and must construct fresh module and callback
+    /// instances. Pass the same factory to another builder to reuse the
+    /// definition without sharing callback state between sandboxes.
+    ///
+    /// Create per-sandbox state inside the factory. Capturing an [`std::sync::Arc`]
+    /// created outside the factory, or accessing static mutable state from a
+    /// callback, deliberately shares that state between sandboxes.
+    ///
+    /// A constructed module cannot be supplied to two builders:
+    ///
+    /// ```compile_fail
+    /// use hyperlight_js::{HostFunctionModule, SandboxBuilder};
+    ///
+    /// let module = HostFunctionModule::new("host:example");
+    /// let _first = SandboxBuilder::new().with_host_function_modules(|| [module]);
+    /// let _second = SandboxBuilder::new().with_host_function_modules(|| [module]);
+    /// ```
+    pub fn with_host_function_modules<Factory, Modules>(mut self, factory: Factory) -> Self
+    where
+        Factory: FnOnce() -> Modules,
+        Modules: IntoIterator<Item = HostFunctionModule>,
+    {
+        self.host_function_modules.extend(factory());
+        self
+    }
+
+    /// Select which supplied host functions remain available during restoration.
+    ///
+    /// Loaded snapshots keep their captured requirements unchanged. With
+    /// [`HostFunctionFilter::All`], extra supplied callbacks become available
+    /// after unload; [`HostFunctionFilter::SnapshotRequirements`] discards them.
+    pub fn with_host_function_filter(mut self, filter: HostFunctionFilter) -> Self {
+        self.host_function_filter = filter;
+        self
+    }
+
+    /// Install an external JavaScript module loader for fresh or restored sandboxes.
+    pub fn with_module_loader<Fs: crate::resolver::FileSystem + Clone + 'static>(
+        mut self,
+        file_system: Fs,
+    ) -> Self {
+        self.module_loader = Some(ExternalModuleLoader::new(file_system));
+        self
     }
 
     /// Set the host print function
@@ -72,7 +129,7 @@ impl SandboxBuilder {
 
     /// Set the guest output buffer size
     pub fn with_guest_output_buffer_size(mut self, guest_output_buffer_size: usize) -> Self {
-        self.config.set_output_data_size(guest_output_buffer_size);
+        self.config.set_g2h_buffer_size(guest_output_buffer_size);
         self
     }
 
@@ -82,7 +139,7 @@ impl SandboxBuilder {
     /// The host can read from this buffer
     /// The guest can write to this buffer
     pub fn with_guest_input_buffer_size(mut self, guest_input_buffer_size: usize) -> Self {
-        self.config.set_input_data_size(guest_input_buffer_size);
+        self.config.set_h2g_buffer_size(guest_input_buffer_size);
         self
     }
 
@@ -175,10 +232,42 @@ impl SandboxBuilder {
         if !is_hypervisor_present() {
             return Err(HyperlightError::NoHypervisorFound());
         }
+        let host_modules = select_host_function_modules(
+            self.host_function_modules,
+            self.host_function_filter,
+            None,
+        )?;
         let guest_binary = GuestBinary::Buffer(super::JSRUNTIME.to_vec());
-        let proto_js_sandbox =
-            ProtoJSSandbox::new(guest_binary, Some(self.config), self.host_print_fn)?;
+        let proto_js_sandbox = ProtoJSSandbox::new(
+            guest_binary,
+            Some(self.config),
+            self.host_print_fn,
+            host_modules,
+            self.module_loader,
+        )?;
         Ok(proto_js_sandbox)
+    }
+
+    /// Create a restorer for a Hyperlight JavaScript snapshot.
+    ///
+    /// Configure host resources on this builder, then call
+    /// [`SandboxRestorer::restore`] with the intended sandbox type.
+    pub fn build_from_snapshot(self, snapshot: Snapshot) -> Result<SandboxRestorer> {
+        if !is_hypervisor_present() {
+            return Err(HyperlightError::NoHypervisorFound());
+        }
+        let requirements = snapshot.requirements();
+        let host_modules = select_host_function_modules(
+            self.host_function_modules,
+            self.host_function_filter,
+            Some(requirements.host_functions()),
+        )?;
+        SandboxRestorer::new(
+            snapshot,
+            self.host_print_fn,
+            host_modules,
+            self.module_loader,
+        )
     }
 }
 

@@ -30,6 +30,8 @@ use hyperlight_host::func::HostFunction;
 // Re-export FnReturn for the NAPI bridge (used in register_js signature).
 #[doc(hidden)]
 pub use sandbox::host_fn::FnReturn;
+/// Selects reusable host functions when building a fresh or restored sandbox.
+pub use sandbox::host_fn::{HostFunctionFilter, HostFunctionModule};
 /// Validate a module identifier (name or namespace).
 pub use sandbox::js_sandbox::validate_module_identifier;
 /// Validate that a namespace is not reserved.
@@ -47,6 +49,10 @@ pub use sandbox::loaded_js_sandbox::LoadedJSSandbox;
 pub use sandbox::proto_js_sandbox::ProtoJSSandbox;
 /// A builder for creating a new `JSSandbox`
 pub use sandbox::sandbox_builder::SandboxBuilder;
+/// Restores a snapshot using host resources configured on [`SandboxBuilder`].
+pub use sandbox::sandbox_restorer::{RestoreTarget, SandboxRestorer};
+/// A persistent snapshot of a Hyperlight JavaScript sandbox.
+pub use sandbox::snapshot::{RequirementStatus, Snapshot, SnapshotKind, SnapshotRequirements};
 /// Types for working with JS script.
 pub use script::Script;
 /// The function to pass to a new `JSSandbox` to tell it how to handle
@@ -69,8 +75,6 @@ pub type ParameterValue = hyperlight_host::func::ParameterValue;
 pub type ReturnValue = hyperlight_host::func::ReturnValue;
 /// The type of the return value from a guest function call.
 pub type ReturnType = hyperlight_host::func::ReturnType;
-/// A snapshot of sandbox state that can be used to restore it later.
-pub use hyperlight_host::sandbox::snapshot::Snapshot;
 /// Configuration for sandbox resource limits and behavior.
 pub use hyperlight_host::sandbox::{SandboxConfiguration, SandboxStatus};
 /// Module resolution and loading functionality.

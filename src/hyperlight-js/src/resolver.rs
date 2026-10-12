@@ -172,9 +172,9 @@ impl FileSystem for FileSystemEmbedded {
 ///     "strings.js" => "../tests/fixtures/strings.js",
 /// };
 ///
-/// let proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-/// let sandbox = proto_js_sandbox
-///     .set_module_loader(fs)
+/// let sandbox = SandboxBuilder::new()
+///     .with_module_loader(fs)
+///     .build()
 ///     .unwrap()
 ///     .load_runtime()
 ///     .unwrap();

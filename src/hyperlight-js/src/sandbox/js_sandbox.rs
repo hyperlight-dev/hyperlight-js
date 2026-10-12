@@ -17,11 +17,15 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use hyperlight_host::sandbox::snapshot::Snapshot;
+use hyperlight_host::sandbox::snapshot::Snapshot as HyperlightSnapshot;
 use hyperlight_host::{new_error, MultiUseSandbox, Result, SandboxStatus};
 use tracing::{instrument, Level};
 
+use super::host_fn::register_host_function_manifest;
 use super::loaded_js_sandbox::LoadedJSSandbox;
+use super::snapshot::{
+    HostFunctionManifest, ScriptMetadata, Snapshot, SnapshotKind, SnapshotMetadata,
+};
 use crate::sandbox::metrics::SandboxMetricsGuard;
 use crate::Script;
 
@@ -73,24 +77,32 @@ pub fn validate_namespace_not_reserved(namespace: &str) -> Result<()> {
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.
 pub struct JSSandbox {
     pub(super) inner: MultiUseSandbox,
+    // Mutable definitions staged for guest registration. Snapshot metadata is
+    // built from these maps only when a snapshot or LoadedJSSandbox is created.
     handlers: HashMap<String, Script>,
     /// User modules keyed by qualified name (e.g. `user:utils`).
     modules: HashMap<String, Script>,
+    // Host functions selected by SandboxBuilder.
+    host_functions: HostFunctionManifest,
     // Snapshot of state before any handlers are added.
     // This is used to restore state back to a neutral JSSandbox.
-    snapshot: Arc<Snapshot>,
+    snapshot: Arc<HyperlightSnapshot>,
     // metric drop guard to manage sandbox metric
     _metric_guard: SandboxMetricsGuard<JSSandbox>,
 }
 
 impl JSSandbox {
     #[instrument(err(Debug), skip(inner), level=Level::INFO)]
-    pub(super) fn new(mut inner: MultiUseSandbox) -> Result<Self> {
+    pub(super) fn new(
+        mut inner: MultiUseSandbox,
+        host_functions: HostFunctionManifest,
+    ) -> Result<Self> {
         let snapshot = inner.snapshot()?;
         Ok(Self {
             inner,
             handlers: HashMap::new(),
             modules: HashMap::new(),
+            host_functions,
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
         })
@@ -99,16 +111,79 @@ impl JSSandbox {
     /// Creates a new `JSSandbox` from a `MultiUseSandbox` and a `Snapshot` of state before any handlers were added.
     pub(crate) fn from_loaded(
         mut loaded: MultiUseSandbox,
-        snapshot: Arc<Snapshot>,
+        snapshot: Arc<HyperlightSnapshot>,
+        host_functions: HostFunctionManifest,
     ) -> Result<Self> {
         loaded.restore(snapshot.clone())?;
+        register_host_function_manifest(&mut loaded, &host_functions)?;
         Ok(Self {
             inner: loaded,
             handlers: HashMap::new(),
             modules: HashMap::new(),
+            host_functions,
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
         })
+    }
+
+    pub(crate) fn from_snapshot(
+        inner: MultiUseSandbox,
+        snapshot: &Snapshot,
+        host_functions: HostFunctionManifest,
+    ) -> Result<Self> {
+        if snapshot.kind() != SnapshotKind::JsSandbox {
+            return Err(new_error!(
+                "Cannot restore a {:?} snapshot as a JSSandbox",
+                snapshot.kind()
+            ));
+        }
+
+        Ok(Self {
+            inner,
+            handlers: snapshot.metadata().handlers().collect(),
+            modules: snapshot.metadata().modules().collect(),
+            host_functions,
+            snapshot: snapshot.inner(),
+            _metric_guard: SandboxMetricsGuard::new(),
+        })
+    }
+
+    /// Capture the current runtime state and handlers and modules added to this
+    /// sandbox but not yet registered in the guest.
+    #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
+    pub fn snapshot(&mut self) -> Result<Snapshot> {
+        let inner = self.inner.snapshot()?;
+        let metadata = SnapshotMetadata::new(
+            SnapshotKind::JsSandbox,
+            self.handlers
+                .iter()
+                .map(|(name, script)| (name.clone(), ScriptMetadata::from(script))),
+            self.modules
+                .iter()
+                .map(|(name, script)| (name.clone(), ScriptMetadata::from(script))),
+            self.host_functions.clone(),
+        );
+        Ok(Snapshot::new(inner, None, Arc::new(metadata)))
+    }
+
+    /// Restore the runtime state and handlers and modules that were added to the
+    /// snapshotted sandbox but not yet registered in the guest.
+    #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
+    pub fn restore(&mut self, snapshot: Snapshot) -> Result<()> {
+        if snapshot.kind() != SnapshotKind::JsSandbox {
+            return Err(new_error!(
+                "Cannot restore a {:?} snapshot into a JSSandbox",
+                snapshot.kind()
+            ));
+        }
+        snapshot
+            .metadata()
+            .validate_host_functions(&self.host_functions)?;
+        self.inner.restore(snapshot.inner())?;
+        self.handlers = snapshot.metadata().handlers().collect();
+        self.modules = snapshot.metadata().modules().collect();
+        self.snapshot = snapshot.inner();
+        Ok(())
     }
 
     /// Adds a new handler function to the sandboxes collection of handlers. This Handler will be
@@ -311,6 +386,17 @@ impl JSSandbox {
             return Err(new_error!("No handlers have been added to the sandbox"));
         }
 
+        let metadata = Arc::new(SnapshotMetadata::new(
+            SnapshotKind::LoadedJsSandbox,
+            std::iter::empty(),
+            std::iter::empty(),
+            self.host_functions.clone(),
+        ));
+
+        // Publish the builder-selected host functions before compiling modules
+        // and handlers that may import them.
+        register_host_function_manifest(&mut self.inner, &self.host_functions)?;
+
         // Register user modules first so that handlers can import them.
         // NOTE: HashMap iteration order is non-deterministic, but this is safe
         // because modules are lazily compiled by the UserModuleLoader when first
@@ -332,7 +418,7 @@ impl JSSandbox {
                 .call::<()>("register_handler", (function_name, content, path))?;
         }
 
-        LoadedJSSandbox::new(self.inner, self.snapshot)
+        LoadedJSSandbox::new(self.inner, self.snapshot, metadata, self.host_functions)
     }
     /// Generate a crash dump of the current state of the VM underlying this sandbox.
     ///

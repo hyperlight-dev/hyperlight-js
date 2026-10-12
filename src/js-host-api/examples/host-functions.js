@@ -4,28 +4,15 @@
 // - Sync host functions (immediate return)
 // - Async host functions (Promise-returning)
 // - Multiple modules and functions
-// - HostModule API and convenience register() API
+// - Reusable host-function module definitions with per-sandbox state
 
-const { SandboxBuilder } = require('../lib.js');
+const { HostFunctionModule, SandboxBuilder } = require('../lib.js');
 
-async function main() {
-    console.log('=== Hyperlight JS Host Functions ===\n');
-
-    // ── Build the proto sandbox ──────────────────────────────────────
-    console.log('1. Creating sandbox...');
-    const proto = await new SandboxBuilder()
-        .setHeapSize(8 * 1024 * 1024)
-        .setScratchSize(1024 * 1024)
-        .build();
-    console.log('   ✓ Proto sandbox created\n');
-
-    // ── Register host functions (sync, spread args) ──────────────────
+function hostFunctionModules() {
+    // ── Define fresh host-function modules ───────────────────────────
     // Guest JS imports these as: import * as math from "host:math"
     // Args are auto-parsed from JSON and spread; return value auto-stringified.
-    console.log('2. Registering host functions...');
-
-    const math = proto.hostModule('math');
-
+    const math = new HostFunctionModule('math');
     math.register('add', (a, b) => a + b);
     math.register('multiply', (a, b) => a * b);
 
@@ -33,16 +20,31 @@ async function main() {
     // Async callbacks are automatically awaited by the bridge.
     // The guest call still blocks (Hyperlight is sync), but the host
     // can do async work (DB queries, HTTP, file I/O, etc.)
-    proto.hostModule('greetings').register('hello', async (name) => {
+    const greetings = new HostFunctionModule('greetings');
+    greetings.register('hello', async (name) => {
         // Simulate async work (e.g. looking up a name in a database)
         await new Promise((resolve) => setTimeout(resolve, 50));
         return `Hello, ${name}! 👋`;
     });
 
-    // ── Convenience API: register(module, name, callback) ────────────
-    proto.register('strings', 'upper', (s) => s.toUpperCase());
+    const strings = new HostFunctionModule('strings');
+    strings.register('upper', (s) => s.toUpperCase());
 
+    return [math, greetings, strings];
+}
+
+async function main() {
+    console.log('=== Hyperlight JS Host Functions ===\n');
+    console.log('2. Registering host functions...');
     console.log('   ✓ Host functions registered\n');
+
+    // Reuse the factory for another builder; each invocation creates fresh
+    // module objects, callbacks, and captured state.
+    const proto = await new SandboxBuilder()
+        .setHeapSize(8 * 1024 * 1024)
+        .setScratchSize(1024 * 1024)
+        .setHostFunctionModules(hostFunctionModules)
+        .build();
 
     // ── Load runtime and add a handler ───────────────────────────────
     console.log('3. Loading runtime...');

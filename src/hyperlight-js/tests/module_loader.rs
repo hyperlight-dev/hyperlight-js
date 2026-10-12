@@ -15,7 +15,67 @@ limitations under the License.
 */
 //! Tests for the module loader that import files from the embedded filesystem.
 
-use hyperlight_js::{embed_modules, SandboxBuilder, Script};
+#![allow(clippy::disallowed_macros)]
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use hyperlight_js::{
+    embed_modules, FileMetadata, FileSystem, FileSystemEmbedded, ResolveError, SandboxBuilder,
+    Script, Snapshot,
+};
+
+struct CloneCountingFileSystem {
+    inner: FileSystemEmbedded,
+    clone_count: Arc<AtomicUsize>,
+}
+
+impl CloneCountingFileSystem {
+    fn new(inner: FileSystemEmbedded, clone_count: Arc<AtomicUsize>) -> Self {
+        Self { inner, clone_count }
+    }
+}
+
+impl Clone for CloneCountingFileSystem {
+    fn clone(&self) -> Self {
+        self.clone_count.fetch_add(1, Ordering::Relaxed);
+        Self {
+            inner: self.inner,
+            clone_count: Arc::clone(&self.clone_count),
+        }
+    }
+}
+
+impl FileSystem for CloneCountingFileSystem {
+    fn new() -> Self {
+        unreachable!("CloneCountingFileSystem must wrap an embedded file system")
+    }
+
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+
+    fn read_to_string(&self, path: &Path) -> std::io::Result<String> {
+        self.inner.read_to_string(path)
+    }
+
+    fn metadata(&self, path: &Path) -> std::io::Result<FileMetadata> {
+        self.inner.metadata(path)
+    }
+
+    fn symlink_metadata(&self, path: &Path) -> std::io::Result<FileMetadata> {
+        self.inner.symlink_metadata(path)
+    }
+
+    fn read_link(&self, path: &Path) -> Result<PathBuf, ResolveError> {
+        self.inner.read_link(path)
+    }
+
+    fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
+        self.inner.canonicalize(path)
+    }
+}
 
 #[test]
 fn test_handler_with_multiple_imports() {
@@ -39,8 +99,10 @@ fn test_handler_with_multiple_imports() {
 
     let event = r#"{"a": 5, "b": 3}"#;
 
-    let proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-    let proto_js_sandbox = proto_js_sandbox.set_module_loader(fs).unwrap();
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_module_loader(fs)
+        .build()
+        .unwrap();
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
 
     let handler = Script::from_content(handler_content).with_virtual_base("/");
@@ -76,8 +138,12 @@ fn test_handler_import_restrictions() {
     }
     "#;
 
-    let proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-    let proto_js_sandbox = proto_js_sandbox.set_module_loader(fs).unwrap();
+    // Compatibility coverage for callers that still configure a fresh ProtoJSSandbox.
+    let proto_js_sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .set_module_loader(fs)
+        .unwrap();
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
 
     let handler = Script::from_content(handler_content).with_virtual_base("/");
@@ -131,8 +197,10 @@ fn test_handler_import_from_a_subfolder() {
     }
     "#;
 
-    let proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-    let proto_js_sandbox = proto_js_sandbox.set_module_loader(fs).unwrap();
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_module_loader(fs)
+        .build()
+        .unwrap();
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
 
     let handler = Script::from_content(handler_content).with_virtual_base("/");
@@ -145,4 +213,115 @@ fn test_handler_import_from_a_subfolder() {
         .unwrap();
 
     assert_eq!(res, "42");
+}
+
+#[test]
+fn restored_sandbox_reuses_module_resolver() {
+    let modules = embed_modules! {
+        "math.js" => "fixtures/math.js",
+        "strings.js" => "fixtures/strings.js",
+    };
+    let clone_count = Arc::new(AtomicUsize::new(0));
+    let file_system = CloneCountingFileSystem::new(modules, Arc::clone(&clone_count));
+    let handler = Script::from_content(
+        r#"
+        import { add } from './math.js';
+        import { toUpperCase } from './strings.js';
+
+        function handler(event) {
+            event.sum = add(event.a, event.b);
+            event.message = toUpperCase('restored');
+            return event;
+        }
+        "#,
+    )
+    .with_virtual_base("/");
+
+    let mut sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    sandbox.add_handler("calculator", handler).unwrap();
+    let snapshot = sandbox.snapshot().unwrap();
+
+    let restorer = SandboxBuilder::new()
+        .with_module_loader(file_system)
+        .build_from_snapshot(snapshot)
+        .unwrap();
+    let clones_after_setup = clone_count.load(Ordering::Relaxed);
+    let sandbox = restorer.restore::<hyperlight_js::JSSandbox>().unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+    assert_eq!(clone_count.load(Ordering::Relaxed), clones_after_setup);
+
+    let result = loaded
+        .handle_event("calculator", r#"{"a":5,"b":3}"#.to_owned(), None)
+        .unwrap();
+    assert!(result.contains(r#""sum":8"#));
+    assert!(result.contains(r#""message":"RESTORED""#));
+}
+
+#[test]
+fn restore_reports_required_module_loader() {
+    let modules = embed_modules! {
+        "math.js" => "fixtures/math.js",
+    };
+    let proto = SandboxBuilder::new()
+        .with_module_loader(modules)
+        .build()
+        .unwrap();
+    let mut sandbox = proto.load_runtime().unwrap();
+    let snapshot = sandbox.snapshot().unwrap();
+    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
+
+    let error = match restorer.restore::<hyperlight_js::JSSandbox>() {
+        Ok(_) => panic!("restore unexpectedly succeeded without a module loader"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+
+    assert!(message.contains("Snapshot requires a module loader"));
+    assert!(message.contains("with_module_loader()"));
+    assert!(message.contains("LoadModule"));
+    assert!(message.contains("ResolveModule"));
+}
+
+#[test]
+fn persisted_snapshot_restores_with_a_replacement_module_loader() {
+    let modules = embed_modules! {
+        "math.js" => "fixtures/math.js",
+    };
+    let handler = Script::from_content(
+        r#"
+        import { add } from './math.js';
+        function handler(event) { return { value: add(event.value, 1) }; }
+        "#,
+    )
+    .with_virtual_base("/");
+    let proto = SandboxBuilder::new()
+        .with_module_loader(modules)
+        .build()
+        .unwrap();
+    let mut sandbox = proto.load_runtime().unwrap();
+    sandbox.add_handler("increment", handler).unwrap();
+    let snapshot = sandbox.snapshot().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    snapshot.save(directory.path(), "external-modules").unwrap();
+
+    let snapshot = Snapshot::load(directory.path(), "external-modules").unwrap();
+    let restorer = SandboxBuilder::new()
+        .with_module_loader(modules)
+        .build_from_snapshot(snapshot)
+        .unwrap();
+    let mut loaded = restorer
+        .restore::<hyperlight_js::JSSandbox>()
+        .unwrap()
+        .get_loaded_sandbox()
+        .unwrap();
+
+    let result = loaded
+        .handle_event("increment", r#"{"value":41}"#.to_owned(), None)
+        .unwrap();
+    assert_eq!(result, r#"{"value":42}"#);
 }

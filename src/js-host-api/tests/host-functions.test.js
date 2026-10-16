@@ -71,6 +71,42 @@ describe('ProtoJSSandbox.register()', () => {
 // ── Host function invocation (end-to-end) ────────────────────────────
 
 describe('Host function invocation', () => {
+    it('should preserve large UTF-8 programs and JSON payloads', async () => {
+        const marker = 'pi \u03c0 \u{1f30d}';
+        const payload = marker.repeat(1400);
+        const source = `${`// ${marker}\n`.repeat(1000)}
+            import { echo } from "host:host";
+            function handler(event) {
+                return { value: echo(event.value), marker: "${marker}" };
+            }
+        `;
+
+        // Above 12 KiB, payloads need at least four 4 KiB buffers. A four-page
+        // input pool leaves only three for data because one is reserved for control.
+        // The 13 KiB threshold catches that regression while these payloads still
+        // leave room for framing within one default 16 KiB transport buffer.
+        expect(Buffer.byteLength(source, 'utf8')).toBeGreaterThan(13 * 1024);
+        expect(Buffer.byteLength(payload, 'utf8')).toBeGreaterThan(13 * 1024);
+
+        for (const builder of [
+            new SandboxBuilder(),
+            new SandboxBuilder()
+                .setInputTransportBufferSize(256)
+                .setOutputTransportBufferSize(3001),
+        ]) {
+            const proto = await builder.build();
+            proto.hostModule('host').register('echo', (value) => value);
+            const sandbox = await proto.loadRuntime();
+            sandbox.addHandler('handler', source);
+            const loaded = await sandbox.getLoadedSandbox();
+
+            expect(await loaded.callHandler('handler', { value: payload })).toEqual({
+                value: payload,
+                marker,
+            });
+        }
+    });
+
     it('should call a sync host function from guest code', async () => {
         const loaded = await buildLoadedSandbox(
             (proto) => {
@@ -547,6 +583,86 @@ describe('Multi-sandbox isolation', () => {
 // ── Binary data (Buffer/Uint8Array) ──────────────────────────────────
 
 describe('Binary data support', () => {
+    it('should retain owned buffers across async callbacks and sandbox disposal', async () => {
+        let retained;
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('retain', async (data, nested, label) => {
+                    expect(Buffer.isBuffer(data)).toBe(true);
+                    expect(Buffer.isBuffer(nested.data)).toBe(true);
+                    expect(Buffer.isBuffer(nested.empty)).toBe(true);
+                    expect(label).toBe('tail');
+
+                    retained = data;
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    data[0] = 99;
+                    nested.data[0] = 88;
+                    return { data, nested };
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                const source = new Uint8Array([1, 2, 3, 4]);
+                const result = host.retain(
+                    source.subarray(1, 3),
+                    { data: new Uint8Array([5, 6]), empty: new Uint8Array(0) },
+                    "tail",
+                );
+                return {
+                    original: Array.from(source),
+                    data: Array.from(result.data),
+                    nested: Array.from(result.nested.data),
+                    empty: result.nested.empty.length,
+                };
+            }
+            `
+        );
+
+        expect(await loaded.callHandler('handler', {})).toEqual({
+            original: [1, 2, 3, 4],
+            data: [99, 3],
+            nested: [88, 6],
+            empty: 0,
+        });
+        await loaded.dispose();
+        expect([...retained]).toEqual([99, 3]);
+        retained[1] = 42;
+        expect([...retained]).toEqual([99, 42]);
+    });
+
+    it('should keep repeated binary placeholders independently mutable', async () => {
+        const loaded = await buildLoadedSandbox(
+            (proto) => {
+                proto.hostModule('host').register('check', (first, rest) => {
+                    expect(Buffer.isBuffer(first)).toBe(true);
+                    expect(Buffer.isBuffer(rest.data)).toBe(true);
+                    expect(Buffer.isBuffer(rest.last)).toBe(true);
+
+                    first[0] = 99;
+                    expect(rest.data[0]).toBe(1);
+                    expect(rest.last[0]).toBe(1);
+
+                    rest.data[1] = 88;
+                    expect(first[1]).toBe(2);
+                    expect(rest.last[1]).toBe(2);
+                    return true;
+                });
+            },
+            `
+            import * as host from "host:host";
+            function handler() {
+                return host.check(
+                    { __bin__: 0 },
+                    { data: new Uint8Array([1, 2, 3]), last: { __bin__: 0 } },
+                );
+            }
+            `
+        );
+
+        expect(await loaded.callHandler('handler', {})).toBe(true);
+    });
+
     it('should pass Buffer args from guest Uint8Array to host', async () => {
         const loaded = await buildLoadedSandbox(
             (proto) => {

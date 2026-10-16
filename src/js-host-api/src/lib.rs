@@ -23,7 +23,10 @@ use hyperlight_js::{
     ProtoJSSandbox, SandboxBuilder, SandboxStatus as HyperlightSandboxStatus, Script, Snapshot,
     WallClockMonitor,
 };
-use napi::bindgen_prelude::{FromNapiValue, JsValuesTupleIntoVec, Promise, ToNapiValue};
+use hyperlight_js_common::Bytes;
+use napi::bindgen_prelude::{
+    Buffer, FromNapiValue, JsValuesTupleIntoVec, Object, Promise, ToNapiValue,
+};
 use napi::sys::{napi_env, napi_value};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{tokio, Status};
@@ -412,39 +415,47 @@ impl SandboxBuilderWrapper {
         }
     }
 
-    /// Set the guest output buffer size in bytes.
+    /// Set the legacy guest-to-host message capacity in bytes.
     ///
-    /// This buffer is used by the guest to send return values back to the
-    /// host. If handlers return large payloads, increase this.
+    /// Preserves the legacy 8 KiB minimum and rounds up to whole 4 KiB pages.
+    /// The output pool also reserves the last legacy input capacity for host
+    /// replies and one page for small buffers, so its total memory is larger.
     ///
     /// @param size - Buffer size in bytes (must be > 0)
     /// @returns this (for chaining)
     /// @throws If size is 0
+    /// @deprecated Use setOutputTransportPoolPages for an explicit pool budget.
     #[napi]
+    #[allow(deprecated)]
     pub fn set_output_buffer_size(&self, size: u32) -> napi::Result<&Self> {
         if size == 0 {
             return Err(invalid_arg_error(
                 "Output buffer size must be greater than 0",
             ));
         }
+
         self.with_inner(|b| b.with_guest_output_buffer_size(size as usize))
     }
 
-    /// Set the guest input buffer size in bytes.
+    /// Set the legacy host-to-guest message capacity in bytes.
     ///
-    /// This buffer is used to pass event data into the guest. If handlers
-    /// receive large JSON payloads, increase this.
+    /// Preserves the legacy 8 KiB minimum and rounds up to whole 4 KiB pages.
+    /// Adds a spare input transport buffer and also sizes the output pool for
+    /// host callback replies. Larger capacities may need more scratch space.
     ///
     /// @param size - Buffer size in bytes (must be > 0)
     /// @returns this (for chaining)
     /// @throws If size is 0
+    /// @deprecated Use setInputTransportPoolPages and setOutputTransportPoolPages for explicit pool budgets.
     #[napi]
+    #[allow(deprecated)]
     pub fn set_input_buffer_size(&self, size: u32) -> napi::Result<&Self> {
         if size == 0 {
             return Err(invalid_arg_error(
                 "Input buffer size must be greater than 0",
             ));
         }
+
         self.with_inner(|b| b.with_guest_input_buffer_size(size as usize))
     }
 
@@ -551,6 +562,81 @@ impl SandboxBuilderWrapper {
             };
             b.with_host_print_fn(print_fn.into())
         })
+    }
+
+    /// Set the total guest-to-host buffer pool size in 4 KiB pages.
+    ///
+    /// One page is split into small buffers. The rest must fit at least two
+    /// transport buffers, so a host callback's request and reply can coexist.
+    /// Smaller budgets are raised to this minimum: nine pages with the default
+    /// 16 KiB transport buffers.
+    ///
+    /// @param pages - Pool size in pages (must be > 0)
+    /// @returns this (for chaining)
+    /// @throws If pages is 0
+    #[napi]
+    pub fn set_output_transport_pool_pages(&self, pages: u32) -> napi::Result<&Self> {
+        if pages == 0 {
+            return Err(invalid_arg_error(
+                "Output pool pages must be greater than 0",
+            ));
+        }
+
+        self.with_inner(|b| b.with_output_transport_pool_pages(pages as usize))
+    }
+
+    /// Set the total host-to-guest buffer pool size in 4 KiB pages.
+    ///
+    /// Must fit at least two transport buffers: one for data and one spare for
+    /// control traffic. Smaller budgets are raised to this minimum: eight pages
+    /// with the default 16 KiB transport buffers.
+    ///
+    /// @param pages - Pool size in pages (must be > 0)
+    /// @returns this (for chaining)
+    /// @throws If pages is 0
+    #[napi]
+    pub fn set_input_transport_pool_pages(&self, pages: u32) -> napi::Result<&Self> {
+        if pages == 0 {
+            return Err(invalid_arg_error("Input pool pages must be greater than 0"));
+        }
+
+        self.with_inner(|b| b.with_input_transport_pool_pages(pages as usize))
+    }
+
+    /// Set each large guest-to-host transport buffer's capacity in bytes.
+    ///
+    /// Defaults to 16 KiB; positive values below 256 bytes are raised to 256.
+    ///
+    /// @param size - Per-buffer capacity in bytes (must be > 0)
+    /// @returns this (for chaining)
+    /// @throws If size is 0
+    #[napi]
+    pub fn set_output_transport_buffer_size(&self, size: u32) -> napi::Result<&Self> {
+        if size == 0 {
+            return Err(invalid_arg_error(
+                "Output transport buffer size must be greater than 0",
+            ));
+        }
+
+        self.with_inner(|b| b.with_output_transport_buffer_size(size as usize))
+    }
+
+    /// Set each host-to-guest transport buffer's capacity in bytes.
+    ///
+    /// Defaults to 16 KiB; positive values below 256 bytes are raised to 256.
+    ///
+    /// @param size - Per-buffer capacity in bytes (must be > 0)
+    /// @returns this (for chaining)
+    /// @throws If size is 0
+    #[napi]
+    pub fn set_input_transport_buffer_size(&self, size: u32) -> napi::Result<&Self> {
+        if size == 0 {
+            return Err(invalid_arg_error(
+                "Input transport buffer size must be greater than 0",
+            ));
+        }
+
+        self.with_inner(|b| b.with_input_transport_buffer_size(size as usize))
     }
 }
 
@@ -711,18 +797,91 @@ impl<T: ToNapiValue> JsValuesTupleIntoVec for Rest<T> {
 // create/detect native Node.js `Buffer` objects directly via the NAPI
 // C API — no base64 encoding needed.
 
-/// A JS argument value that can contain native Buffers in place of
-/// `{"__bin__": N}` placeholder objects.
+/// A resolved callback argument, with binary placeholders replaced by owned handles.
 ///
-/// When napi-rs calls `ToNapiValue` to convert this into a JS value,
-/// the recursive converter walks the JSON tree and creates real Buffer
-/// objects at placeholder positions — no base64 encoding needed.
-pub struct JsArg {
-    /// The JSON value tree, potentially containing `{"__bin__": N}` placeholders.
-    value: serde_json::Value,
-    /// Shared reference to the decoded binary blobs. Placeholders index
-    /// into this Vec.
-    blobs: Arc<Vec<Vec<u8>>>,
+/// Converting `Bytes` into `Vec<u8>` copies shared data and reuses the last owner's
+/// allocation, keeping the resulting Node buffers independently mutable.
+pub enum JsArg {
+    /// JSON handled directly by napi-rs, without binary placeholder conversion.
+    Json(JsonValue),
+    /// Shared bytes converted into an independently owned vector before entering Node.
+    Buffer(Bytes),
+    /// Array elements with resolved binary placeholders.
+    Array(Vec<JsArg>),
+    /// Object properties in their original JSON iteration order.
+    Object(Vec<(String, JsArg)>),
+}
+
+impl JsArg {
+    /// Resolves sidecar placeholders before dispatching spread callback arguments.
+    ///
+    /// Each placeholder gets its own `Bytes` handle. The lookup table is dropped
+    /// on return, allowing the last handle to recover the original allocation.
+    fn from_args(args: JsonValue, buffers: Vec<Vec<u8>>) -> napi::Result<Vec<Option<Self>>> {
+        let buffers: Vec<_> = buffers.into_iter().map(Bytes::from).collect();
+
+        let args = match args {
+            JsonValue::Array(args) => args,
+            arg => vec![arg],
+        };
+
+        args.into_iter()
+            .map(|arg| Self::from_json(arg, &buffers, 0).map(Some))
+            .collect()
+    }
+
+    /// Resolves placeholders while validating index bounds and per-argument depth.
+    ///
+    /// Arrays and objects recurse; other values keep napi-rs's JSON conversion.
+    /// Without a sidecar, marker-shaped objects remain ordinary JSON.
+    fn from_json(value: JsonValue, buffers: &[Bytes], depth: usize) -> napi::Result<Self> {
+        if buffers.is_empty() {
+            return Ok(Self::Json(value));
+        }
+
+        if depth > hyperlight_js_common::MAX_JSON_DEPTH {
+            return Err(napi::Error::from_reason(format!(
+                "JSON nesting depth exceeds maximum ({})",
+                hyperlight_js_common::MAX_JSON_DEPTH
+            )));
+        }
+
+        match value {
+            JsonValue::Object(object) => {
+                if object.len() == 1
+                    && let Some(index) = object
+                        .get(hyperlight_js_common::PLACEHOLDER_BIN)
+                        .and_then(JsonValue::as_u64)
+                {
+                    let buffer = usize::try_from(index)
+                        .ok()
+                        .and_then(|index| buffers.get(index))
+                        .ok_or_else(|| {
+                            napi::Error::from_reason(format!(
+                                "Binary placeholder index {index} out of bounds (have {} blobs)",
+                                buffers.len()
+                            ))
+                        })?;
+
+                    return Ok(Self::Buffer(buffer.clone()));
+                }
+
+                object
+                    .into_iter()
+                    .map(|(key, value)| {
+                        Self::from_json(value, buffers, depth + 1).map(|value| (key, value))
+                    })
+                    .collect::<napi::Result<_>>()
+                    .map(Self::Object)
+            }
+            JsonValue::Array(values) => values
+                .into_iter()
+                .map(|value| Self::from_json(value, buffers, depth + 1))
+                .collect::<napi::Result<_>>()
+                .map(Self::Array),
+            value => Ok(Self::Json(value)),
+        }
+    }
 }
 
 impl ToNapiValue for JsArg {
@@ -730,14 +889,34 @@ impl ToNapiValue for JsArg {
     ///
     /// Must be called on the JS thread with a valid `napi_env`.
     unsafe fn to_napi_value(env: napi_env, val: Self) -> napi::Result<napi_value> {
-        if val.blobs.is_empty() {
-            // Fast path: no binary data — delegate entirely to napi-rs's
-            // built-in serde_json conversion (avoids the recursive walk).
-            // SAFETY: env is valid, val.value is a valid serde_json::Value.
-            return unsafe { serde_json::Value::to_napi_value(env, val.value) };
+        // SAFETY: env is valid on the JS thread, and each branch passes owned values to napi-rs.
+        unsafe {
+            match val {
+                Self::Json(value) => JsonValue::to_napi_value(env, value),
+                Self::Buffer(bytes) => Buffer::to_napi_value(env, Buffer::from(Vec::from(bytes))),
+                Self::Array(values) => {
+                    let len = values.len();
+
+                    if len > u32::MAX as usize {
+                        return Err(napi::Error::from_reason(format!(
+                            "Array length {len} exceeds u32::MAX"
+                        )));
+                    }
+
+                    Vec::<Self>::to_napi_value(env, values)
+                }
+                Self::Object(properties) => {
+                    let js_env = napi::Env::from(env);
+                    let mut object = Object::new(&js_env)?;
+
+                    for (key, value) in properties {
+                        object.set(key, value)?;
+                    }
+
+                    Object::to_napi_value(env, object)
+                }
+            }
         }
-        // SAFETY: env is valid, blobs contains valid byte slices.
-        unsafe { json_to_napi_with_buffers(env, val.value, &val.blobs, 0) }
     }
 }
 
@@ -783,156 +962,6 @@ impl FromNapiValue for JsReturn {
         let json = unsafe { napi_to_json_with_buffer_extraction(env, val, &mut blobs, 0)? };
         Ok(JsReturn::Value(json, blobs))
     }
-}
-
-/// Recursively converts a `serde_json::Value` into a `napi_value`,
-/// replacing `{"__bin__": N}` placeholders with native Node.js Buffers.
-///
-/// Non-container values (strings, numbers, booleans, null) are delegated
-/// to napi-rs's built-in `serde_json::Value` → JS conversion.
-///
-/// # Safety
-///
-/// Caller must ensure `env` is a valid napi environment.
-unsafe fn json_to_napi_with_buffers(
-    env: napi_env,
-    value: serde_json::Value,
-    blobs: &[Vec<u8>],
-    depth: usize,
-) -> napi::Result<napi_value> {
-    use hyperlight_js_common::PLACEHOLDER_BIN;
-
-    if depth > hyperlight_js_common::MAX_JSON_DEPTH {
-        return Err(napi::Error::from_reason(format!(
-            "JSON nesting depth exceeds maximum ({})",
-            hyperlight_js_common::MAX_JSON_DEPTH
-        )));
-    }
-
-    match value {
-        serde_json::Value::Object(obj) => {
-            // Check for __bin__ placeholder: {"__bin__": N}
-            if obj.len() == 1
-                && let Some(serde_json::Value::Number(n)) = obj.get(PLACEHOLDER_BIN)
-                && let Some(idx) = n.as_u64()
-            {
-                let idx = idx as usize;
-                if idx < blobs.len() {
-                    // SAFETY: env is valid, blobs[idx] is a valid byte slice.
-                    return unsafe { create_napi_buffer(env, &blobs[idx]) };
-                }
-                return Err(napi::Error::from_reason(format!(
-                    "Binary placeholder index {idx} out of bounds (have {} blobs)",
-                    blobs.len()
-                )));
-            }
-
-            // Regular object — recursively convert properties
-            let mut js_obj: napi_value = std::ptr::null_mut();
-            // SAFETY: env is valid.
-            let status = unsafe { napi::sys::napi_create_object(env, &mut js_obj) };
-            if status != napi::sys::Status::napi_ok {
-                return Err(napi::Error::new(
-                    napi::Status::from(status),
-                    "Failed to create JS object",
-                ));
-            }
-
-            for (key, val) in obj {
-                // SAFETY: env is valid, recursive call maintains invariants.
-                let js_val = unsafe { json_to_napi_with_buffers(env, val, blobs, depth + 1)? };
-                // Use napi_create_string_utf8 + napi_set_property instead of
-                // CString + napi_set_named_property so keys with embedded NUL
-                // bytes are supported.
-                let key_bytes = key.as_bytes();
-                let mut key_val: napi_value = std::ptr::null_mut();
-                // SAFETY: env is valid; key_bytes is valid for its length.
-                let status = unsafe {
-                    napi::sys::napi_create_string_utf8(
-                        env,
-                        key_bytes.as_ptr().cast(),
-                        key_bytes.len() as isize,
-                        &mut key_val,
-                    )
-                };
-                if status != napi::sys::Status::napi_ok {
-                    return Err(napi::Error::new(
-                        napi::Status::from(status),
-                        "Failed to create property key string",
-                    ));
-                }
-                // SAFETY: env, js_obj, key_val, js_val are all valid.
-                let status = unsafe { napi::sys::napi_set_property(env, js_obj, key_val, js_val) };
-                if status != napi::sys::Status::napi_ok {
-                    return Err(napi::Error::new(
-                        napi::Status::from(status),
-                        "Failed to set object property",
-                    ));
-                }
-            }
-            Ok(js_obj)
-        }
-        serde_json::Value::Array(arr) => {
-            let len = arr.len();
-            if len > u32::MAX as usize {
-                return Err(napi::Error::from_reason(format!(
-                    "Array length {len} exceeds u32::MAX"
-                )));
-            }
-            let mut js_arr: napi_value = std::ptr::null_mut();
-            // SAFETY: env is valid.
-            let status = unsafe { napi::sys::napi_create_array_with_length(env, len, &mut js_arr) };
-            if status != napi::sys::Status::napi_ok {
-                return Err(napi::Error::new(
-                    napi::Status::from(status),
-                    "Failed to create JS array",
-                ));
-            }
-
-            for (i, val) in arr.into_iter().enumerate() {
-                // SAFETY: env is valid, recursive call maintains invariants.
-                let js_val = unsafe { json_to_napi_with_buffers(env, val, blobs, depth + 1)? };
-                // SAFETY: env, js_arr, js_val are valid; i is in bounds.
-                let status = unsafe { napi::sys::napi_set_element(env, js_arr, i as u32, js_val) };
-                if status != napi::sys::Status::napi_ok {
-                    return Err(napi::Error::new(
-                        napi::Status::from(status),
-                        "Failed to set array element",
-                    ));
-                }
-            }
-            Ok(js_arr)
-        }
-        // Non-container values can't contain placeholders — delegate to napi-rs
-        // SAFETY: env is valid, other is a valid serde_json::Value.
-        other => unsafe { serde_json::Value::to_napi_value(env, other) },
-    }
-}
-
-/// Creates a native Node.js Buffer by copying raw bytes into V8's heap.
-///
-/// # Safety
-///
-/// Caller must ensure `env` is a valid napi environment.
-unsafe fn create_napi_buffer(env: napi_env, data: &[u8]) -> napi::Result<napi_value> {
-    let mut buf: napi_value = std::ptr::null_mut();
-    // SAFETY: env is valid, data is a valid byte slice.
-    let status = unsafe {
-        napi::sys::napi_create_buffer_copy(
-            env,
-            data.len(),
-            data.as_ptr().cast(),
-            std::ptr::null_mut(), // we don't need the result_data pointer
-            &mut buf,
-        )
-    };
-    if status != napi::sys::Status::napi_ok {
-        return Err(napi::Error::new(
-            napi::Status::from(status),
-            "Failed to create Buffer",
-        ));
-    }
-    Ok(buf)
 }
 
 /// Extracts raw bytes from a Node.js Buffer (`napi_is_buffer` must be true).
@@ -1053,7 +1082,7 @@ unsafe fn napi_string_to_rust(env: napi_env, val: napi_value) -> napi::Result<St
 /// extracting any nested `Buffer`/`Uint8Array` values into `blobs`
 /// and replacing them with `{"__bin__": N}` placeholders.
 ///
-/// This is the inverse of [`json_to_napi_with_buffers`] — used on
+/// This is the inverse of [`JsArg`] conversion — used on
 /// the return path to eliminate the base64 round-trip that previously
 /// occurred for nested binary data in host function returns.
 ///
@@ -1473,36 +1502,16 @@ impl HostModuleWrapper {
 
         // Use binary-capable registration to support Buffer arguments.
         // The closure receives parsed JsonValue args (with {"__bin__": N}
-        // placeholders) and decoded binary blobs. JsArg's ToNapiValue
-        // impl converts placeholders directly to native Node.js Buffers
-        // via the NAPI API — no base64 encoding needed.
+        // placeholders) and decoded binary blobs. JsArg resolves placeholders
+        // before dispatch and converts buffers on the JavaScript thread.
         let wrapper = move |args: serde_json::Value,
                             blobs: Vec<Vec<u8>>|
               -> hyperlight_js::Result<hyperlight_js::FnReturn> {
             use hyperlight_js::FnReturn;
             use ThreadsafeFunctionCallMode::NonBlocking;
 
-            let blobs = Arc::new(blobs);
-
-            // Spread the JSON array into individual JsArg values.
-            // Each JsArg carries a reference to the blobs so its
-            // ToNapiValue impl can resolve __bin__ placeholders at
-            // any nesting depth.
-            let js_args: Vec<Option<JsArg>> = match args {
-                JsonValue::Array(arr) => arr
-                    .into_iter()
-                    .map(|v| {
-                        Some(JsArg {
-                            value: v,
-                            blobs: blobs.clone(),
-                        })
-                    })
-                    .collect(),
-                other => vec![Some(JsArg {
-                    value: other,
-                    blobs: blobs.clone(),
-                })],
-            };
+            let js_args = JsArg::from_args(args, blobs)
+                .map_err(|error| HyperlightError::Error(error.to_string()))?;
 
             let (tx, rx) = oneshot::channel();
             let status =
@@ -2409,5 +2418,78 @@ impl From<&ExecutionStats> for CallStats {
             cpu_time_ms: stats.cpu_time.map(|d| d.as_secs_f64() * 1000.0),
             terminated_by: stats.terminated_by.map(|s| s.to_string()),
         }
+    }
+}
+
+/// Ownership handoff coverage that does not require a Node.js environment.
+#[cfg(test)]
+mod binary_argument_tests {
+    use super::*;
+
+    /// A unique argument reaches napi-rs with its original allocation.
+    #[test]
+    fn unique_buffer_transfers_its_allocation() {
+        let bytes = vec![1, 2, 3];
+        let original = bytes.as_ptr();
+        let args = serde_json::json!([{"__bin__": 0}]);
+        let mut args = JsArg::from_args(args, vec![bytes]).unwrap();
+        let Some(JsArg::Buffer(bytes)) = args.pop().unwrap() else {
+            panic!("Expected a buffer argument");
+        };
+        let buffer = Buffer::from(Vec::from(bytes));
+
+        assert_eq!(buffer.as_ref().as_ptr(), original);
+        assert_eq!(buffer.as_ref(), &[1, 2, 3]);
+    }
+
+    /// Repeated placeholders remain independent, with the last use moving.
+    #[test]
+    fn repeated_buffer_clones_only_earlier_uses() {
+        let bytes = vec![1, 2, 3];
+        let original = bytes.as_ptr();
+        let args = serde_json::json!([{"__bin__": 0}, {"__bin__": 0}]);
+        let mut args = JsArg::from_args(args, vec![bytes]).unwrap();
+        let Some(JsArg::Buffer(last)) = args.pop().unwrap() else {
+            panic!("Expected a buffer argument");
+        };
+        let Some(JsArg::Buffer(first)) = args.pop().unwrap() else {
+            panic!("Expected a buffer argument");
+        };
+        let mut first = Vec::from(first);
+        first[0] = 99;
+        let last = Vec::from(last);
+
+        assert_ne!(first.as_ptr(), original);
+        assert_eq!(last.as_ptr(), original);
+        assert_eq!(last, [1, 2, 3]);
+    }
+
+    /// Empty buffers transfer normally, while markers without a sidecar stay JSON.
+    #[test]
+    fn empty_buffers_and_plain_markers_keep_their_behavior() {
+        let args = serde_json::json!([{"__bin__": 0}]);
+        let buffers = JsArg::from_args(args.clone(), vec![Vec::new()]).unwrap();
+
+        assert!(matches!(&buffers[0], Some(JsArg::Buffer(bytes)) if bytes.is_empty()));
+
+        let plain = JsArg::from_args(args.clone(), Vec::new()).unwrap();
+
+        assert!(matches!(&plain[0], Some(JsArg::Json(value)) if value == &args[0]));
+        assert!(JsArg::from_args(serde_json::json!([{"__bin__": 1}]), vec![vec![1]]).is_err());
+    }
+
+    /// Spreading arguments does not count their enclosing array toward depth.
+    #[test]
+    fn depth_limit_matches_argument_conversion() {
+        let mut value = serde_json::json!({"__bin__": 0});
+
+        for _ in 0..hyperlight_js_common::MAX_JSON_DEPTH {
+            value = serde_json::json!([value]);
+        }
+
+        let args = serde_json::json!([value]);
+
+        assert!(JsArg::from_args(args.clone(), vec![vec![1]]).is_ok());
+        assert!(JsArg::from_args(serde_json::json!([args]), vec![vec![1]]).is_err());
     }
 }

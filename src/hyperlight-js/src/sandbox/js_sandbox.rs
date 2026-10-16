@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use hyperlight_host::sandbox::snapshot::Snapshot;
-use hyperlight_host::{new_error, MultiUseSandbox, Result, SandboxStatus};
+use hyperlight_host::{new_error, Result, Sandbox, SandboxStatus};
 use tracing::{instrument, Level};
 
 use super::loaded_js_sandbox::LoadedJSSandbox;
@@ -72,7 +72,7 @@ pub fn validate_namespace_not_reserved(namespace: &str) -> Result<()> {
 
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.
 pub struct JSSandbox {
-    pub(super) inner: MultiUseSandbox,
+    pub(super) inner: Sandbox,
     handlers: HashMap<String, Script>,
     /// User modules keyed by qualified name (e.g. `user:utils`).
     modules: HashMap<String, Script>,
@@ -85,7 +85,7 @@ pub struct JSSandbox {
 
 impl JSSandbox {
     #[instrument(err(Debug), skip(inner), level=Level::INFO)]
-    pub(super) fn new(mut inner: MultiUseSandbox) -> Result<Self> {
+    pub(super) fn new(mut inner: Sandbox) -> Result<Self> {
         let snapshot = inner.snapshot()?;
         Ok(Self {
             inner,
@@ -96,11 +96,8 @@ impl JSSandbox {
         })
     }
 
-    /// Creates a new `JSSandbox` from a `MultiUseSandbox` and a `Snapshot` of state before any handlers were added.
-    pub(crate) fn from_loaded(
-        mut loaded: MultiUseSandbox,
-        snapshot: Arc<Snapshot>,
-    ) -> Result<Self> {
+    /// Creates a new `JSSandbox` from a `Sandbox` and a `Snapshot` of state before any handlers were added.
+    pub(crate) fn from_loaded(mut loaded: Sandbox, snapshot: Arc<Snapshot>) -> Result<Self> {
         loaded.restore(snapshot.clone())?;
         Ok(Self {
             inner: loaded,
@@ -316,20 +313,19 @@ impl JSSandbox {
         // because modules are lazily compiled by the UserModuleLoader when first
         // imported — registration order does not affect resolution.
         for (qualified_name, script) in std::mem::take(&mut self.modules) {
-            let content = script.content().to_owned();
             self.inner
-                .call::<()>("register_module", (qualified_name, content))?;
+                .call::<()>("register_module", (qualified_name, script.into_bytes()))?;
         }
 
         for (function_name, script) in std::mem::take(&mut self.handlers) {
-            let content = script.content().to_owned();
-
             let path = script
                 .base_path()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            self.inner
-                .call::<()>("register_handler", (function_name, content, path))?;
+            self.inner.call::<()>(
+                "register_handler",
+                (function_name, script.into_bytes(), path),
+            )?;
         }
 
         LoadedJSSandbox::new(self.inner, self.snapshot)
@@ -362,10 +358,10 @@ impl JSSandbox {
     /// (gdb) info threads
     /// # find the thread that is running the guest function you want to debug
     /// (gdb) thread <thread_number>
-    /// # switch to the frame where you have access to your MultiUseSandbox instance
+    /// # switch to the frame where you have access to your Sandbox instance
     /// (gdb) backtrace
     /// (gdb) frame <frame_number>
-    /// # get the pointer to your MultiUseSandbox instance
+    /// # get the pointer to your Sandbox instance
     /// # Get the sandbox pointer
     /// (gdb) print sandbox
     /// # Call the crashdump function
@@ -392,6 +388,63 @@ impl Debug for JSSandbox {
 mod tests {
     use super::*;
     use crate::SandboxBuilder;
+
+    /// Byte-based RPCs reject invalid UTF-8 without poisoning the runtime.
+    #[test]
+    fn external_text_rejects_invalid_utf8() {
+        let mut sandbox = SandboxBuilder::new()
+            .build()
+            .unwrap()
+            .load_runtime()
+            .unwrap();
+
+        let err_msg = sandbox
+            .inner
+            .call::<()>(
+                "register_handler",
+                ("handler".to_string(), vec![0xff_u8], String::new()),
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(err_msg.contains("Invalid UTF-8 in handler source"));
+
+        let err_msg = sandbox
+            .inner
+            .call::<()>(
+                "register_module",
+                ("user:module".to_string(), vec![0xff_u8]),
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(err_msg.contains("Invalid UTF-8 in module source"));
+
+        let err_msg = sandbox
+            .inner
+            .call::<Vec<u8>>("RunHandler", ("handler".to_string(), vec![0xff_u8], true))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err_msg.contains("Invalid UTF-8 in event JSON"));
+        assert!(!sandbox.status().is_poisoned());
+
+        sandbox
+            .add_handler(
+                "handler",
+                Script::from_content("function handler(event) { return event; }"),
+            )
+            .unwrap();
+
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+
+        assert_eq!(
+            loaded
+                .handle_event("handler", r#"{"ok":true}"#.into(), None)
+                .unwrap(),
+            r#"{"ok":true}"#
+        );
+    }
 
     #[test]
     fn test_add_handler() {

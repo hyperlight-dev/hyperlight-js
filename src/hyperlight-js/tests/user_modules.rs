@@ -783,3 +783,79 @@ fn remove_module_then_run_independent_handler() {
     let json: serde_json::Value = serde_json::from_str(&result).unwrap();
     assert_eq!(json["greeting"], "world");
 }
+
+// ── Transport ───────────────────────────────────────
+
+/// Default and custom transport buffers preserve large UTF-8 messages.
+#[test]
+fn external_text_payloads_preserve_capacity_across_buffer_sizes() {
+    let marker = "pi \u{3c0} \u{1f30d}";
+    let padding = format!("// {marker}\n").repeat(1000);
+
+    let module_source = format!(
+        "{padding}
+        // Padding makes this source exceed the smaller transport buffers.
+        export function identity(value) {{ return value; }}"
+    );
+    let handler_source = format!(
+        "{padding}
+        // This handler is also padded; importing identity exercises the oversized module.
+        import {{ identity }} from 'user:utf8';
+        import {{ echo }} from 'host';
+        function handler(event) {{
+            // event.text uses one default buffer or several smaller buffers.
+            // identity stays in the guest; echo sends the text guest -> host -> guest.
+            // Returning text exercises guest -> host JSON; marker checks source Unicode.
+            // This checks content, not copy counts or exact UTF-8 chunk boundaries.
+            return {{ text: echo(identity(event.text)), marker: '{marker}' }};
+        }}"
+    );
+    let payload = marker.repeat(1400);
+
+    // Above 12 KiB, payloads need at least four 4 KiB buffers. A four-page
+    // input pool leaves only three for data because one is reserved for control.
+    // The 13 KiB threshold catches that regression while these payloads still
+    // leave room for framing within one default 16 KiB transport buffer.
+    assert!(module_source.len() > 13 * 1024);
+    assert!(handler_source.len() > 13 * 1024);
+    assert!(payload.len() > 13 * 1024);
+
+    let params = [(16 * 1024, 8, 9), (4096, 5, 9), (256, 5, 9), (3001, 6, 10)];
+
+    for (buffer_size, input_pages, output_pages) in params {
+        let builder = SandboxBuilder::new()
+            .with_input_transport_buffer_size(buffer_size)
+            .with_output_transport_buffer_size(buffer_size);
+
+        let config = builder.get_config();
+
+        assert_eq!(config.get_h2g_buffer_size(), buffer_size);
+        assert_eq!(config.get_g2h_buffer_size(), buffer_size);
+        assert_eq!(config.get_h2g_pool_pages(), input_pages);
+        assert_eq!(config.get_g2h_pool_pages(), output_pages);
+
+        let mut proto = builder.build().unwrap();
+
+        proto
+            .register("host", "echo", |value: String| value)
+            .unwrap();
+
+        let mut sandbox = proto.load_runtime().unwrap();
+        sandbox
+            .add_module("utf8", Script::from_content(module_source.clone()))
+            .unwrap();
+
+        sandbox
+            .add_handler("handler", Script::from_content(handler_source.clone()))
+            .unwrap();
+
+        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+        let event = serde_json::json!({ "text": payload }).to_string();
+        let result = loaded.handle_event("handler", event, None).unwrap();
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&result).unwrap(),
+            serde_json::json!({ "text": payload, "marker": marker })
+        );
+    }
+}

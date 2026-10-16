@@ -23,8 +23,8 @@ use crate::{new_error, Result};
 /// other modules using relative paths.
 #[derive(Debug, Clone)]
 pub struct Script {
-    /// The script content
-    content: Arc<str>,
+    /// Shared source whose allocation can be recovered when uniquely owned.
+    content: Arc<String>,
     /// base path for resolving module imports
     base_path: Option<PathBuf>,
 }
@@ -34,7 +34,7 @@ impl Script {
     pub fn from_content(content: impl Into<String>) -> Self {
         // TODO(tandr): Consider validating the script content using oxc_parser or similar
         Self {
-            content: Arc::from(content.into()),
+            content: Arc::new(content.into()),
             base_path: None,
         }
     }
@@ -50,7 +50,7 @@ impl Script {
 
         let base_path = path.parent().map(|p| p.to_path_buf());
         Ok(Self {
-            content: Arc::from(content),
+            content: Arc::new(content),
             base_path,
         })
     }
@@ -64,6 +64,14 @@ impl Script {
     /// Get the script content
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    /// Consumes the source as an external byte payload.
+    ///
+    /// A uniquely owned script transfers its existing allocation. Shared
+    /// scripts copy only when needed to preserve the remaining clones.
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        Arc::unwrap_or_clone(self.content).into_bytes()
     }
 
     /// Get the base path for module resolution, if any

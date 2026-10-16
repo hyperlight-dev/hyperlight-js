@@ -19,7 +19,7 @@ use std::sync::Arc;
 use hyperlight_host::hypervisor::InterruptHandle;
 use hyperlight_host::sandbox::snapshot::Snapshot;
 use hyperlight_host::HyperlightError::{self, JsonConversionFailure};
-use hyperlight_host::{MultiUseSandbox, Result, SandboxStatus};
+use hyperlight_host::{Result, Sandbox, SandboxStatus};
 use tokio::task::JoinHandle;
 use tracing::{instrument, Level};
 
@@ -35,7 +35,7 @@ use crate::sandbox::metrics::SandboxMetricsGuard;
 
 /// A Hyperlight Sandbox with a JavaScript run time loaded and guest JavaScript handlers loaded.
 pub struct LoadedJSSandbox {
-    inner: MultiUseSandbox,
+    inner: Sandbox,
     // Snapshot of state before the sandbox was loaded and before any handlers were added.
     // This is used to restore state back to a JSSandbox.
     snapshot: Arc<Snapshot>,
@@ -63,7 +63,7 @@ impl Drop for MonitorTask {
 
 impl LoadedJSSandbox {
     #[instrument(err(Debug), skip_all, level=Level::INFO)]
-    pub(super) fn new(inner: MultiUseSandbox, snapshot: Arc<Snapshot>) -> Result<LoadedJSSandbox> {
+    pub(super) fn new(inner: Sandbox, snapshot: Arc<Snapshot>) -> Result<LoadedJSSandbox> {
         metrics::counter!(METRIC_SANDBOX_LOADS).increment(1);
         Ok(LoadedJSSandbox {
             inner,
@@ -111,7 +111,15 @@ impl LoadedJSSandbox {
 
         let result = self
             .inner
-            .call("RunHandler", (func_name.clone(), event, should_gc));
+            .call::<Vec<u8>>(
+                "RunHandler",
+                (func_name.clone(), event.into_bytes(), should_gc),
+            )
+            .and_then(|bytes| {
+                String::from_utf8(bytes).map_err(|err| {
+                    HyperlightError::Error(format!("Invalid UTF-8 in handler result: {err}"))
+                })
+            });
 
         // --- guest-call-stats: record timing after the call ---
         // CPU time is read first so the wall-clock measurement fully wraps it.
@@ -361,10 +369,10 @@ impl LoadedJSSandbox {
     /// (gdb) info threads
     /// # find the thread that is running the guest function you want to debug
     /// (gdb) thread <thread_number>
-    /// # switch to the frame where you have access to your MultiUseSandbox instance
+    /// # switch to the frame where you have access to your Sandbox instance
     /// (gdb) backtrace
     /// (gdb) frame <frame_number>
-    /// # get the pointer to your MultiUseSandbox instance
+    /// # get the pointer to your Sandbox instance
     /// # Get the sandbox pointer
     /// (gdb) print sandbox
     /// # Call the crashdump function

@@ -19,12 +19,17 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        build: [windows-2025-debug, linux-kvm-debug, linux-kvm-arm64-debug, linux-hyperv3-debug, macos-hvf-debug, windows-2025-release, linux-kvm-release, linux-kvm-arm64-release, linux-hyperv3-release, macos-hvf-release]
+        build: [windows-2025-debug, windows-arm64-debug, linux-kvm-debug, linux-kvm-arm64-debug, linux-hyperv3-debug, macos-hvf-debug, windows-2025-release, windows-arm64-release, linux-kvm-release, linux-kvm-arm64-release, linux-hyperv3-release, macos-hvf-release]
         include:
           - build: windows-2025-debug
             os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
             hypervisor: whp
             arch: X64
+            config: debug
+          - build: windows-arm64-debug
+            os: [self-hosted, Windows, ARM64, "1ES.Pool=hl-windows-arm"]
+            hypervisor: whp
+            arch: arm64
             config: debug
           - build: linux-kvm-debug
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
@@ -51,6 +56,11 @@ jobs:
             hypervisor: whp
             arch: X64
             config: release
+          - build: windows-arm64-release
+            os: [self-hosted, Windows, ARM64, "1ES.Pool=hl-windows-arm"]
+            hypervisor: whp
+            arch: arm64
+            config: release
           - build: linux-kvm-release
             os: [self-hosted, Linux, X64, "1ES.Pool=hld-kvm-amd"]
             hypervisor: kvm
@@ -71,7 +81,10 @@ jobs:
             hypervisor: hvf
             arch: arm64
             config: release
-    runs-on: ${{ fromJson(matrix.hypervisor == 'hvf'
+    runs-on: ${{ fromJson(matrix.hypervisor == 'whp' && matrix.arch == 'arm64'
+      && format('["self-hosted", "Windows", "ARM64", "1ES.Pool=hl-windows-arm", "JobId=build-{0}-{1}-{2}-{3}"]',
+        matrix.build, github.run_id, github.run_number, github.run_attempt)
+      || matrix.hypervisor == 'hvf'
       && '["self-hosted", "macos", "arm64", "hvf"]'
       || matrix.arch == 'arm64'
       && '["self-hosted", "Linux", "arm64", "kvm"]'
@@ -137,6 +150,7 @@ jobs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: '22'
+        architecture: ${{ matrix.arch == 'arm64' && 'arm64' || 'x64' }}
         cache: 'npm'
         cache-dependency-path: 'src/js-host-api/package-lock.json'
 

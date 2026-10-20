@@ -47,7 +47,7 @@ env:
   # Comma-delimited npm package names that have not yet been published and
   # therefore cannot have a trusted publisher configured. Remove each package
   # in a follow-up PR after its first release and trusted-publisher setup.
-  FIRST_TIME_PACKAGES: ",@hyperlight-dev/js-host-api-darwin-arm64,@hyperlight-dev/js-host-api-linux-arm64-gnu,"
+  FIRST_TIME_PACKAGES: ",@hyperlight-dev/js-host-api-darwin-arm64,@hyperlight-dev/js-host-api-linux-arm64-gnu,@hyperlight-dev/js-host-api-win32-arm64-msvc,"
 
 jobs:
   build:
@@ -64,6 +64,9 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: [self-hosted, Windows, X64, "1ES.Pool=hld-win2025-amd"]
             build_name: win32-x64-msvc
+          - target: aarch64-pc-windows-msvc
+            os: [self-hosted, Windows, ARM64, "1ES.Pool=hl-windows-arm"]
+            build_name: win32-arm64-msvc
           - target: aarch64-apple-darwin
             os: macos-15
             build_name: darwin-arm64
@@ -86,6 +89,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
+          architecture: ${{ startsWith(matrix.target, 'aarch64-') && 'arm64' || 'x64' }}
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
 
@@ -162,9 +166,119 @@ jobs:
             ${{ env.WORKING_DIR }}/index.d.ts
           if-no-files-found: error
 
-  validate-linux-arm64:
-    needs: build
-    runs-on: [self-hosted, Linux, arm64, kvm]
+  package-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      all: ${{ steps.packages.outputs.all }}
+      first_time: ${{ steps.packages.outputs.first_time }}
+    steps:
+      - id: packages
+        shell: bash
+        env:
+          FIRST_TIME_PACKAGES: ${{ env.FIRST_TIME_PACKAGES }}
+        run: |
+          python - "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import os
+          targets = [
+            {
+              "package_name": "@hyperlight-dev/js-host-api-linux-x64-gnu",
+              "artifact_name": "bindings-linux-x64-gnu",
+              "artifact_dir": "linux-x64-gnu",
+              "node_arch": "x64",
+              "runner": ["self-hosted", "Linux", "X64", "1ES.Pool=hld-kvm-amd"],
+              "shell": "bash",
+              "verify_command": "test \"$(uname -m)\" = \"x86_64\"\ntest \"$(node -p process.arch)\" = \"x64\"",
+              "prepare_command": "mv artifacts/linux-x64-gnu/*.node npm/linux-x64-gnu/js-host-api.linux-x64-gnu.node\nmv js-bindings/index.js index.js\nmv js-bindings/index.d.ts index.d.ts",
+              "version_command": "npm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts\ncd npm/linux-x64-gnu\nnpm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts",
+              "update_dependency_command": "node -e \"const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.optionalDependencies['@hyperlight-dev/js-host-api-linux-x64-gnu'] = process.env.VERSION; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\\\n');\"",
+              "validate_command": "./test-pack.sh",
+              "validate_env": {"PLATFORM_PACKAGE": "linux-x64-gnu"},
+            },
+            {
+              "package_name": "@hyperlight-dev/js-host-api-linux-x64-musl",
+              "artifact_name": "bindings-linux-x64-musl",
+              "artifact_dir": "linux-x64-musl",
+              "node_arch": "x64",
+              "runner": ["self-hosted", "Linux", "X64", "1ES.Pool=hld-kvm-amd"],
+              "shell": "bash",
+              "verify_command": "test \"$(uname -m)\" = \"x86_64\"\ntest \"$(node -p process.arch)\" = \"x64\"",
+              "prepare_command": "mv artifacts/linux-x64-musl/*.node npm/linux-x64-musl/js-host-api.linux-x64-musl.node\nmv js-bindings/index.js index.js\nmv js-bindings/index.d.ts index.d.ts",
+              "version_command": "npm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts\ncd npm/linux-x64-musl\nnpm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts",
+              "update_dependency_command": "node -e \"const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.optionalDependencies['@hyperlight-dev/js-host-api-linux-x64-musl'] = process.env.VERSION; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\\\n');\"",
+              "validate_command": "./test-pack.sh",
+              "validate_env": {"PLATFORM_PACKAGE": "linux-x64-musl"},
+            },
+            {
+              "package_name": "@hyperlight-dev/js-host-api-win32-x64-msvc",
+              "artifact_name": "bindings-win32-x64-msvc",
+              "artifact_dir": "win32-x64-msvc",
+              "node_arch": "x64",
+              "runner": ["self-hosted", "Windows", "X64", "1ES.Pool=hld-win2025-amd"],
+              "shell": "pwsh",
+              "verify_command": "$platform = node -p \"process.platform + '-' + process.arch\"\nif ($LASTEXITCODE -ne 0 -or $platform -ne 'win32-x64') { throw 'Windows x64 package validation requires native x64 Node.js on Windows' }",
+              "prepare_command": "Move-Item artifacts\\win32-x64-msvc\\*.node npm\\win32-x64-msvc\\js-host-api.win32-x64-msvc.node\nMove-Item js-bindings\\index.js index.js\nMove-Item js-bindings\\index.d.ts index.d.ts",
+              "version_command": "npm version \"$env:VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts\nPush-Location npm\\win32-x64-msvc\ntry { npm version \"$env:VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts } finally { Pop-Location }",
+              "update_dependency_command": "$pkg = Get-Content package.json -Raw | ConvertFrom-Json; $pkg.optionalDependencies.'@hyperlight-dev/js-host-api-win32-x64-msvc' = $env:VERSION; $pkg | ConvertTo-Json -Depth 100 | Set-Content package.json",
+              "validate_command": ".\\test-pack.ps1",
+              "validate_env": {},
+            },
+            {
+              "package_name": "@hyperlight-dev/js-host-api-win32-arm64-msvc",
+              "artifact_name": "bindings-win32-arm64-msvc",
+              "artifact_dir": "win32-arm64-msvc",
+              "node_arch": "arm64",
+              "runner": ["self-hosted", "Windows", "ARM64", "1ES.Pool=hl-windows-arm"],
+              "shell": "pwsh",
+              "verify_command": "$platform = node -p \"process.platform + '-' + process.arch\"\nif ($LASTEXITCODE -ne 0 -or $platform -ne 'win32-arm64') { throw 'Windows ARM64 package validation requires native ARM64 Node.js on Windows' }",
+              "prepare_command": "Move-Item artifacts\\win32-arm64-msvc\\*.node npm\\win32-arm64-msvc\\js-host-api.win32-arm64-msvc.node\nMove-Item js-bindings\\index.js index.js\nMove-Item js-bindings\\index.d.ts index.d.ts",
+              "version_command": "npm version \"$env:VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts\nPush-Location npm\\win32-arm64-msvc\ntry { npm version \"$env:VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts } finally { Pop-Location }",
+              "update_dependency_command": "$pkg = Get-Content package.json -Raw | ConvertFrom-Json; $pkg.optionalDependencies.'@hyperlight-dev/js-host-api-win32-arm64-msvc' = $env:VERSION; $pkg | ConvertTo-Json -Depth 100 | Set-Content package.json",
+              "validate_command": ".\\test-pack.ps1",
+              "validate_env": {},
+            },
+            {
+              "package_name": "@hyperlight-dev/js-host-api-darwin-arm64",
+              "artifact_name": "bindings-darwin-arm64",
+              "artifact_dir": "darwin-arm64",
+              "node_arch": "arm64",
+              "runner": "macos-15",
+              "shell": "bash",
+              "verify_command": "test \"$(uname -m)\" = \"arm64\"\ntest \"$(node -p process.arch)\" = \"arm64\"",
+              "prepare_command": "mv artifacts/darwin-arm64/*.node npm/darwin-arm64/js-host-api.darwin-arm64.node\nmv js-bindings/index.js index.js\nmv js-bindings/index.d.ts index.d.ts",
+              "version_command": "npm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts\ncd npm/darwin-arm64\nnpm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts",
+              "update_dependency_command": "node -e \"const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.optionalDependencies['@hyperlight-dev/js-host-api-darwin-arm64'] = process.env.VERSION; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\\\n');\"",
+              "validate_command": "./test-pack.sh",
+              "validate_env": {"PLATFORM_PACKAGE": "darwin-arm64", "REQUIRE_MACOS_PACKAGE": "1"},
+            },
+            {
+              "package_name": "@hyperlight-dev/js-host-api-linux-arm64-gnu",
+              "artifact_name": "bindings-linux-arm64-gnu",
+              "artifact_dir": "linux-arm64-gnu",
+              "node_arch": "arm64",
+              "runner": ["self-hosted", "Linux", "arm64", "kvm"],
+              "shell": "bash",
+              "verify_command": "test \"$(uname -m)\" = \"aarch64\"\ntest \"$(node -p process.arch)\" = \"arm64\"",
+              "prepare_command": "mv artifacts/linux-arm64-gnu/*.node npm/linux-arm64-gnu/js-host-api.linux-arm64-gnu.node\nmv js-bindings/index.js index.js\nmv js-bindings/index.d.ts index.d.ts",
+              "version_command": "npm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts\ncd npm/linux-arm64-gnu\nnpm version \"$VERSION\" --no-git-tag-version --allow-same-version --ignore-scripts",
+              "update_dependency_command": "node -e \"const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.optionalDependencies['@hyperlight-dev/js-host-api-linux-arm64-gnu'] = process.env.VERSION; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\\\n');\"",
+              "validate_command": "./test-pack.sh",
+              "validate_env": {"PLATFORM_PACKAGE": "linux-arm64-gnu"},
+            },
+          ]
+          first_time = {pkg.strip() for pkg in os.environ.get('FIRST_TIME_PACKAGES', '').split(',') if pkg.strip()}
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f"all={json.dumps(targets)}\n")
+              fh.write(f"first_time={json.dumps([t for t in targets if t['package_name'] in first_time])}\n")
+          PY
+
+  validate-native:
+    if: ${{ needs.build.result == 'success' && needs.package-targets.outputs.first_time != '[]' }}
+    needs: [build, package-targets]
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.package-targets.outputs.first_time) }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -172,19 +286,19 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.22.3'
+          architecture: ${{ matrix.node_arch }}
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
 
-      - name: Verify Linux arm64 runner
-        run: |
-          test "$(uname -m)" = "aarch64"
-          test "$(node -p process.arch)" = "arm64"
+      - name: Verify native runner
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.verify_command }}
 
-      - name: Download Linux arm64 GNU artifact
+      - name: Download native artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: bindings-linux-arm64-gnu
-          path: ${{ env.WORKING_DIR }}/artifacts/linux-arm64-gnu
+          name: ${{ matrix.artifact_name }}
+          path: ${{ env.WORKING_DIR }}/artifacts/${{ matrix.artifact_dir }}
 
       - name: Download JS bindings
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -192,42 +306,36 @@ jobs:
           name: js-bindings
           path: ${{ env.WORKING_DIR }}/js-bindings
 
-      - name: Prepare Linux arm64 package
+      - name: Prepare native package
         working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          mv artifacts/linux-arm64-gnu/*.node npm/linux-arm64-gnu/js-host-api.linux-arm64-gnu.node
-          mv js-bindings/index.js index.js
-          mv js-bindings/index.d.ts index.d.ts
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.prepare_command }}
 
       - name: Set package versions
         working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
-          cd npm/linux-arm64-gnu
-          npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts
+        shell: ${{ matrix.shell }}
         env:
           VERSION: ${{ inputs.version }}
+        run: ${{ matrix.version_command }}
 
-      - name: Update Linux arm64 optional dependency version
+      - name: Update optional dependency version
         working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.optionalDependencies['@hyperlight-dev/js-host-api-linux-arm64-gnu'] = process.env.VERSION;
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
+        shell: ${{ matrix.shell }}
         env:
           VERSION: ${{ inputs.version }}
+        run: ${{ matrix.update_dependency_command }}
 
-      - name: Validate Linux arm64 release tarballs
+      - name: Validate native release tarballs
         working-directory: ${{ env.WORKING_DIR }}
-        run: ./test-pack.sh
+        shell: ${{ matrix.shell }}
         env:
-          PLATFORM_PACKAGE: linux-arm64-gnu
+          PLATFORM_PACKAGE: ${{ matrix.artifact_dir }}
+          REQUIRE_MACOS_PACKAGE: ${{ contains(matrix.package_name, 'darwin') && '1' || '' }}
+        run: ${{ matrix.validate_command }}
 
   publish:
-    needs: [build, validate-linux-arm64]
+    if: ${{ always() && needs.build.result == 'success' && (needs.validate-native.result == 'success' || needs.validate-native.result == 'skipped') }}
+    needs: [build, validate-native]
     # Trusted publishing (OIDC) requires GitHub-hosted runners.
     # The publish job only downloads pre-built artifacts and runs npm publish,
     # so it does not need self-hosted runners with KVM/Hyperlight.
@@ -290,6 +398,12 @@ jobs:
           name: bindings-darwin-arm64
           path: ${{ env.WORKING_DIR }}/artifacts/darwin-arm64
 
+      - name: Download Windows arm64 artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: bindings-win32-arm64-msvc
+          path: ${{ env.WORKING_DIR }}/artifacts/win32-arm64-msvc
+
       - name: Download Linux arm64 GNU artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -312,11 +426,13 @@ jobs:
           mv artifacts/linux-x64-gnu/*.node npm/linux-x64-gnu/js-host-api.linux-x64-gnu.node
           mv artifacts/linux-x64-musl/*.node npm/linux-x64-musl/js-host-api.linux-x64-musl.node
           mv artifacts/win32-x64-msvc/*.node npm/win32-x64-msvc/js-host-api.win32-x64-msvc.node
+          mv artifacts/win32-arm64-msvc/*.node npm/win32-arm64-msvc/js-host-api.win32-arm64-msvc.node
           mv artifacts/darwin-arm64/*.node npm/darwin-arm64/js-host-api.darwin-arm64.node
           mv artifacts/linux-arm64-gnu/*.node npm/linux-arm64-gnu/js-host-api.linux-arm64-gnu.node
           ls -la npm/linux-x64-gnu/
           ls -la npm/linux-x64-musl/
           ls -la npm/win32-x64-msvc/
+          ls -la npm/win32-arm64-msvc/
           ls -la npm/darwin-arm64/
           ls -la npm/linux-arm64-gnu/
 
@@ -330,6 +446,7 @@ jobs:
           cd npm/linux-x64-gnu && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../linux-x64-musl && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../win32-x64-msvc && npm version "$VERSION" --no-git-tag-version --allow-same-version
+          cd ../win32-arm64-msvc && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../darwin-arm64 && npm version "$VERSION" --no-git-tag-version --allow-same-version
           cd ../linux-arm64-gnu && npm version "$VERSION" --no-git-tag-version --allow-same-version
         env:
@@ -412,6 +529,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-darwin-arm64,')) && secrets.NPM_TOKEN || '' }}
 
+      - name: Publish Windows arm64 package
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ env.WORKING_DIR }}/npm/win32-arm64-msvc
+        run: npm publish --access public --ignore-scripts --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-win32-arm64-msvc,')) && secrets.NPM_TOKEN || '' }}
+
       - name: Publish Linux arm64 GNU package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-arm64-gnu
@@ -436,6 +560,7 @@ jobs:
                      "@hyperlight-dev/js-host-api-linux-x64-gnu" \
                      "@hyperlight-dev/js-host-api-linux-x64-musl" \
                      "@hyperlight-dev/js-host-api-win32-x64-msvc" \
+                     "@hyperlight-dev/js-host-api-win32-arm64-msvc" \
                      "@hyperlight-dev/js-host-api-darwin-arm64" \
                      "@hyperlight-dev/js-host-api-linux-arm64-gnu"; do
             if npm view "$pkg@$VERSION" version > /dev/null 2>&1; then
@@ -466,6 +591,9 @@ jobs:
           echo ""
           echo "--- @hyperlight-dev/js-host-api-win32-x64-msvc ---"
           npm pack ./npm/win32-x64-msvc --dry-run
+          echo ""
+          echo "--- @hyperlight-dev/js-host-api-win32-arm64-msvc ---"
+          npm pack ./npm/win32-arm64-msvc --dry-run
           echo ""
           echo "--- @hyperlight-dev/js-host-api-darwin-arm64 ---"
           npm pack ./npm/darwin-arm64 --dry-run

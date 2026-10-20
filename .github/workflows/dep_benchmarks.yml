@@ -50,11 +50,11 @@ jobs:
         github.run_attempt)) }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: hyperlight-dev/ci-setup-workflow@v1.10.0
+      - uses: hyperlight-dev/ci-setup-workflow@2f4142ba17cf573af44fc1e1f1ffc743daded5b3 # v1.10.0
         with:
           rust-toolchain: "1.90"
           just-version: "1.51"
@@ -86,7 +86,7 @@ jobs:
         working-directory: ./src/hyperlight-js 
 
       - name: Upload benchmarks
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: benchmarks_${{runner.os}}_${{matrix.hypervisor}}
           path: ./target/criterion/

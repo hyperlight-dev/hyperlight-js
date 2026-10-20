@@ -30,6 +30,7 @@ src/
 Cargo.toml
 test-examples.sh
 test-pack.sh
+test-pack.ps1
 
 # Exclude artifacts directory (only used during CI)
 artifacts/

@@ -57,16 +57,6 @@ to `PATH`, or add the active Rust toolchain's LLVM directory:
     $env:Path = "$(rustc --print sysroot)\lib\rustlib\$hostTriple\bin;$env:Path"
 ```
 
-In addition on Linux and macOS you will need to install the bare-metal target matching
-your architecture, which `cargo-hyperlight` derives the guest target from:
-
-```bash
-    # x86_64 hosts
-    rustup target add x86_64-unknown-none
-    # Apple Silicon / other aarch64 hosts
-    rustup target add aarch64-unknown-none
-```
-
 ## Supported platforms
 
 | Host OS | Architecture | Hypervisor |
@@ -74,6 +64,7 @@ your architecture, which `cargo-hyperlight` derives the guest target from:
 | Linux   | x86_64       | KVM or MSHV |
 | Linux   | aarch64      | KVM |
 | Windows | x86_64       | Windows Hypervisor Platform (WHP) |
+| Windows | aarch64      | Windows Hypervisor Platform (WHP) |
 | macOS   | aarch64      | Hypervisor.framework |
 
 The guest runs on the same architecture as the host, so an aarch64 host builds

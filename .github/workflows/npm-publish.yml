@@ -72,18 +72,18 @@ jobs:
             build_name: linux-arm64-gnu
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Hyperlight setup
-        uses: hyperlight-dev/ci-setup-workflow@v1.10.0
+        uses: hyperlight-dev/ci-setup-workflow@2f4142ba17cf573af44fc1e1f1ffc743daded5b3 # v1.10.0
         with:
           rust-toolchain: "1.90"
           just-version: "1.51"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -144,7 +144,7 @@ jobs:
         run: npm run build -- --target ${{ matrix.target }}
 
       - name: Upload native binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: bindings-${{ matrix.build_name }}
           path: ${{ env.WORKING_DIR }}/*.node
@@ -154,7 +154,7 @@ jobs:
       # platform-independent, so we only need to upload them once.
       - name: Upload JS bindings
         if: matrix.build_name == 'linux-x64-gnu'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: js-bindings
           path: |
@@ -166,10 +166,10 @@ jobs:
     needs: build
     runs-on: [self-hosted, Linux, arm64, kvm]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.22.3'
           cache: 'npm'
@@ -181,13 +181,13 @@ jobs:
           test "$(node -p process.arch)" = "arm64"
 
       - name: Download Linux arm64 GNU artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bindings-linux-arm64-gnu
           path: ${{ env.WORKING_DIR }}/artifacts/linux-arm64-gnu
 
       - name: Download JS bindings
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-bindings
           path: ${{ env.WORKING_DIR }}/js-bindings
@@ -233,7 +233,7 @@ jobs:
     # so it does not need self-hosted runners with KVM/Hyperlight.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Enable KVM
         run: |
@@ -244,7 +244,7 @@ jobs:
           sudo chmod a+rwx /dev/kvm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           # node 22.22.2 has an issue where we can't upgrade npm to 11.x
           # see https://github.com/nodejs/node/issues/62425
@@ -267,37 +267,37 @@ jobs:
         run: npm ci --ignore-scripts --omit=optional
 
       - name: Download Linux GNU artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bindings-linux-x64-gnu
           path: ${{ env.WORKING_DIR }}/artifacts/linux-x64-gnu
 
       - name: Download Linux musl artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bindings-linux-x64-musl
           path: ${{ env.WORKING_DIR }}/artifacts/linux-x64-musl
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bindings-win32-x64-msvc
           path: ${{ env.WORKING_DIR }}/artifacts/win32-x64-msvc
 
       - name: Download macOS arm64 artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bindings-darwin-arm64
           path: ${{ env.WORKING_DIR }}/artifacts/darwin-arm64
 
       - name: Download Linux arm64 GNU artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bindings-linux-arm64-gnu
           path: ${{ env.WORKING_DIR }}/artifacts/linux-arm64-gnu
 
       - name: Download JS bindings
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-bindings
           path: ${{ env.WORKING_DIR }}/js-bindings

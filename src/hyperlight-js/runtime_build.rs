@@ -15,9 +15,19 @@ limitations under the License.
 */
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+
+// cargo-hyperlight supplies libc headers. QuickJS still needs threading disabled
+// and the monotonic clock definitions enabled.
+const QUICKJS_CFLAGS: &str = "-D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK";
+
+pub(crate) fn guest_cflags(include_dir: &Path) -> String {
+    // Clang must see the runtime's math shim before the sysroot headers.
+    // Use forward slashes, as in the Justfile: escaped backslashes lose the include path.
+    format!("-I{} {QUICKJS_CFLAGS}", include_dir.display()).replace('\\', "/")
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum RuntimeSource {
@@ -56,7 +66,27 @@ pub(crate) fn select_binary(package: &Value) -> Result<String, String> {
 mod tests {
     use serde_json::json;
 
-    use super::{runtime_source, select_binary, RuntimeSource};
+    use super::{guest_cflags, runtime_source, select_binary, RuntimeSource};
+
+    #[test]
+    fn guest_cflags_normalize_canonical_windows_include_path() {
+        assert_eq!(
+            guest_cflags(std::path::Path::new(
+                r"\\?\C:\repo\src\hyperlight-js-runtime\include"
+            )),
+            "-I//?/C:/repo/src/hyperlight-js-runtime/include -D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK"
+        );
+    }
+
+    #[test]
+    fn guest_cflags_preserve_unix_include_path() {
+        assert_eq!(
+            guest_cflags(std::path::Path::new(
+                "/repo/src/hyperlight-js-runtime/include"
+            )),
+            "-I/repo/src/hyperlight-js-runtime/include -D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK"
+        );
+    }
 
     #[test]
     fn absent_or_empty_manifest_selects_default_source() {

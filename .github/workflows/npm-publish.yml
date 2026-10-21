@@ -277,8 +277,13 @@ jobs:
     needs: [build, package-targets]
     strategy:
       fail-fast: true
-      matrix: ${{ fromJSON(needs.package-targets.outputs.first_time) }}
+      matrix:
+        include: ${{ fromJSON(needs.package-targets.outputs.first_time) }}
     runs-on: ${{ matrix.runner }}
+    # Step-level shell does not support expressions; job defaults do.
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -291,7 +296,6 @@ jobs:
           cache-dependency-path: 'src/js-host-api/package-lock.json'
 
       - name: Verify native runner
-        shell: ${{ matrix.shell }}
         run: ${{ matrix.verify_command }}
 
       - name: Download native artifact
@@ -308,26 +312,22 @@ jobs:
 
       - name: Prepare native package
         working-directory: ${{ env.WORKING_DIR }}
-        shell: ${{ matrix.shell }}
         run: ${{ matrix.prepare_command }}
 
       - name: Set package versions
         working-directory: ${{ env.WORKING_DIR }}
-        shell: ${{ matrix.shell }}
         env:
           VERSION: ${{ inputs.version }}
         run: ${{ matrix.version_command }}
 
       - name: Update optional dependency version
         working-directory: ${{ env.WORKING_DIR }}
-        shell: ${{ matrix.shell }}
         env:
           VERSION: ${{ inputs.version }}
         run: ${{ matrix.update_dependency_command }}
 
       - name: Validate native release tarballs
         working-directory: ${{ env.WORKING_DIR }}
-        shell: ${{ matrix.shell }}
         env:
           PLATFORM_PACKAGE: ${{ matrix.artifact_dir }}
           REQUIRE_MACOS_PACKAGE: ${{ contains(matrix.package_name, 'darwin') && '1' || '' }}

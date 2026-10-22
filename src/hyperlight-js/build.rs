@@ -230,7 +230,8 @@ fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
         .canonicalize()
         .expect("hyperlight-js-runtime include directory not found");
     println!("cargo:rerun-if-changed={}", include_dir.display());
-    let cflags = format!("-I{} {QUICKJS_CFLAGS}", include_dir.display()).replace("\\", "\\\\");
+    // Forward slashes keep Clang's include path intact so it finds the ARM math shim.
+    let cflags = format!("-I{} {QUICKJS_CFLAGS}", include_dir.display()).replace('\\', "/");
 
     let mut cargo_cmd = cargo_hyperlight::cargo().unwrap();
     let cmd = cargo_cmd

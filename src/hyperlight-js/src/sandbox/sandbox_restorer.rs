@@ -87,7 +87,7 @@ impl SandboxRestorer {
         T::restore_from(self)
     }
 
-    fn build(self) -> Result<(hyperlight_host::MultiUseSandbox, HostFunctionManifest)> {
+    fn build(self) -> Result<(hyperlight_host::Sandbox, HostFunctionManifest)> {
         let available_host_functions = host_function_manifest(&self.host_modules);
         self.snapshot
             .metadata()

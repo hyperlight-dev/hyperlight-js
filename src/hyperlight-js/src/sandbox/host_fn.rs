@@ -60,7 +60,7 @@ pub use hyperlight_js_common::FnReturn;
 
 /// Expose a logical host-function manifest to the guest module loader.
 pub(crate) fn register_host_function_manifest(
-    sandbox: &mut hyperlight_host::MultiUseSandbox,
+    sandbox: &mut hyperlight_host::Sandbox,
     manifest: &HostFunctionManifest,
 ) -> crate::Result<()> {
     let manifest_json = serde_json::to_string(manifest)?;

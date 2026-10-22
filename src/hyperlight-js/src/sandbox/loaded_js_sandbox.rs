@@ -19,7 +19,7 @@ use std::sync::Arc;
 use hyperlight_host::hypervisor::InterruptHandle;
 use hyperlight_host::sandbox::snapshot::Snapshot as HyperlightSnapshot;
 use hyperlight_host::HyperlightError::{self, JsonConversionFailure};
-use hyperlight_host::{MultiUseSandbox, Result, SandboxStatus};
+use hyperlight_host::{Result, Sandbox, SandboxStatus};
 use tokio::task::JoinHandle;
 use tracing::{instrument, Level};
 
@@ -36,7 +36,7 @@ use crate::sandbox::metrics::SandboxMetricsGuard;
 
 /// A Hyperlight Sandbox with a JavaScript run time loaded and guest JavaScript handlers loaded.
 pub struct LoadedJSSandbox {
-    inner: MultiUseSandbox,
+    inner: Sandbox,
     // Snapshot of state before the sandbox was loaded and before any handlers were added.
     // This is used to restore state back to a JSSandbox.
     snapshot: Arc<HyperlightSnapshot>,
@@ -71,7 +71,7 @@ impl Drop for MonitorTask {
 impl LoadedJSSandbox {
     #[instrument(err(Debug), skip_all, level=Level::INFO)]
     pub(super) fn new(
-        inner: MultiUseSandbox,
+        inner: Sandbox,
         snapshot: Arc<HyperlightSnapshot>,
         snapshot_metadata: Arc<SnapshotMetadata>,
         available_host_functions: HostFunctionManifest,
@@ -89,7 +89,7 @@ impl LoadedJSSandbox {
     }
 
     pub(crate) fn from_snapshot(
-        inner: MultiUseSandbox,
+        inner: Sandbox,
         snapshot: &Snapshot,
         available_host_functions: HostFunctionManifest,
     ) -> Result<LoadedJSSandbox> {

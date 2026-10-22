@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use hyperlight_host::sandbox::snapshot::Snapshot as HyperlightSnapshot;
-use hyperlight_host::{new_error, MultiUseSandbox, Result, SandboxStatus};
+use hyperlight_host::{new_error, Result, Sandbox, SandboxStatus};
 use tracing::{instrument, Level};
 
 use super::host_fn::register_host_function_manifest;
@@ -76,7 +76,7 @@ pub fn validate_namespace_not_reserved(namespace: &str) -> Result<()> {
 
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.
 pub struct JSSandbox {
-    pub(super) inner: MultiUseSandbox,
+    pub(super) inner: Sandbox,
     // Mutable definitions staged for guest registration. Snapshot metadata is
     // built from these maps only when a snapshot or LoadedJSSandbox is created.
     handlers: HashMap<String, Script>,
@@ -93,10 +93,7 @@ pub struct JSSandbox {
 
 impl JSSandbox {
     #[instrument(err(Debug), skip(inner), level=Level::INFO)]
-    pub(super) fn new(
-        mut inner: MultiUseSandbox,
-        host_functions: HostFunctionManifest,
-    ) -> Result<Self> {
+    pub(super) fn new(mut inner: Sandbox, host_functions: HostFunctionManifest) -> Result<Self> {
         let snapshot = inner.snapshot()?;
         Ok(Self {
             inner,
@@ -108,9 +105,9 @@ impl JSSandbox {
         })
     }
 
-    /// Creates a new `JSSandbox` from a `MultiUseSandbox` and a `Snapshot` of state before any handlers were added.
+    /// Creates a new `JSSandbox` from a `Sandbox` and a `Snapshot` of state before any handlers were added.
     pub(crate) fn from_loaded(
-        mut loaded: MultiUseSandbox,
+        mut loaded: Sandbox,
         snapshot: Arc<HyperlightSnapshot>,
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
@@ -127,7 +124,7 @@ impl JSSandbox {
     }
 
     pub(crate) fn from_snapshot(
-        inner: MultiUseSandbox,
+        inner: Sandbox,
         snapshot: &Snapshot,
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {

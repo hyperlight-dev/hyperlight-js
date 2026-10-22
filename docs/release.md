@@ -10,7 +10,7 @@ Do this with the `just set-version` recipe. **Always use this instead of bumping
 
 - every workspace crate's `version` and the root `Cargo.lock`,
 - the excluded `extended_runtime` fixture's own `Cargo.lock` (a bare `cargo set-version` can't reach it, and a stale one fails the `native_modules --locked` build),
-- the npm main package and the five platform packages,
+- the npm main package and the six platform packages,
 - the root package version in `src/js-host-api/package-lock.json`.
 
 Keep `optionalDependencies` on the latest published version so `npm ci` can use
@@ -73,6 +73,7 @@ This must be done for all 6 packages:
 - `@hyperlight-dev/js-host-api-linux-x64-gnu`
 - `@hyperlight-dev/js-host-api-linux-x64-musl`
 - `@hyperlight-dev/js-host-api-win32-x64-msvc`
+- `@hyperlight-dev/js-host-api-win32-arm64-msvc`
 - `@hyperlight-dev/js-host-api-darwin-arm64`
 - `@hyperlight-dev/js-host-api-linux-arm64-gnu`
 
@@ -120,6 +121,7 @@ If you need to publish npm packages manually via `workflow_dispatch`, you'll nee
      - `@hyperlight-dev/js-host-api-linux-x64-gnu`
      - `@hyperlight-dev/js-host-api-linux-x64-musl`
      - `@hyperlight-dev/js-host-api-win32-x64-msvc`
+     - `@hyperlight-dev/js-host-api-win32-arm64-msvc`
      - `@hyperlight-dev/js-host-api-darwin-arm64`
      - `@hyperlight-dev/js-host-api-linux-arm64-gnu`
 

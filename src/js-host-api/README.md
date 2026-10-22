@@ -833,7 +833,7 @@ dependencies, custom namespaces, multiple handlers sharing a module, and
 ## Requirements
 
 - **Node.js** >= 18
-- **Linux** (x86_64, glibc or musl), **Windows** (x86_64), or **macOS** (Apple Silicon / aarch64)
+- **Linux** (x86_64, glibc or musl; aarch64, glibc), **Windows** (x86_64 or aarch64), or **macOS** (Apple Silicon / aarch64)
 
 ## License
 

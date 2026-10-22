@@ -295,31 +295,11 @@ for (const method of [
     'setOutputTransportBufferSize',
     'setInputBufferSize',
     'setOutputBufferSize',
+    'setHostFunctionModules',
 ]) {
     const orig = SandboxBuilder.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: SandboxBuilder.${method}`);
     SandboxBuilder.prototype[method] = wrapSync(orig);
-}
-
-// A factory is required so each builder receives fresh module objects,
-// callback implementations, and captured state.
-{
-    const origSetHostFunctionModules = SandboxBuilder.prototype.setHostFunctionModules;
-    if (!origSetHostFunctionModules) {
-        throw new Error('Cannot wrap missing method: SandboxBuilder.setHostFunctionModules');
-    }
-    SandboxBuilder.prototype.setHostFunctionModules = wrapSync(function (factory) {
-        if (typeof factory !== 'function') {
-            throw new TypeError(
-                `SandboxBuilder.setHostFunctionModules expects a function, received ${typeof factory}`
-            );
-        }
-        const modules = factory();
-        if (!Array.isArray(modules)) {
-            throw new TypeError('Host-function module factory must return an array');
-        }
-        return origSetHostFunctionModules.call(this, modules);
-    });
 }
 
 // setHostPrintFn needs a custom wrapper: the user's callback is wrapped in

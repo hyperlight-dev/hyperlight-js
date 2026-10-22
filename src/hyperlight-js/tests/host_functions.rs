@@ -16,6 +16,8 @@ limitations under the License.
 //! Test for host modules / functions.
 
 #![allow(clippy::disallowed_macros)]
+// Most tests here cover the deprecated ProtoJSSandbox registration API.
+#![allow(deprecated)]
 
 use hyperlight_js::{HostFunctionModule, LoadedJSSandbox, SandboxBuilder, Script, Snapshot};
 
@@ -1138,7 +1140,7 @@ fn extra_host_function_module() -> HostFunctionModule {
 
 fn loaded_snapshot_requiring_host_function() -> Snapshot<LoadedJSSandbox> {
     let mut source = SandboxBuilder::new()
-        .with_host_function_modules(|| [required_host_function_module()])
+        .with_host_function_modules([required_host_function_module()])
         .build()
         .unwrap()
         .load_runtime()
@@ -1161,25 +1163,23 @@ fn loaded_snapshot_requiring_host_function() -> Snapshot<LoadedJSSandbox> {
 fn loaded_restore_keeps_captured_requirements_until_unload() {
     let snapshot = loaded_snapshot_requiring_host_function();
     let mut restored = SandboxBuilder::from_snapshot(snapshot)
-        .with_host_function_modules(|| {
-            [
-                required_host_function_module(),
-                extra_host_function_module(),
-            ]
-        })
+        .with_host_function_modules([
+            required_host_function_module(),
+            extra_host_function_module(),
+        ])
         .build()
         .unwrap();
 
     let loaded_snapshot = restored.snapshot().unwrap();
     SandboxBuilder::from_snapshot(loaded_snapshot)
-        .with_host_function_modules(|| [required_host_function_module()])
+        .with_host_function_modules([required_host_function_module()])
         .build()
         .unwrap();
 
     let mut unloaded = restored.unload().unwrap();
     let unloaded_snapshot = unloaded.snapshot().unwrap();
     let error = match SandboxBuilder::from_snapshot(unloaded_snapshot)
-        .with_host_function_modules(|| [required_host_function_module()])
+        .with_host_function_modules([required_host_function_module()])
         .build()
     {
         Ok(_) => panic!("restore without the extra module unexpectedly succeeded"),
@@ -1208,7 +1208,7 @@ fn loaded_restore_keeps_captured_requirements_until_unload() {
 #[test]
 fn restored_js_sandbox_records_supplied_host_functions() {
     let source_proto = SandboxBuilder::new()
-        .with_host_function_modules(|| [required_host_function_module()])
+        .with_host_function_modules([required_host_function_module()])
         .build()
         .unwrap();
     let mut source = source_proto.load_runtime().unwrap();
@@ -1226,18 +1226,16 @@ fn restored_js_sandbox_records_supplied_host_functions() {
     let snapshot = source.snapshot().unwrap();
 
     let mut restored = SandboxBuilder::from_snapshot(snapshot)
-        .with_host_function_modules(|| {
-            [
-                required_host_function_module(),
-                extra_host_function_module(),
-            ]
-        })
+        .with_host_function_modules([
+            required_host_function_module(),
+            extra_host_function_module(),
+        ])
         .build()
         .unwrap();
     let complete_snapshot = restored.snapshot().unwrap();
 
     let mut insufficient = SandboxBuilder::new()
-        .with_host_function_modules(|| [required_host_function_module()])
+        .with_host_function_modules([required_host_function_module()])
         .build()
         .unwrap()
         .load_runtime()

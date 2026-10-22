@@ -59,7 +59,7 @@ Creates and configures a new sandbox.
 - `setOutputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each large guest-to-host transport buffer (must be > 0, chainable)
 - `setInputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy input/host-reply capacity in bytes; use `setInputTransportPoolPages` and `setOutputTransportPoolPages` for explicit pool budgets
 - `setOutputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy output/host-request capacity in bytes; use `setOutputTransportPoolPages`
-- `setHostFunctionModules(factory: () => HostFunctionModule[])` → `this` — Define fresh host callbacks for one sandbox
+- `setHostFunctionModules(modules: HostFunctionModule[])` → `this` — Supply host callbacks for one sandbox. Each module is consumed
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
 
 **Static methods:**
@@ -83,7 +83,7 @@ Configure host functions on `SandboxBuilder` before calling `build()`.
 
 **Methods:**
 - `loadRuntime()` → `Promise<JSSandbox>` — Loads the JavaScript runtime into the sandbox.
-- `hostModule()` / `register()` — Compatibility registration APIs; prefer a `HostFunctionModule` factory with `SandboxBuilder` so definitions can be reused safely for restore.
+- `hostModule()` / `register()` — **Deprecated:** use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
 
 ```javascript
 function hostFunctionModules() {
@@ -92,7 +92,7 @@ function hostFunctionModules() {
     return [math];
 }
 
-const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules).build();
+const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
 const jsSandbox = await proto.loadRuntime();
 ```
 
@@ -320,7 +320,7 @@ await snapshot.save('./snapshots', 'application-ready');
 // Later, potentially in another process.
 const persisted = await Snapshot.checkedLoad('./snapshots', 'application-ready');
 const restored = await SandboxBuilder.fromSnapshot(persisted)
-    .setHostFunctionModules(hostFunctionModules)
+    .setHostFunctionModules(hostFunctionModules())
     .build();
 ```
 
@@ -329,7 +329,7 @@ const restored = await SandboxBuilder.fromSnapshot(persisted)
 
 The same workflow restores a `JSSandbox` snapshot taken before handlers are
 loaded. Native callbacks are not serialized, so the restoring builder must
-receive a factory that creates compatible `HostFunctionModule`s. Restoring a
+receive fresh, compatible `HostFunctionModule`s. Restoring a
 snapshot of the other sandbox type into an existing sandbox fails with
 `ERR_INVALID_ARG`.
 See [Persistent snapshots](../../docs/persistent-snapshots.md).
@@ -345,6 +345,7 @@ All errors thrown by the API include a `code` property for programmatic handling
 | `ERR_POISONED` | Sandbox is in an inconsistent state (after timeout kill, guest abort, stack overflow, etc.) — restore from snapshot or unload |
 | `ERR_CANCELLED` | Execution was cancelled (by monitor timeout or manual `kill()`) |
 | `ERR_GUEST_ABORT` | Guest code aborted |
+| `ERR_BUSY` | A `JSSandbox` method was called while its `snapshot()` or `restore()` was still running |
 | `ERR_INTERNAL` | Unexpected internal error |
 
 ```javascript
@@ -379,9 +380,8 @@ sequenceDiagram
     participant Host as Host Callback (Node.js)
 
     Note over Guest,Host: Builder configuration
-    Host->>Bridge: builder.setHostFunctionModules(hostFunctionModules)
-    Bridge->>Bridge: Invoke factory once
-    Bridge->>HL: Installs selected callback closures
+    Host->>Bridge: builder.setHostFunctionModules(hostFunctionModules())
+    Bridge->>HL: Installs callback closures
 
     Note over Guest,Host: Invocation (during callHandler)
     Guest->>HL: math.add(1, 2)
@@ -393,7 +393,7 @@ sequenceDiagram
     HL-->>Guest: 3
 ```
 
-1. **Define** a reusable factory that creates fresh `HostFunctionModule` objects and supply it to `SandboxBuilder`
+1. **Define** a function that creates fresh `HostFunctionModule` objects and supply its result to `SandboxBuilder`
 2. **Guest code** imports them as ES modules: `import * as math from "host:math"`
 3. **At call time**, the guest's arguments are JSON-serialised and dispatched to the Node.js main thread via a threadsafe function (V8 is single-threaded, so callbacks *must* execute there). The JSON result is then returned to the guest
 
@@ -408,7 +408,7 @@ function hostFunctionModules() {
     return [math];
 }
 
-const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules).build();
+const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
 const sandbox = await proto.loadRuntime();
 
 // Guest code can now call math.add()
@@ -486,11 +486,11 @@ math.register('multiply', (a, b) => a * b);
 
 Throws `ERR_INVALID_ARG` if function name is empty.
 
-Supply the factory with `builder.setHostFunctionModules(hostFunctionModules)`.
-The builder invokes it once and consumes the returned modules. Reuse the factory,
-not its returned objects, for fresh or restored builders. Create mutable state
-inside the factory to isolate it per sandbox. State captured from an outer scope
-is deliberately shared between every sandbox using that factory.
+Supply modules with `builder.setHostFunctionModules(hostFunctionModules())`.
+The builder consumes them. Call `hostFunctionModules()` again for each fresh or
+restored builder. Create mutable state inside the function to isolate it per
+sandbox. State captured from an outer scope is shared between every sandbox
+using those modules.
 
 ### Async Callbacks
 
@@ -560,7 +560,7 @@ function hostFunctionModules() {
 }
 
 const proto = await new SandboxBuilder()
-    .setHostFunctionModules(hostFunctionModules)
+    .setHostFunctionModules(hostFunctionModules())
     .build();
 const sandbox = await proto.loadRuntime();
 sandbox.addHandler('handler', `
@@ -638,7 +638,7 @@ function hostFunctionModules() {
 }
 
 const proto = await new SandboxBuilder()
-    .setHostFunctionModules(hostFunctionModules)
+    .setHostFunctionModules(hostFunctionModules())
     .build();
 const sandbox = await proto.loadRuntime();
 ```
@@ -647,11 +647,11 @@ const sandbox = await proto.loadRuntime();
 
 Host callbacks remain attached during in-memory restore because the same host
 process and sandbox are reused. Persistent snapshots do not serialize callbacks;
-supply the reusable module factory to the restoring builder as shown above.
+supply fresh modules to the restoring builder as shown above.
 
 ```javascript
 function hostFunctionModules() {
-    // This counter belongs to one sandbox because it is created inside the factory.
+    // This counter belongs to one sandbox because each call creates it.
     let callCount = 0;
     const stats = new HostFunctionModule('stats');
     stats.register('hit', () => {
@@ -661,7 +661,7 @@ function hostFunctionModules() {
     return [stats];
 }
 
-const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules).build();
+const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
 const sandbox = await proto.loadRuntime();
 sandbox.addHandler('handler', `
     import * as stats from "host:stats";

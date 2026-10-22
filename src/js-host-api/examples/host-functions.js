@@ -38,12 +38,12 @@ async function main() {
     console.log('2. Registering host functions...');
     console.log('   ✓ Host functions registered\n');
 
-    // Reuse the factory for another builder; each invocation creates fresh
-    // module objects, callbacks, and captured state.
+    // Call hostFunctionModules() again for another builder. Each call creates
+    // fresh module objects, callbacks, and captured state.
     const proto = await new SandboxBuilder()
         .setHeapSize(8 * 1024 * 1024)
         .setScratchSize(1024 * 1024)
-        .setHostFunctionModules(hostFunctionModules)
+        .setHostFunctionModules(hostFunctionModules())
         .build();
 
     // ── Load runtime and add a handler ───────────────────────────────

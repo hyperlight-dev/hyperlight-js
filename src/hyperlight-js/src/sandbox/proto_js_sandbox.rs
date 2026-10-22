@@ -82,6 +82,9 @@ impl ProtoJSSandbox {
     /// Install a custom file system for module resolution and loading.
     ///
     /// Enables JavaScript module imports using the provided ~FileSystem~ implementation.
+    #[deprecated(
+        note = "Use SandboxBuilder::with_module_loader, which also works when restoring snapshots"
+    )]
     #[instrument(err(Debug), skip_all, level=Level::INFO)]
     pub fn set_module_loader<Fs: crate::resolver::FileSystem + Clone + 'static>(
         mut self,
@@ -131,6 +134,7 @@ impl ProtoJSSandbox {
     /// # Example
     ///
     /// ```
+    /// # #![allow(deprecated)]
     /// use hyperlight_js::SandboxBuilder;
     ///
     /// // Create a proto sandbox and register a host function.
@@ -143,6 +147,9 @@ impl ProtoJSSandbox {
     /// let js_sandbox = sbox.load_runtime()?;
     /// # Ok::<(), hyperlight_host::HyperlightError>(())
     /// ```
+    #[deprecated(
+        note = "Use SandboxBuilder::with_host_function_modules, which also works when restoring snapshots"
+    )]
     #[instrument(skip(self), level=Level::INFO)]
     pub fn host_module(&mut self, name: impl Into<String> + Debug) -> &mut HostModule {
         self.host_modules.entry(name.into()).or_default()
@@ -153,6 +160,9 @@ impl ProtoJSSandbox {
     ///
     /// Registering a function with the same `module` and `name` as an existing function
     /// overwrites the previous registration.
+    #[deprecated(
+        note = "Use SandboxBuilder::with_host_function_modules, which also works when restoring snapshots"
+    )]
     #[instrument(err(Debug), skip(self, func), level=Level::INFO)]
     pub fn register<Output: Serialize, Args: DeserializeOwned>(
         &mut self,
@@ -160,6 +170,7 @@ impl ProtoJSSandbox {
         name: impl Into<String> + Debug,
         func: impl Function<Output, Args> + Send + Sync + 'static,
     ) -> Result<()> {
+        #[allow(deprecated)]
         self.host_module(module).register(name, func);
         Ok(())
     }

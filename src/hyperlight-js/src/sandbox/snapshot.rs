@@ -23,6 +23,7 @@ use hyperlight_host::sandbox::snapshot::{
     OciDigest, OciReference, OciTag, Snapshot as HyperlightSnapshot,
 };
 use hyperlight_host::Sandbox;
+use hyperlight_js_common::GUEST_ABI_VERSION;
 use serde::{Deserialize, Serialize};
 
 use super::js_sandbox::{validate_module_identifier, validate_namespace_not_reserved};
@@ -57,14 +58,14 @@ pub enum SnapshotKind {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScriptMetadata {
-    content: Arc<String>,
+    content: String,
     base_path: Option<PathBuf>,
 }
 
 impl From<&Script> for ScriptMetadata {
     fn from(script: &Script) -> Self {
         Self {
-            content: script.shared_content(),
+            content: script.content().to_owned(),
             base_path: script.base_path().map(Path::to_path_buf),
         }
     }
@@ -72,7 +73,7 @@ impl From<&Script> for ScriptMetadata {
 
 impl From<ScriptMetadata> for Script {
     fn from(metadata: ScriptMetadata) -> Self {
-        let script = Script::from_shared_content(metadata.content);
+        let script = Script::from_content(metadata.content);
         match metadata.base_path {
             Some(path) => script.with_virtual_base(path.to_string_lossy()),
             None => script,
@@ -85,6 +86,7 @@ impl From<ScriptMetadata> for Script {
 pub(crate) struct SnapshotMetadata {
     schema_version: u32,
     hyperlight_js_version: String,
+    guest_abi_version: u32,
     kind: SnapshotKind,
     handlers: BTreeMap<String, ScriptMetadata>,
     modules: BTreeMap<String, ScriptMetadata>,
@@ -104,6 +106,7 @@ impl SnapshotMetadata {
         Self {
             schema_version: METADATA_SCHEMA_VERSION,
             hyperlight_js_version: env!("CARGO_PKG_VERSION").to_owned(),
+            guest_abi_version: GUEST_ABI_VERSION,
             kind,
             handlers: handlers.collect(),
             modules: modules.collect(),
@@ -135,7 +138,12 @@ impl SnapshotMetadata {
     /// `CallHostJsFunction` bridge, so its registry cannot see these JS module
     /// and function names.
     pub(crate) fn validate_host_functions(&self, available: &HostFunctionManifest) -> Result<()> {
-        for (module, required_functions) in &self.host_functions {
+        // A module with no functions gives the guest nothing to call.
+        let required = self
+            .host_functions
+            .iter()
+            .filter(|(_, functions)| !functions.is_empty());
+        for (module, required_functions) in required {
             let available_functions = available.get(module).ok_or_else(|| {
                 new_error!(
                     "Snapshot requires host module '{}', but it was not registered",
@@ -162,6 +170,14 @@ impl SnapshotMetadata {
                 self.schema_version,
                 self.hyperlight_js_version,
                 METADATA_SCHEMA_VERSION
+            ));
+        }
+        if self.guest_abi_version != GUEST_ABI_VERSION {
+            return Err(new_error!(
+                "Snapshot guest runtime ABI version {} produced by hyperlight-js {} is incompatible with ABI version {}",
+                self.guest_abi_version,
+                self.hyperlight_js_version,
+                GUEST_ABI_VERSION
             ));
         }
         match (self.kind, self.base_snapshot.is_some()) {
@@ -423,8 +439,10 @@ impl<T> Snapshot<T> {
     /// Save the snapshot to an OCI image layout and return its manifest digest.
     ///
     /// A [`LoadedJSSandbox`] snapshot also saves its runtime-ready baseline under
-    /// `<tag>.hljs-base`, which limits `tag` to 118 bytes.
+    /// `<tag>.hljs-base`, which limits `tag` to 118 bytes. Tags ending in
+    /// `.hljs-base` are reserved for these baselines.
     pub fn save(&self, path: impl AsRef<Path>, tag: &OciTag) -> Result<OciDigest> {
+        validate_user_tag(tag)?;
         let mut metadata = self.metadata.as_ref().clone();
         if let Some(base) = &self.base {
             // Hyperlight does not yet support OCI snapshot bundles, so save the
@@ -450,6 +468,16 @@ impl<T> Snapshot<T> {
     pub(crate) fn metadata(&self) -> &SnapshotMetadata {
         &self.metadata
     }
+}
+
+fn validate_user_tag(tag: &OciTag) -> Result<()> {
+    if tag.as_str().ends_with(BASE_TAG_SUFFIX) {
+        return Err(new_error!(
+            "Snapshot tag '{}' must not end in '{BASE_TAG_SUFFIX}', which is reserved for LoadedJSSandbox baselines",
+            tag.as_str()
+        ));
+    }
+    Ok(())
 }
 
 fn base_tag(tag: &OciTag) -> Result<OciTag> {
@@ -513,6 +541,16 @@ mod tests {
         assert!(error
             .to_string()
             .contains("produced by hyperlight-js 9.8.7"));
+    }
+
+    #[test]
+    fn metadata_rejects_other_guest_abi_version() {
+        let mut metadata = metadata(SnapshotKind::JsSandbox);
+        metadata.guest_abi_version = GUEST_ABI_VERSION + 1;
+
+        let error = metadata.validate().unwrap_err();
+
+        assert!(error.to_string().contains("guest runtime ABI version"));
     }
 
     #[test]
@@ -595,26 +633,31 @@ mod tests {
     }
 
     #[test]
-    fn script_metadata_shares_source_and_preserves_json_shape() {
+    fn host_function_validation_ignores_recorded_empty_modules() {
+        let mut metadata = metadata(SnapshotKind::LoadedJsSandbox);
+        metadata
+            .host_functions
+            .insert("host:empty".to_owned(), Vec::new());
+
+        metadata
+            .validate_host_functions(&HostFunctionManifest::new())
+            .unwrap();
+    }
+
+    #[test]
+    fn script_metadata_round_trips_source_and_json_shape() {
         let script =
             Script::from_content("export const answer = 42;").with_virtual_base("/modules");
-        let original_content = script.shared_content();
         let metadata = ScriptMetadata::from(&script);
 
         let json = serde_json::to_value(&metadata).unwrap();
         let restored_metadata: ScriptMetadata = serde_json::from_value(json.clone()).unwrap();
-        let restored_script: Script = metadata.into();
+        let restored_script: Script = restored_metadata.into();
 
-        assert!(Arc::ptr_eq(
-            &original_content,
-            &restored_script.shared_content()
-        ));
         assert_eq!(json["content"], "export const answer = 42;");
         assert_eq!(json["base_path"], "/modules");
-        assert_eq!(
-            restored_metadata.content.as_ref(),
-            "export const answer = 42;"
-        );
+        assert_eq!(restored_script.content(), "export const answer = 42;");
+        assert_eq!(restored_script.base_path(), Some(Path::new("/modules")));
     }
 
     #[test]

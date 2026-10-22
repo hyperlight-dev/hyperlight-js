@@ -263,6 +263,54 @@ fn loaded_snapshot_rejects_tag_that_would_collide_after_truncation() {
 }
 
 #[test]
+fn js_sandbox_snapshot_rejects_staged_sources_over_config_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    let padding = "x".repeat(1024 * 1024);
+    sandbox
+        .add_handler(
+            "large",
+            Script::from_content(format!(
+                "const padding = '{padding}';\nfunction handler(event) {{ return event; }}"
+            )),
+        )
+        .unwrap();
+    let snapshot = sandbox.snapshot().unwrap();
+
+    let error = snapshot
+        .save(directory.path(), &oci_tag("large"))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("config blob"));
+    assert!(!directory.path().join("index.json").exists());
+}
+
+#[test]
+fn snapshots_reject_reserved_baseline_tag_suffix() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    sandbox.add_handler("counter", counter_handler()).unwrap();
+    let js_snapshot = sandbox.snapshot().unwrap();
+    let loaded_snapshot = sandbox.get_loaded_sandbox().unwrap().snapshot().unwrap();
+    let tag = oci_tag("application.hljs-base");
+
+    let js_error = js_snapshot.save(directory.path(), &tag).unwrap_err();
+    let loaded_error = loaded_snapshot.save(directory.path(), &tag).unwrap_err();
+
+    assert!(js_error.to_string().contains("reserved"));
+    assert!(loaded_error.to_string().contains("reserved"));
+    assert!(!directory.path().join("index.json").exists());
+}
+
+#[test]
 fn persisted_js_sandbox_restores_embedded_javascript_modules() {
     let directory = tempfile::tempdir().unwrap();
     let mut sandbox = SandboxBuilder::new()

@@ -126,31 +126,25 @@ impl<S> SandboxBuilder<S> {
         }
     }
 
-    /// Define the host-function modules for this sandbox.
+    /// Supply the host-function modules for this sandbox.
     ///
-    /// The factory is invoked once and must construct fresh module and callback
-    /// instances. Pass the same factory to another builder to reuse the
-    /// definition without sharing callback state between sandboxes.
-    ///
-    /// Create per-sandbox state inside the factory. Capturing an [`std::sync::Arc`]
-    /// created outside the factory, or accessing static mutable state from a
-    /// callback, deliberately shares that state between sandboxes.
-    ///
-    /// A constructed module cannot be supplied to two builders:
+    /// Each module moves into the builder, so one module cannot be supplied to
+    /// two builders. Build fresh modules for each sandbox, for example with a
+    /// function that returns them. Capturing an [`std::sync::Arc`] or static
+    /// mutable state in a callback shares that state between sandboxes.
     ///
     /// ```compile_fail
     /// use hyperlight_js::{HostFunctionModule, SandboxBuilder};
     ///
     /// let module = HostFunctionModule::new("host:example");
-    /// let _first = SandboxBuilder::new().with_host_function_modules(|| [module]);
-    /// let _second = SandboxBuilder::new().with_host_function_modules(|| [module]);
+    /// let _first = SandboxBuilder::new().with_host_function_modules([module]);
+    /// let _second = SandboxBuilder::new().with_host_function_modules([module]);
     /// ```
-    pub fn with_host_function_modules<Factory, Modules>(mut self, factory: Factory) -> Self
-    where
-        Factory: FnOnce() -> Modules,
-        Modules: IntoIterator<Item = HostFunctionModule>,
-    {
-        self.host_function_modules.extend(factory());
+    pub fn with_host_function_modules(
+        mut self,
+        modules: impl IntoIterator<Item = HostFunctionModule>,
+    ) -> Self {
+        self.host_function_modules.extend(modules);
         self
     }
 
@@ -441,6 +435,8 @@ impl<T: SnapshotTarget> SandboxBuilder<Snapshot<T>> {
         if !is_hypervisor_present() {
             return Err(HyperlightError::NoHypervisorFound());
         }
+        let mut builder = self
+            .apply_runtime_config(HyperlightSandboxBuilder::from_snapshot(self.source.inner()))?;
         let snapshot = self.source;
         let host_modules = host_modules_by_name(self.host_function_modules)?;
         let available_host_functions = host_function_manifest(&host_modules);
@@ -448,25 +444,6 @@ impl<T: SnapshotTarget> SandboxBuilder<Snapshot<T>> {
             .metadata()
             .validate_host_functions(&available_host_functions)?;
 
-        let mut builder = HyperlightSandboxBuilder::from_snapshot(snapshot.inner());
-        #[cfg(target_os = "linux")]
-        {
-            builder = builder.interrupt_vcpu_sigrtmin_offset(
-                self.base_config.get_interrupt_vcpu_sigrtmin_offset(),
-            )?;
-        }
-        #[cfg(any(kvm, mshv3))]
-        {
-            builder = builder.interrupt_retry_delay(self.base_config.get_interrupt_retry_delay());
-        }
-        #[cfg(crashdump)]
-        if let Some(enabled) = self.guest_core_dump {
-            builder = builder.guest_core_dump(enabled);
-        }
-        #[cfg(gdb)]
-        if let Some(debug_info) = self.guest_debug_info {
-            builder = builder.guest_debug_info(debug_info);
-        }
         if let Some(host_print_fn) = self.host_print_fn {
             builder = builder.host_print(host_print_fn);
         }
@@ -494,8 +471,59 @@ impl<T: SnapshotTarget> SandboxBuilder<Snapshot<T>> {
     }
 }
 
+impl<S> SandboxBuilder<S> {
+    /// Apply settings that the snapshot layout does not fix.
+    fn apply_runtime_config(
+        &self,
+        mut builder: HyperlightSandboxBuilder,
+    ) -> Result<HyperlightSandboxBuilder> {
+        #[cfg(target_os = "linux")]
+        {
+            builder = builder.interrupt_vcpu_sigrtmin_offset(
+                self.base_config.get_interrupt_vcpu_sigrtmin_offset(),
+            )?;
+        }
+        #[cfg(any(kvm, mshv3))]
+        {
+            builder = builder.interrupt_retry_delay(self.base_config.get_interrupt_retry_delay());
+        }
+        #[cfg(crashdump)]
+        if let Some(enabled) = self.guest_core_dump {
+            builder = builder.guest_core_dump(enabled);
+        }
+        #[cfg(gdb)]
+        if let Some(debug_info) = self.guest_debug_info {
+            builder = builder.guest_debug_info(debug_info);
+        }
+        Ok(builder)
+    }
+}
+
 impl Default for SandboxBuilder<NewSandbox> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(all(target_os = "linux", any(kvm, mshv3)))]
+    fn runtime_config_reaches_hyperlight_builder() {
+        let mut builder =
+            SandboxBuilder::new().with_interrupt_retry_delay(Duration::from_millis(7));
+        builder.set_interrupt_vcpu_sigrtmin_offset(3).unwrap();
+
+        let hyperlight = builder
+            .apply_runtime_config(HyperlightSandboxBuilder::from_bytes(Vec::new()))
+            .unwrap();
+
+        assert_eq!(hyperlight.get_interrupt_vcpu_sigrtmin_offset(), 3);
+        assert_eq!(
+            hyperlight.get_interrupt_retry_delay(),
+            Duration::from_millis(7)
+        );
     }
 }

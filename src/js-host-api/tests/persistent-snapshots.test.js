@@ -76,7 +76,7 @@ describe('Persistent snapshots', () => {
 
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        expect(() => builder.setHostFunctionModules(() => [])).toThrow(
+        expect(() => builder.setHostFunctionModules([])).toThrow(
             expect.objectContaining({ code: 'ERR_CONSUMED' })
         );
         const sandbox = await proto.loadRuntime();
@@ -85,7 +85,7 @@ describe('Persistent snapshots', () => {
 
     it('prevents sharing a host-function module across sandbox builders', () => {
         const [state] = stateHostFunctionModules();
-        const modules = () => [state];
+        const modules = [state];
 
         new SandboxBuilder().setHostFunctionModules(modules);
 
@@ -102,10 +102,10 @@ describe('Persistent snapshots', () => {
         available.register('value', () => 1);
         const consumed = new HostFunctionModule('consumed');
         consumed.register('value', () => 2);
-        new SandboxBuilder().setHostFunctionModules(() => [consumed]);
+        new SandboxBuilder().setHostFunctionModules([consumed]);
 
         const builder = new SandboxBuilder();
-        expect(() => builder.setHostFunctionModules(() => [available, consumed])).toThrow(
+        expect(() => builder.setHostFunctionModules([available, consumed])).toThrow(
             expect.objectContaining({ code: 'ERR_CONSUMED' })
         );
 
@@ -117,9 +117,9 @@ describe('Persistent snapshots', () => {
         const duplicate = new HostFunctionModule('duplicate');
         duplicate.register('value', () => 1);
 
-        expect(() =>
-            new SandboxBuilder().setHostFunctionModules(() => [duplicate, duplicate])
-        ).toThrow(expect.objectContaining({ code: 'ERR_INVALID_ARG' }));
+        expect(() => new SandboxBuilder().setHostFunctionModules([duplicate, duplicate])).toThrow(
+            expect.objectContaining({ code: 'ERR_INVALID_ARG' })
+        );
 
         duplicate.register('stillAvailable', () => true);
     });
@@ -130,7 +130,7 @@ describe('Persistent snapshots', () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
 
-        expect(() => builder.setHostFunctionModules(() => [available])).toThrow(
+        expect(() => builder.setHostFunctionModules([available])).toThrow(
             expect.objectContaining({ code: 'ERR_CONSUMED' })
         );
         available.register('stillAvailable', () => true);
@@ -233,7 +233,7 @@ describe('Persistent snapshots', () => {
     it('requires host functions used by the persisted sandbox', async () => {
         const directory = await snapshotDirectory();
         const proto = await new SandboxBuilder()
-            .setHostFunctionModules(stateHostFunctionModules)
+            .setHostFunctionModules(stateHostFunctionModules())
             .build();
         const sandbox = await proto.loadRuntime();
         sandbox.addHandler(
@@ -257,7 +257,7 @@ describe('Persistent snapshots', () => {
         );
 
         const restored = await SandboxBuilder.fromSnapshot(persisted)
-            .setHostFunctionModules(stateHostFunctionModules)
+            .setHostFunctionModules(stateHostFunctionModules())
             .build();
         await expect(restored.callHandler('handler', {})).resolves.toEqual({ value: 1 });
         await restored.dispose();

@@ -21,7 +21,6 @@ limitations under the License.
 import native from './lib.js';
 
 export const {
-    __napiBindingTarget,
     HostFunctionModule,
     HostModule,
     InterruptHandle,

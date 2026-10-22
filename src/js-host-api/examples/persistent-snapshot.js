@@ -26,7 +26,7 @@ function hostFunctionModules() {
 }
 
 async function writeSnapshot() {
-    const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules).build();
+    const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
     const sandbox = await proto.loadRuntime();
     sandbox.addHandler(
         'counter',
@@ -52,7 +52,7 @@ async function writeSnapshot() {
 async function readSnapshot() {
     const snapshot = await Snapshot.checkedLoad(path, 'application-ready');
     const loaded = await SandboxBuilder.fromSnapshot(snapshot)
-        .setHostFunctionModules(hostFunctionModules)
+        .setHostFunctionModules(hostFunctionModules())
         .build();
     console.log('After restore:', await loaded.callHandler('counter', {}));
     await loaded.dispose();

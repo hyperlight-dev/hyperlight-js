@@ -85,18 +85,19 @@ but have different ownership and restore behavior.
 
 | Category | How it is provided | Where code executes | Snapshot behavior | Restore action |
 | --- | --- | --- | --- | --- |
-| Host-function module | A factory that creates `HostFunctionModule`s containing Rust closures or Node callbacks | Host process through `CallHostJsFunction` | Records the builder-selected module and function names, not implementations | Supply the factory to `SandboxBuilder` |
+| Host-function module | `HostFunctionModule`s containing Rust closures or Node callbacks | Host process through `CallHostJsFunction` | Records the supplied module and function names, not implementations | Supply fresh modules to `SandboxBuilder` |
 | Embedded JavaScript module | `JSSandbox::add_module()` / `addModule()` | Guest QuickJS runtime | A `JSSandbox` snapshot stores staged source in hyperlight-js metadata. A `LoadedJSSandbox` snapshot captures the guest module-loader map and any evaluated module state. | None; hyperlight-js restores it automatically |
 | External JavaScript module | Rust `SandboxBuilder::with_module_loader()` backed by `ResolveModule` and `LoadModule` | Guest QuickJS runtime after source is returned by the host | Loaded/evaluated state is captured, but source returned by the loader is not currently archived | Supply a compatible loader to the restoring builder when the underlying snapshot requires it |
 | Native guest module | Rust compiled into `hyperlight-js-runtime` with `rquickjs` | Guest runtime | Native module code and state are already resident in the captured guest VM | None |
 
 ### Reusable host-function definitions
 
-Define a factory once and supply it to fresh and restored builders. Each builder
-invokes the factory once, creating fresh module objects, callback implementations,
-and state. Create mutable state inside the factory to isolate it per sandbox.
-Capturing an external `Arc`, static, or JavaScript variable deliberately shares
-that state between sandboxes, which breaks the Sandbox isolation model.
+Write one function that builds the modules, and call it for each fresh or
+restored builder. A builder consumes its modules, so each call must create fresh
+module objects, callbacks, and state. Create mutable state inside the function
+to isolate it per sandbox. Capturing an external `Arc`, static, or JavaScript
+variable shares that state between sandboxes, which breaks the Sandbox isolation
+model.
 
 Rust:
 
@@ -110,14 +111,14 @@ fn host_function_modules() -> Vec<HostFunctionModule> {
 }
 
 let fresh = SandboxBuilder::new()
-    .with_host_function_modules(host_function_modules)
+    .with_host_function_modules(host_function_modules())
     .build()?
     .load_runtime()?;
 
 let snapshot =
     Snapshot::<JSSandbox>::checked_load("./snapshots", OciTag::new("with-host-functions")?)?;
 let restored = SandboxBuilder::from_snapshot(snapshot)
-    .with_host_function_modules(host_function_modules)
+    .with_host_function_modules(host_function_modules())
     .build()?;
 ```
 
@@ -137,13 +138,13 @@ function hostFunctionModules() {
 }
 
 const freshProto = await new SandboxBuilder()
-  .setHostFunctionModules(hostFunctionModules)
+  .setHostFunctionModules(hostFunctionModules())
   .build();
 const fresh = await freshProto.loadRuntime();
 
 const snapshot = await Snapshot.checkedLoad('./snapshots', 'with-host-functions');
 const restored = await SandboxBuilder.fromSnapshot(snapshot)
-  .setHostFunctionModules(hostFunctionModules)
+  .setHostFunctionModules(hostFunctionModules())
   .build();
 ```
 
@@ -172,6 +173,8 @@ Modules added with `add_module()` / `addModule()` are guest application state.
 For a `JSSandbox` snapshot, handlers and modules have not yet been transferred
 to the guest. hyperlight-js therefore stores their source in snapshot metadata
 and reconstructs the staged definitions automatically during restoration.
+hyperlight limits that metadata to 1 MiB, so `save()` fails when the staged
+sources exceed it. Load large sources into a `LoadedJSSandbox` before saving.
 
 Creating a `LoadedJSSandbox` transfers every embedded module source into the
 guest's module-loader map before handlers are registered. A loaded snapshot
@@ -229,10 +232,13 @@ the same output routing is required.
 
 ## Compatibility and trust
 
-- Snapshots are tied to their CPU architecture and hyperlight snapshot format.
+- Snapshots are tied to their CPU architecture, CPU vendor, hypervisor, and
+  hyperlight snapshot format. For example, a KVM snapshot taken on an Intel host
+  does not load on AMD or under MSHV.
 - hyperlight-js metadata is schema-versioned and records the producing package
-  version for diagnostics. Unsupported metadata schema versions are rejected
-  before starting guest execution.
+  version for diagnostics. It also records the guest runtime ABI version.
+  Unsupported metadata schema or guest ABI versions are rejected before starting
+  guest execution.
 - Digest verification detects accidental or malicious mutation, but does not
   authenticate who produced a snapshot. Authenticate snapshot artifacts through
   the distribution mechanism used by your application.
@@ -265,6 +271,9 @@ persisted `LoadedJSSandbox` uses two OCI tags:
 
 - `application-ready.hljs-base`: the runtime-ready baseline
 - `application-ready`: the loaded guest state
+
+`save()` rejects user tags ending in `.hljs-base`, so a user tag cannot replace a
+baseline.
 
 Copy both tags into the same repository or OCI layout. Push the baseline first
 so the public application tag is never published without its dependency:

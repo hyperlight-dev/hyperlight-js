@@ -119,7 +119,7 @@ Testing calculator operations:
 
 ### Host Functions
 
-Defines a reusable factory that creates fresh `HostFunctionModule` objects for
+Defines a function that creates fresh `HostFunctionModule` objects for
 each `SandboxBuilder` before loading the guest runtime:
 
 ```bash

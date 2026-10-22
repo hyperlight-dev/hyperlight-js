@@ -633,33 +633,30 @@ impl SandboxBuilderWrapper {
     /// Supply host-function modules for this sandbox.
     ///
     /// Each module is consumed and cannot be supplied to another builder.
-    /// Use a constructor function to create equivalent modules with fresh
-    /// callback implementations for another sandbox.
+    /// Build fresh modules for each sandbox, for example with a function that
+    /// returns them.
     #[napi]
     pub fn set_host_function_modules(
         &self,
-        #[napi(ts_arg_type = "() => Array<HostFunctionModuleWrapper>")] factory: Vec<
-            ClassInstance<'_, HostFunctionModuleWrapper>,
-        >,
+        modules: Vec<ClassInstance<'_, HostFunctionModuleWrapper>>,
     ) -> napi::Result<&Self> {
-        // lib.js invokes the public factory before crossing the native boundary.
         let mut builder_guard = self.inner.lock().map_err(|_| lock_error())?;
         if builder_guard.is_none() {
             return Err(consumed_error("SandboxBuilder"));
         }
 
-        for (index, module) in factory.iter().enumerate() {
-            if factory[..index]
+        for (index, module) in modules.iter().enumerate() {
+            if modules[..index]
                 .iter()
                 .any(|candidate| std::ptr::eq(&**candidate, &**module))
             {
                 return Err(invalid_arg_error(
-                    "Host-function module factory returned the same module object more than once",
+                    "Host-function modules contain the same module object more than once",
                 ));
             }
         }
 
-        let mut module_guards = factory
+        let mut module_guards = modules
             .iter()
             .map(|module| module.inner.lock().map_err(|_| lock_error()))
             .collect::<napi::Result<Vec<_>>>()?;
@@ -667,7 +664,7 @@ impl SandboxBuilderWrapper {
             return Err(consumed_error("HostFunctionModule"));
         }
 
-        let modules = module_guards
+        let taken = module_guards
             .iter_mut()
             .map(|module| {
                 module
@@ -680,7 +677,7 @@ impl SandboxBuilderWrapper {
             .ok_or_else(|| consumed_error("SandboxBuilder"))?;
         *builder_guard = Some(map_builder!(
             builder,
-            b => b.with_host_function_modules(|| modules)
+            b => b.with_host_function_modules(taken)
         ));
         Ok(self)
     }
@@ -949,6 +946,7 @@ impl ProtoJSSandboxWrapper {
     /// @param name - Module name that guest JS uses in `import * as name from "host:name"`
     /// @returns A `HostModule` for registering functions
     /// @throws If the module name is empty
+    /// @deprecated Use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
     #[napi]
     pub fn host_module(&self, name: String) -> napi::Result<HostModuleWrapper> {
         validate_module_name(&name)?;
@@ -971,6 +969,7 @@ impl ProtoJSSandboxWrapper {
     /// @param functionName - Function name within the module
     /// @param callback - `(...args) => any | Promise<any>` — the host function implementation
     /// @throws If module name or function name is empty
+    /// @deprecated Use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
     #[napi]
     #[allow(clippy::type_complexity)] // allow the type complexity here so that index.d.ts is cleaner
     pub fn register(
@@ -1714,7 +1713,7 @@ impl HostFunctionModuleWrapper {
     pub fn register(
         &self,
         name: String,
-        #[napi(ts_arg_type = "(...args: unknown[]) => unknown | Promise<unknown>")]
+        #[napi(ts_arg_type = "(...args: any[]) => unknown | Promise<unknown>")]
         func: JsHostFunction,
     ) -> napi::Result<&Self> {
         if name.is_empty() {
@@ -1809,7 +1808,7 @@ impl HostModuleWrapper {
     pub fn register(
         &self,
         name: String,
-        #[napi(ts_arg_type = "(...args: unknown[]) => unknown | Promise<unknown>")]
+        #[napi(ts_arg_type = "(...args: any[]) => unknown | Promise<unknown>")]
         func: JsHostFunction,
     ) -> napi::Result<()> {
         if name.is_empty() {
@@ -1818,6 +1817,7 @@ impl HostModuleWrapper {
 
         let wrapper = js_host_function(func);
         self.sandbox.with_inner_mut(|sandbox| {
+            #[allow(deprecated)]
             sandbox
                 .host_module(&self.module_name)
                 .register_js(name, wrapper);

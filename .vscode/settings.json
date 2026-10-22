@@ -5,8 +5,6 @@
         "hyperlight.h": "c"
     },
     "chat.tools.terminal.autoApprove": {
-        "just": true,
-        "gh": true,
-        "git rev-parse": true
+        "just": true
     }
 }

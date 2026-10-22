@@ -45,7 +45,7 @@ fn main() -> hyperlight_js::Result<()> {
 
 fn write_snapshot(path: PathBuf) -> hyperlight_js::Result<()> {
     let mut sandbox = SandboxBuilder::new()
-        .with_host_function_modules(host_function_modules)
+        .with_host_function_modules(host_function_modules())
         .build()?
         .load_runtime()?;
     sandbox.add_handler(
@@ -76,7 +76,7 @@ fn read_snapshot(path: PathBuf) -> hyperlight_js::Result<()> {
     let snapshot =
         Snapshot::<LoadedJSSandbox>::checked_load(path, OciTag::new("application-ready")?)?;
     let mut loaded = SandboxBuilder::from_snapshot(snapshot)
-        .with_host_function_modules(host_function_modules)
+        .with_host_function_modules(host_function_modules())
         .build()?;
     let result = loaded.handle_event("counter", "{}".to_owned(), None)?;
     println!("After restore: {result}");

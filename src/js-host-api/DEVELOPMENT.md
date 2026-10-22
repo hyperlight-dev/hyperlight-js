@@ -48,6 +48,13 @@ just build-all
 just test-all release
 ```
 
+Tests register runtime and loaded sandboxes with `trackSandbox()` from
+`tests/test-helpers.js` so they are disposed after each test, including wrappers
+returned by `unload()`. Do not rely on JavaScript garbage collection to release
+VMs. Windows ARM64 WHP currently supports only 64 concurrent partitions; Vitest
+also runs test files serially on that host because Hyperlight's partition counter
+is process-local.
+
 ## Publishing to npm
 
 The package is published to npmjs.com as `@hyperlight-dev/js-host-api` with platform-specific binary packages using [npm trusted publishing (OIDC)](https://docs.npmjs.com/trusted-publishers).

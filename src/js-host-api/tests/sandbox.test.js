@@ -1,7 +1,7 @@
 // Basic sandbox functionality tests
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SandboxBuilder } from '../lib.js';
-import { expectThrowsWithCode, expectRejectsWithCode } from './test-helpers.js';
+import { expectThrowsWithCode, expectRejectsWithCode, trackSandbox } from './test-helpers.js';
 
 // ── SandboxBuilder ───────────────────────────────────────────────────
 
@@ -87,14 +87,14 @@ describe('ProtoJSSandbox', () => {
     it('should load the JavaScript runtime', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         expect(sandbox).toBeDefined();
     });
 
     it('should throw CONSUMED on double loadRuntime()', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        await proto.loadRuntime();
+        await trackSandbox(proto.loadRuntime());
         await expectRejectsWithCode(proto.loadRuntime(), 'ERR_CONSUMED');
     });
 });
@@ -107,7 +107,7 @@ describe('JSSandbox', () => {
     beforeEach(async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        sandbox = await proto.loadRuntime();
+        sandbox = await trackSandbox(proto.loadRuntime());
     });
 
     it('should add a handler without throwing', () => {
@@ -138,7 +138,7 @@ describe('JSSandbox', () => {
 
     it('should get a loaded sandbox', async () => {
         sandbox.addHandler('handler', 'function handler(e) { return e; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         expect(loaded).toBeDefined();
     });
 
@@ -149,13 +149,13 @@ describe('JSSandbox', () => {
 
     it('should throw CONSUMED on double getLoadedSandbox()', async () => {
         sandbox.addHandler('handler', 'function handler(e) { return e; }');
-        await sandbox.getLoadedSandbox();
+        await trackSandbox(sandbox.getLoadedSandbox());
         await expectRejectsWithCode(sandbox.getLoadedSandbox(), 'ERR_CONSUMED');
     });
 
     it('should throw CONSUMED on operations after getLoadedSandbox()', async () => {
         sandbox.addHandler('handler', 'function handler(e) { return e; }');
-        await sandbox.getLoadedSandbox();
+        await trackSandbox(sandbox.getLoadedSandbox());
         expectThrowsWithCode(
             () => sandbox.addHandler('another', 'function handler(e) { return e; }'),
             'ERR_CONSUMED'
@@ -171,7 +171,7 @@ describe('LoadedJSSandbox', () => {
     beforeEach(async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `
@@ -181,7 +181,7 @@ describe('LoadedJSSandbox', () => {
             }
         `
         );
-        loaded = await sandbox.getLoadedSandbox();
+        loaded = await trackSandbox(sandbox.getLoadedSandbox());
     });
 
     it('should handle events and return correct data', async () => {
@@ -223,17 +223,17 @@ describe('LoadedJSSandbox', () => {
     });
 
     it('should unload back to JSSandbox', async () => {
-        const jsSandbox = await loaded.unload();
+        const jsSandbox = await trackSandbox(loaded.unload());
         expect(jsSandbox).toBeDefined();
     });
 
     it('should throw CONSUMED on double unload()', async () => {
-        await loaded.unload();
+        await trackSandbox(loaded.unload());
         await expectRejectsWithCode(loaded.unload(), 'ERR_CONSUMED');
     });
 
     it('should throw CONSUMED on callHandler after unload', async () => {
-        await loaded.unload();
+        await trackSandbox(loaded.unload());
         await expectRejectsWithCode(
             loaded.callHandler('handler', {}, { gc: false }),
             'ERR_CONSUMED'
@@ -260,7 +260,7 @@ describe('Calculator example', () => {
     beforeEach(async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `
@@ -283,7 +283,7 @@ describe('Calculator example', () => {
             }
         `
         );
-        loaded = await sandbox.getLoadedSandbox();
+        loaded = await trackSandbox(sandbox.getLoadedSandbox());
     });
 
     it('should add numbers', async () => {
@@ -329,7 +329,7 @@ describe('JSSandbox.dispose()', () => {
     it('should make subsequent method calls throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
 
         sandbox.dispose();
 
@@ -342,7 +342,7 @@ describe('JSSandbox.dispose()', () => {
     it('should be a no-op when called twice', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
 
         sandbox.dispose();
         sandbox.dispose(); // should not throw
@@ -351,7 +351,7 @@ describe('JSSandbox.dispose()', () => {
     it('should make poisoned getter throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
 
         sandbox.dispose();
 
@@ -363,9 +363,9 @@ describe('LoadedJSSandbox.dispose()', () => {
     it('should make subsequent callHandler reject with ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return { ok: true }; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         await loaded.dispose();
 
@@ -375,9 +375,9 @@ describe('LoadedJSSandbox.dispose()', () => {
     it('should be a no-op when called twice', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         await loaded.dispose();
         await loaded.dispose(); // should not throw
@@ -386,9 +386,9 @@ describe('LoadedJSSandbox.dispose()', () => {
     it('should make poisoned getter throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         await loaded.dispose();
 
@@ -398,9 +398,9 @@ describe('LoadedJSSandbox.dispose()', () => {
     it('should make interruptHandle getter throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         await loaded.dispose();
 
@@ -410,9 +410,9 @@ describe('LoadedJSSandbox.dispose()', () => {
     it('should make lastCallStats getter throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         await loaded.dispose();
 
@@ -426,11 +426,11 @@ describe('LoadedJSSandbox.unload()', () => {
     it('should make poisoned getter throw ERR_CONSUMED after unload', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
-        await loaded.unload();
+        await trackSandbox(loaded.unload());
 
         expectThrowsWithCode(() => loaded.poisoned, 'ERR_CONSUMED');
     });
@@ -438,11 +438,11 @@ describe('LoadedJSSandbox.unload()', () => {
     it('should make interruptHandle getter throw ERR_CONSUMED after unload', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
-        await loaded.unload();
+        await trackSandbox(loaded.unload());
 
         expectThrowsWithCode(() => loaded.interruptHandle, 'ERR_CONSUMED');
     });
@@ -450,11 +450,11 @@ describe('LoadedJSSandbox.unload()', () => {
     it('should make lastCallStats getter throw ERR_CONSUMED after unload', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler() { return {}; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
-        await loaded.unload();
+        await trackSandbox(loaded.unload());
 
         expectThrowsWithCode(() => loaded.lastCallStats, 'ERR_CONSUMED');
     });
@@ -475,7 +475,7 @@ describe('setHostPrintFn', () => {
             messages.push(msg);
         });
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `function handler(event) {
@@ -483,7 +483,7 @@ describe('setHostPrintFn', () => {
                 return event;
             }`
         );
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         await loaded.callHandler('handler', {});
 
         expect(messages.join('')).toContain('Hello from guest!');
@@ -495,7 +495,7 @@ describe('setHostPrintFn', () => {
             messages.push(msg);
         });
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `function handler(event) {
@@ -505,7 +505,7 @@ describe('setHostPrintFn', () => {
                 return event;
             }`
         );
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         await loaded.callHandler('handler', {});
 
         const combined = messages.join('');
@@ -521,7 +521,7 @@ describe('setHostPrintFn', () => {
             .setHostPrintFn((msg) => firstMessages.push(msg))
             .setHostPrintFn((msg) => secondMessages.push(msg));
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `function handler(event) {
@@ -529,7 +529,7 @@ describe('setHostPrintFn', () => {
                 return event;
             }`
         );
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         await loaded.callHandler('handler', {});
 
         expect(firstMessages.length).toBe(0);
@@ -541,7 +541,7 @@ describe('setHostPrintFn', () => {
             throw new Error('print callback exploded');
         });
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `function handler(event) {
@@ -549,7 +549,7 @@ describe('setHostPrintFn', () => {
                 return { survived: true };
             }`
         );
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         // Spy on console.error to suppress noise and verify the error is logged
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

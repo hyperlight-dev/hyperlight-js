@@ -1,7 +1,7 @@
 // Timeout and interrupt tests
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SandboxBuilder } from '../lib.js';
-import { expectRejectsWithCode } from './test-helpers.js';
+import { expectRejectsWithCode, trackSandbox } from './test-helpers.js';
 
 describe('Wall Clock Timeout', () => {
     let loaded;
@@ -10,7 +10,7 @@ describe('Wall Clock Timeout', () => {
     beforeEach(async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `
@@ -29,7 +29,7 @@ describe('Wall Clock Timeout', () => {
             }
         `
         );
-        loaded = await sandbox.getLoadedSandbox();
+        loaded = await trackSandbox(sandbox.getLoadedSandbox());
         snapshot = await loaded.snapshot();
     });
 
@@ -114,7 +114,7 @@ describe('CPU Time Timeout', () => {
     beforeEach(async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `
@@ -132,7 +132,7 @@ describe('CPU Time Timeout', () => {
             }
         `
         );
-        loaded = await sandbox.getLoadedSandbox();
+        loaded = await trackSandbox(sandbox.getLoadedSandbox());
     });
 
     it('should complete fast handler before CPU timeout', async () => {
@@ -182,7 +182,7 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
     beforeEach(async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler(
             'handler',
             `
@@ -200,7 +200,7 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
             }
         `
         );
-        loaded = await sandbox.getLoadedSandbox();
+        loaded = await trackSandbox(sandbox.getLoadedSandbox());
         snapshot = await loaded.snapshot();
     });
 
@@ -366,9 +366,9 @@ describe('Interrupt Handle', () => {
     it('should provide an interrupt handle', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler(e) { return e; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         // interruptHandle is now a getter, not a method
         const handle = loaded.interruptHandle;
@@ -379,7 +379,7 @@ describe('Interrupt Handle', () => {
     it('should kill a running handler via interruptHandle', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         // Handler that runs for 10 seconds — plenty of time for kill() to fire
         sandbox.addHandler(
             'handler',
@@ -391,7 +391,7 @@ describe('Interrupt Handle', () => {
             }
         `
         );
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const handle = loaded.interruptHandle;
 
         // Start the handler, then kill it from a timer
@@ -406,9 +406,9 @@ describe('Interrupt Handle', () => {
     it('should reject empty handler name on callHandler', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', 'function handler(e) { return e; }');
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         await expectRejectsWithCode(
             loaded.callHandler('', {}, { wallClockTimeoutMs: 1000 }),

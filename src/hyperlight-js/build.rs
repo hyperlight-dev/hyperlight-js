@@ -31,7 +31,11 @@ use std::{env, fs};
 use serde_json::Value;
 
 mod runtime_build;
-use runtime_build::{guest_cflags, runtime_source, select_binary, RuntimeSource};
+use runtime_build::{runtime_source, select_binary, RuntimeSource};
+
+// cargo-hyperlight supplies libc headers. QuickJS still needs threading disabled
+// and the monotonic clock definitions enabled.
+const QUICKJS_CFLAGS: &str = "-D__wasi__=1 -D_POSIX_MONOTONIC_CLOCK";
 
 fn main() {
     // Mirror the hypervisor cfg aliases used by hyperlight-host so that
@@ -226,7 +230,7 @@ fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
         .canonicalize()
         .expect("hyperlight-js-runtime include directory not found");
     println!("cargo:rerun-if-changed={}", include_dir.display());
-    let cflags = guest_cflags(&include_dir);
+    let cflags = format!("-I{} {QUICKJS_CFLAGS}", include_dir.display()).replace("\\", "\\\\");
 
     let mut cargo_cmd = cargo_hyperlight::cargo().unwrap();
     let cmd = cargo_cmd

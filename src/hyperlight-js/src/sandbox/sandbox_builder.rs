@@ -19,17 +19,41 @@ use std::time::Duration;
 use hyperlight_common::virtq::G2H_LOWER_SLOT_COUNT;
 use hyperlight_common::vmem::PAGE_SIZE;
 use hyperlight_host::sandbox::SandboxConfiguration;
-use hyperlight_host::{is_hypervisor_present, GuestBinary, HyperlightError, Result};
+use hyperlight_host::{
+    is_hypervisor_present, new_error, GuestBinary, HyperlightError, Result,
+    SandboxBuilder as HyperlightSandboxBuilder,
+};
 
-use super::proto_js_sandbox::ProtoJSSandbox;
+use super::host_fn::{
+    host_function_dispatch, host_function_manifest, host_modules_by_name, HostFunctionModule,
+};
+use super::module_loader::{
+    ExternalModuleLoader, LOAD_MODULE_HOST_FUNCTION, RESOLVE_MODULE_HOST_FUNCTION,
+};
+use super::proto_js_sandbox::{current_time_micros, ProtoJSSandbox};
+use super::snapshot::{restore_target, Snapshot, SnapshotTarget};
 use crate::HostPrintFn;
 
-/// A builder for a ProtoJSSandbox.
+/// Builder source for a sandbox that starts the bundled JavaScript runtime.
+#[derive(Debug, Default)]
+pub struct NewSandbox;
+
+/// Configures a new JavaScript sandbox, or one restored from a [`Snapshot`].
 ///
-/// Transport setters record choices; [`Self::get_config`] and [`Self::build`]
-/// resolve buffer sizes, pool budgets, and descriptor counts.
-pub struct SandboxBuilder {
+/// [`SandboxBuilder::new`] builds a [`ProtoJSSandbox`].
+/// [`SandboxBuilder::from_snapshot`] builds the sandbox type the snapshot captured.
+/// A snapshot's memory layout overrides heap, scratch, and transport settings.
+///
+/// Transport setters record choices. [`Self::get_config`] and
+/// [`SandboxBuilder::build`] resolve buffer sizes, pool budgets, and descriptor
+/// counts.
+pub struct SandboxBuilder<S = NewSandbox> {
+    source: S,
     base_config: SandboxConfiguration,
+    #[cfg(crashdump)]
+    guest_core_dump: Option<bool>,
+    #[cfg(gdb)]
+    guest_debug_info: Option<hyperlight_host::sandbox::config::DebugInfo>,
     host_print_fn: Option<HostPrintFn>,
     /// Requested legacy input capacity in bytes, also used for host replies.
     legacy_input_capacity: usize,
@@ -43,6 +67,8 @@ pub struct SandboxBuilder {
     input_transport_buffer_size: usize,
     /// Requested output buffer size in bytes, normalized during resolution.
     output_transport_buffer_size: usize,
+    host_function_modules: Vec<HostFunctionModule>,
+    module_loader: Option<ExternalModuleLoader>,
 }
 
 /// The minimum scratch size for the JS runtime sandbox.
@@ -75,15 +101,19 @@ const DEFAULT_TRANSPORT_BUFFER_SIZE: usize = 16 * 1024;
 /// The previous 8 KiB minimum for byte-based buffer configuration.
 const MIN_LEGACY_BUFFER_SIZE: usize = 8 * 1024;
 
-impl SandboxBuilder {
-    /// Create a new SandboxBuilder
-    pub fn new() -> Self {
+impl<S> SandboxBuilder<S> {
+    fn with_source(source: S) -> Self {
         let mut config = SandboxConfiguration::default();
         config.set_heap_size(MIN_HEAP_SIZE);
         config.set_scratch_size(MIN_SCRATCH_SIZE);
 
         Self {
+            source,
             base_config: config,
+            #[cfg(crashdump)]
+            guest_core_dump: None,
+            #[cfg(gdb)]
+            guest_debug_info: None,
             host_print_fn: None,
             legacy_input_capacity: DEFAULT_LEGACY_BUFFER_SIZE,
             legacy_output_capacity: DEFAULT_LEGACY_BUFFER_SIZE,
@@ -91,12 +121,70 @@ impl SandboxBuilder {
             output_transport_buffer_size: DEFAULT_TRANSPORT_BUFFER_SIZE,
             requested_input_pool_pages: None,
             requested_output_pool_pages: None,
+            host_function_modules: Vec::new(),
+            module_loader: None,
         }
+    }
+
+    /// Supply the host-function modules for this sandbox.
+    ///
+    /// Each module moves into the builder, so one module cannot be supplied to
+    /// two builders. Build fresh modules for each sandbox, for example with a
+    /// function that returns them. Capturing an [`std::sync::Arc`] or static
+    /// mutable state in a callback shares that state between sandboxes.
+    ///
+    /// ```compile_fail
+    /// use hyperlight_js::{HostFunctionModule, SandboxBuilder};
+    ///
+    /// let module = HostFunctionModule::new("host:example");
+    /// let _first = SandboxBuilder::new().with_host_function_modules([module]);
+    /// let _second = SandboxBuilder::new().with_host_function_modules([module]);
+    /// ```
+    pub fn with_host_function_modules(
+        mut self,
+        modules: impl IntoIterator<Item = HostFunctionModule>,
+    ) -> Self {
+        self.host_function_modules.extend(modules);
+        self
+    }
+
+    /// Install an external JavaScript module loader for fresh or restored sandboxes.
+    pub fn with_module_loader<Fs: crate::resolver::FileSystem + Clone + 'static>(
+        mut self,
+        file_system: Fs,
+    ) -> Self {
+        self.module_loader = Some(ExternalModuleLoader::new(file_system));
+        self
     }
 
     /// Set the host print function
     pub fn with_host_print_fn(mut self, host_print_fn: HostPrintFn) -> Self {
         self.host_print_fn = Some(host_print_fn);
+        self
+    }
+
+    /// Sets the offset from `SIGRTMIN` to determine the real-time signal used for
+    /// interrupting the VCPU thread.
+    ///
+    /// The final signal number is computed as `SIGRTMIN + offset`, and it must fall within
+    /// the valid range of real-time signals supported by the host system.
+    ///
+    /// Returns Ok(()) if the offset is valid, or an error if it exceeds the maximum real-time signal number.
+    #[cfg(target_os = "linux")]
+    pub fn set_interrupt_vcpu_sigrtmin_offset(&mut self, offset: u8) -> Result<()> {
+        self.base_config
+            .set_interrupt_vcpu_sigrtmin_offset(offset)?;
+        Ok(())
+    }
+
+    /// Sets the interrupt retry delay
+    /// This controls the delay between sending signals to the VCPU thread to interrupt it.
+    ///
+    /// Only available for the hypervisor backends that use retrying interrupts
+    /// (KVM and MSHV on Linux, Hypervisor.framework on macOS).
+    #[cfg(any(kvm, mshv3, hvf))]
+    pub fn with_interrupt_retry_delay(mut self, delay: Duration) -> Self {
+        self.base_config.set_interrupt_retry_delay(delay);
         self
     }
 
@@ -194,32 +282,8 @@ impl SandboxBuilder {
         self
     }
 
-    /// Sets the offset from `SIGRTMIN` to determine the real-time signal used for
-    /// interrupting the VCPU thread.
-    ///
-    /// The final signal number is computed as `SIGRTMIN + offset`, and it must fall within
-    /// the valid range of real-time signals supported by the host system.
-    ///
-    /// Returns Ok(()) if the offset is valid, or an error if it exceeds the maximum real-time signal number.
-    #[cfg(target_os = "linux")]
-    pub fn set_interrupt_vcpu_sigrtmin_offset(&mut self, offset: u8) -> Result<()> {
-        self.base_config
-            .set_interrupt_vcpu_sigrtmin_offset(offset)?;
-        Ok(())
-    }
-
-    /// Sets the interrupt retry delay
-    /// This controls the delay between sending signals to the VCPU thread to interrupt it.
-    ///
-    /// Only available for the hypervisor backends that use retrying interrupts
-    /// (KVM and MSHV on Linux, Hypervisor.framework on macOS).
-    #[cfg(any(kvm, mshv3, hvf))]
-    pub fn with_interrupt_retry_delay(mut self, delay: Duration) -> Self {
-        self.base_config.set_interrupt_retry_delay(delay);
-        self
-    }
-
-    /// Get an owned snapshot of the effective configuration used by [`Self::build`].
+    /// Get an owned snapshot of the effective configuration used by
+    /// [`SandboxBuilder::build`] for a new sandbox.
     ///
     /// Resolves transport sizes without changing the builder. Modifying the
     /// returned value does not affect subsequent configuration or builds.
@@ -236,6 +300,7 @@ impl SandboxBuilder {
     #[cfg(crashdump)]
     pub fn with_crashdump_enabled(mut self, enabled: bool) -> Self {
         self.base_config.set_guest_core_dump(enabled);
+        self.guest_core_dump = Some(enabled);
         self
     }
 
@@ -259,19 +324,8 @@ impl SandboxBuilder {
     pub fn with_debugging_enabled(mut self, port: u16) -> Self {
         let debug_info = hyperlight_host::sandbox::config::DebugInfo { port };
         self.base_config.set_guest_debug_info(debug_info);
+        self.guest_debug_info = Some(debug_info);
         self
-    }
-
-    /// Build the ProtoJSSandbox
-    pub fn build(self) -> Result<ProtoJSSandbox> {
-        if !is_hypervisor_present() {
-            return Err(HyperlightError::NoHypervisorFound());
-        }
-
-        let config = self.get_config();
-        let guest_binary = GuestBinary::Buffer(super::JSRUNTIME.to_vec());
-        let proto_js_sandbox = ProtoJSSandbox::new(guest_binary, Some(config), self.host_print_fn)?;
-        Ok(proto_js_sandbox)
     }
 
     /// Normalizes buffer sizes, applies explicit pool budgets or legacy
@@ -339,8 +393,134 @@ impl SandboxBuilder {
     }
 }
 
-impl Default for SandboxBuilder {
+impl SandboxBuilder<NewSandbox> {
+    /// Create a builder for a new sandbox.
+    pub fn new() -> Self {
+        Self::with_source(NewSandbox)
+    }
+
+    /// Build the ProtoJSSandbox
+    pub fn build(self) -> Result<ProtoJSSandbox> {
+        if !is_hypervisor_present() {
+            return Err(HyperlightError::NoHypervisorFound());
+        }
+
+        let config = self.get_config();
+        let host_modules = host_modules_by_name(self.host_function_modules)?;
+        let guest_binary = GuestBinary::Buffer(super::JSRUNTIME.to_vec());
+        let proto_js_sandbox = ProtoJSSandbox::new(
+            guest_binary,
+            Some(config),
+            self.host_print_fn,
+            host_modules,
+            self.module_loader,
+        )?;
+        Ok(proto_js_sandbox)
+    }
+}
+
+impl<T: SnapshotTarget> SandboxBuilder<Snapshot<T>> {
+    /// Create a builder that restores `snapshot`.
+    ///
+    /// The snapshot's memory layout overrides heap, scratch, and transport
+    /// settings. Supply every host function and module loader the snapshot uses.
+    pub fn from_snapshot(snapshot: Snapshot<T>) -> Self {
+        Self::with_source(snapshot)
+    }
+
+    /// Restore the snapshot.
+    ///
+    /// Checks host-function requirements before running the guest.
+    pub fn build(self) -> Result<T> {
+        if !is_hypervisor_present() {
+            return Err(HyperlightError::NoHypervisorFound());
+        }
+        let mut builder = self
+            .apply_runtime_config(HyperlightSandboxBuilder::from_snapshot(self.source.inner()))?;
+        let snapshot = self.source;
+        let host_modules = host_modules_by_name(self.host_function_modules)?;
+        let available_host_functions = host_function_manifest(&host_modules);
+        snapshot
+            .metadata()
+            .validate_host_functions(&available_host_functions)?;
+
+        if let Some(host_print_fn) = self.host_print_fn {
+            builder = builder.host_print(host_print_fn);
+        }
+        builder = builder
+            .host_function("CurrentTimeMicros", current_time_micros)
+            .host_function("CallHostJsFunction", host_function_dispatch(host_modules));
+        if let Some(module_loader) = self.module_loader {
+            builder = module_loader.apply(builder);
+        }
+
+        let sandbox = builder.build().map_err(|error| match &error {
+            HyperlightError::SnapshotHostFunctionMismatch { missing, .. }
+                if missing.iter().any(|name| {
+                    name == RESOLVE_MODULE_HOST_FUNCTION || name == LOAD_MODULE_HOST_FUNCTION
+                }) =>
+            {
+                new_error!(
+                    "Snapshot requires a module loader; call with_module_loader() on SandboxBuilder ({})",
+                    error
+                )
+            }
+            _ => error,
+        })?;
+        restore_target(sandbox, &snapshot, available_host_functions)
+    }
+}
+
+impl<S> SandboxBuilder<S> {
+    /// Apply settings that the snapshot layout does not fix.
+    fn apply_runtime_config(
+        &self,
+        builder: HyperlightSandboxBuilder,
+    ) -> Result<HyperlightSandboxBuilder> {
+        #[cfg(target_os = "linux")]
+        let builder = builder.interrupt_vcpu_sigrtmin_offset(
+            self.base_config.get_interrupt_vcpu_sigrtmin_offset(),
+        )?;
+        #[cfg(any(kvm, mshv3))]
+        let builder = builder.interrupt_retry_delay(self.base_config.get_interrupt_retry_delay());
+        #[cfg(crashdump)]
+        let builder = match self.guest_core_dump {
+            Some(enabled) => builder.guest_core_dump(enabled),
+            None => builder,
+        };
+        #[cfg(gdb)]
+        let builder = match self.guest_debug_info {
+            Some(debug_info) => builder.guest_debug_info(debug_info),
+            None => builder,
+        };
+        Ok(builder)
+    }
+}
+
+impl Default for SandboxBuilder<NewSandbox> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(all(test, any(kvm, mshv3)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_config_reaches_hyperlight_builder() {
+        let mut builder =
+            SandboxBuilder::new().with_interrupt_retry_delay(Duration::from_millis(7));
+        builder.set_interrupt_vcpu_sigrtmin_offset(3).unwrap();
+
+        let hyperlight = builder
+            .apply_runtime_config(HyperlightSandboxBuilder::from_bytes(Vec::new()))
+            .unwrap();
+
+        assert_eq!(hyperlight.get_interrupt_vcpu_sigrtmin_offset(), 3);
+        assert_eq!(
+            hyperlight.get_interrupt_retry_delay(),
+            Duration::from_millis(7)
+        );
     }
 }

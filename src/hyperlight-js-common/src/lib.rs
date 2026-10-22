@@ -77,6 +77,15 @@ pub const TAG_JSON_WITH_BINARIES: u8 = 0x02;
 /// Example: `{"__bin__": 0}` means "insert sidecar blob 0 here".
 pub const PLACEHOLDER_BIN: &str = "__bin__";
 
+/// Version of the guest functions the host calls, such as
+/// `RegisterHostModules`, `register_module`, `register_handler`, and
+/// `RunHandler`, and of the payload formats they exchange.
+///
+/// Increment it whenever any of them changes incompatibly. Persisted snapshots
+/// carry the guest runtime that produced them, and the host rejects snapshots
+/// recorded with another version.
+pub const GUEST_ABI_VERSION: u32 = 1;
+
 // ── Error type ───────────────────────────────────────────────────────
 
 /// Lightweight decoding error — `no_std`-compatible (no `anyhow`, no `std`).

@@ -21,20 +21,15 @@ limitations under the License.
 import native from './lib.js';
 
 export const {
+    HostFunctionModule,
     HostModule,
-    HostModuleWrapper,
     InterruptHandle,
-    InterruptHandleWrapper,
     JSSandbox,
-    JSSandboxWrapper,
     LoadedJSSandbox,
-    LoadedJSSandboxWrapper,
     ProtoJSSandbox,
-    ProtoJSSandboxWrapper,
     SandboxBuilder,
-    SandboxBuilderWrapper,
+    SandboxStatus,
     Snapshot,
-    SnapshotWrapper,
 } = native;
 
 export default native;

@@ -22,6 +22,8 @@ use serde::ser::SerializeSeq;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+use super::snapshot::HostFunctionManifest;
+
 // Unlike hyperlight-host's Function, this Function trait uses `serde`'s Serialize and DeserializeOwned traits for input and output types.
 
 /// A trait representing a host function that can be called from the guest JavaScript code.
@@ -51,10 +53,61 @@ where
     }
 }
 
-type JsonFn = std::sync::Arc<dyn Fn(String) -> crate::Result<String> + Send + Sync>;
+type JsonFn = Box<dyn Fn(String) -> crate::Result<String> + Send + Sync>;
 
 /// Re-export the unified return type from the common crate.
 pub use hyperlight_js_common::FnReturn;
+
+/// Expose a logical host-function manifest to the guest module loader.
+pub(crate) fn register_host_function_manifest(
+    sandbox: &mut hyperlight_host::Sandbox,
+    manifest: &HostFunctionManifest,
+) -> crate::Result<()> {
+    let manifest_json = serde_json::to_string(manifest)?;
+    sandbox.call("RegisterHostModules", manifest_json)
+}
+
+/// Return the registered host functions grouped by module.
+pub(crate) fn host_function_manifest(
+    modules: &HashMap<String, HostModule>,
+) -> HostFunctionManifest {
+    modules
+        .iter()
+        .map(|(module, functions)| {
+            let mut functions = functions
+                .function_names()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            functions.sort();
+            (module.clone(), functions)
+        })
+        .collect()
+}
+
+/// Build the single Hyperlight callback that dispatches logical host functions.
+pub(crate) fn host_function_dispatch(
+    modules: HashMap<String, HostModule>,
+) -> impl Fn(String, String, Vec<u8>, Vec<Bytes>) -> crate::Result<Vec<u8>> + Send + Sync + 'static
+{
+    move |module_name, function_name, args_json, binaries| {
+        let args_json = String::from_utf8(args_json).map_err(|error| {
+            crate::new_error!("Invalid UTF-8 in host function arguments: {error}")
+        })?;
+        let module = modules
+            .get(&module_name)
+            .ok_or_else(|| crate::new_error!("Host module '{}' not found", module_name))?;
+        module
+            .call(&function_name, args_json, Some(binaries))
+            .map_err(|error| {
+                crate::new_error!(
+                    "Error calling host function '{}' in module '{}': {}",
+                    function_name,
+                    module_name,
+                    error
+                )
+            })
+    }
+}
 
 /// The closure type for JS bridge host functions.
 ///
@@ -62,14 +115,12 @@ pub use hyperlight_js_common::FnReturn;
 /// still in place) and the decoded individual binary blobs. This avoids a
 /// redundant stringify→parse round-trip that would occur if we passed a
 /// pre-processed JSON string.
-type BinaryFn =
-    std::sync::Arc<dyn Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync>;
+type BinaryFn = Box<dyn Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync>;
 
 /// A registered host function — either typed (serde) or JS bridge.
 ///
 /// This enum allows a single `HashMap` to store both variants, eliminating
 /// the need for parallel maps and cross-removal bookkeeping.
-#[derive(Clone)]
 enum HostFn {
     /// Typed: receives a JSON args string, deserializes via serde,
     /// returns a JSON result string. Does not support binary args.
@@ -82,7 +133,7 @@ enum HostFn {
 fn type_erased<Output: Serialize, Args: DeserializeOwned>(
     func: impl Function<Output, Args> + Send + Sync + 'static,
 ) -> JsonFn {
-    std::sync::Arc::new(move |args: String| {
+    Box::new(move |args: String| {
         let args: Args = serde_json::from_str(&args)?;
         let output: Output = func.call(args);
         Ok(serde_json::to_string(&output)?)
@@ -106,7 +157,7 @@ pub(crate) fn decode_binaries(data: Vec<Bytes>) -> crate::Result<Vec<Vec<u8>>> {
 }
 
 /// A module containing host functions that can be called from the guest JavaScript code.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct HostModule {
     functions: HashMap<String, HostFn>,
 }
@@ -124,6 +175,10 @@ impl Serialize for HostModule {
 }
 
 impl HostModule {
+    pub(crate) fn function_names(&self) -> impl Iterator<Item = &str> {
+        self.functions.keys().map(String::as_str)
+    }
+
     /// Register a typed host function that can be called from the guest
     /// JavaScript code.
     ///
@@ -164,7 +219,7 @@ impl HostModule {
         func: impl Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync + 'static,
     ) -> &mut Self {
         self.functions
-            .insert(name.into(), HostFn::JsBridge(std::sync::Arc::new(func)));
+            .insert(name.into(), HostFn::JsBridge(Box::new(func)));
         self
     }
 
@@ -231,8 +286,87 @@ impl HostModule {
     }
 }
 
+/// A named collection of host functions exposed to one JavaScript sandbox.
+///
+/// Host-function modules execute in the host process through
+/// `CallHostJsFunction`. They are distinct from native modules compiled into the
+/// guest runtime and JavaScript source modules executed inside the guest. Define
+/// a constructor function when multiple sandboxes need equivalent modules; each
+/// sandbox must receive a newly constructed module and callback implementation.
+pub struct HostFunctionModule {
+    name: String,
+    module: HostModule,
+}
+
+impl HostFunctionModule {
+    /// Create an empty host-function module with the supplied import name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            module: HostModule::default(),
+        }
+    }
+
+    /// Return the exact module name visible to guest JavaScript.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Register a typed host function on this module.
+    pub fn register<Output: Serialize, Args: DeserializeOwned>(
+        &mut self,
+        name: impl Into<String>,
+        func: impl Function<Output, Args> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.module.register(name, func);
+        self
+    }
+
+    /// Register a JavaScript-bridge host function on this module.
+    #[doc(hidden)]
+    pub fn register_js(
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.module.register_js(name, func);
+        self
+    }
+}
+
+impl std::fmt::Debug for HostFunctionModule {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HostFunctionModule")
+            .field("name", &self.name)
+            .field(
+                "functions",
+                &self.module.function_names().collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+pub(crate) fn host_modules_by_name(
+    modules: Vec<HostFunctionModule>,
+) -> crate::Result<HashMap<String, HostModule>> {
+    let mut selected = HashMap::with_capacity(modules.len());
+    for HostFunctionModule { name, module } in modules {
+        if selected.contains_key(&name) {
+            return Err(crate::new_error!(
+                "Duplicate host-function module '{}'",
+                name
+            ));
+        }
+        selected.insert(name, module);
+    }
+    Ok(selected)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     /// Hyperlight's cursor handles byte-sized segments and interspersed empties.
@@ -256,6 +390,13 @@ mod tests {
         }
     }
 
+    fn stateful_modules() -> Vec<HostFunctionModule> {
+        let calls = AtomicUsize::new(0);
+        let mut module = HostFunctionModule::new("state");
+        module.register("next", move || calls.fetch_add(1, Ordering::Relaxed) + 1);
+        vec![module]
+    }
+
     #[test]
     fn call_typed_no_binaries() {
         let mut module = HostModule::default();
@@ -268,6 +409,67 @@ mod tests {
             .unwrap();
         assert_eq!(result[0], hyperlight_js_common::TAG_JSON);
         assert_eq!(&result[1..], b"7");
+    }
+
+    #[test]
+    fn modules_select_all_functions() {
+        let mut module = HostFunctionModule::new("math");
+        module
+            .register("add", |a: i32, b: i32| a + b)
+            .register("multiply", |a: i32, b: i32| a * b);
+
+        let selected = host_modules_by_name(vec![module]).unwrap();
+
+        assert_eq!(
+            host_function_manifest(&selected).get("math"),
+            Some(&vec!["add".to_owned(), "multiply".to_owned()])
+        );
+    }
+
+    #[test]
+    fn repeated_factory_calls_create_independent_callback_state() {
+        let first = host_modules_by_name(stateful_modules())
+            .unwrap()
+            .remove("state")
+            .unwrap();
+        let second = host_modules_by_name(stateful_modules())
+            .unwrap()
+            .remove("state")
+            .unwrap();
+
+        let first_call = hyperlight_js_common::encode_json_return("1");
+        let second_call = hyperlight_js_common::encode_json_return("2");
+
+        assert_eq!(
+            first.call("next", "null".to_owned(), None).unwrap(),
+            first_call
+        );
+        assert_eq!(
+            first.call("next", "null".to_owned(), None).unwrap(),
+            second_call
+        );
+        assert_eq!(
+            second.call("next", "null".to_owned(), None).unwrap(),
+            first_call
+        );
+    }
+
+    #[test]
+    fn duplicate_module_names_are_rejected() {
+        let modules = vec![
+            HostFunctionModule::new("math"),
+            HostFunctionModule::new("math"),
+        ];
+
+        let result = host_modules_by_name(modules);
+        let error = match result {
+            Ok(_) => panic!("duplicate host-function modules were unexpectedly accepted"),
+            Err(error) => error,
+        };
+
+        assert!(error
+            .to_string()
+            .contains("Duplicate host-function module 'math'"));
     }
 
     #[test]

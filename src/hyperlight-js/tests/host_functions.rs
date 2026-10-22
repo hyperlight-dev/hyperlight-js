@@ -15,7 +15,11 @@ limitations under the License.
 */
 //! Test for host modules / functions.
 
-use hyperlight_js::{SandboxBuilder, Script};
+#![allow(clippy::disallowed_macros)]
+// Most tests here cover the deprecated ProtoJSSandbox registration API.
+#![allow(deprecated)]
+
+use hyperlight_js::{HostFunctionModule, LoadedJSSandbox, SandboxBuilder, Script, Snapshot};
 
 #[test]
 fn can_call_host_functions() {
@@ -1036,4 +1040,206 @@ fn register_js_deeply_nested_binary_return() {
         .unwrap();
 
     assert_eq!(res, r#"{"inner_len":2,"first_byte":171,"label":"deep"}"#);
+}
+
+#[test]
+fn js_restore_rejects_missing_host_function_before_mutation() {
+    let mut source_proto = SandboxBuilder::new().build().unwrap();
+    source_proto
+        .register("required", "value", |_: i32| 1)
+        .unwrap();
+    let mut source = source_proto.load_runtime().unwrap();
+    source
+        .add_handler(
+            "source",
+            Script::from_content(
+                r#"
+                import * as required from "required";
+                function handler(event) { return { value: required.value(0) }; }
+                "#,
+            ),
+        )
+        .unwrap();
+    let snapshot = source.snapshot().unwrap();
+
+    let mut destination = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    destination
+        .add_handler(
+            "destination",
+            Script::from_content("function handler(event) { return { intact: true }; }"),
+        )
+        .unwrap();
+
+    let error = destination.restore(snapshot).unwrap_err();
+    assert!(error.to_string().contains("required"));
+
+    let mut loaded = destination.get_loaded_sandbox().unwrap();
+    let result = loaded
+        .handle_event("destination", "{}".to_owned(), None)
+        .unwrap();
+    assert_eq!(result, r#"{"intact":true}"#);
+}
+
+#[test]
+fn loaded_restore_rejects_missing_host_function_before_mutation() {
+    let mut source_proto = SandboxBuilder::new().build().unwrap();
+    source_proto
+        .register("required", "value", |_: i32| 1)
+        .unwrap();
+    let mut source = source_proto.load_runtime().unwrap();
+    source
+        .add_handler(
+            "source",
+            Script::from_content(
+                r#"
+                import * as required from "required";
+                function handler(event) { return { value: required.value(0) }; }
+                "#,
+            ),
+        )
+        .unwrap();
+    let snapshot = source.get_loaded_sandbox().unwrap().snapshot().unwrap();
+
+    let mut destination = SandboxBuilder::new()
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    destination
+        .add_handler(
+            "destination",
+            Script::from_content("function handler(event) { return { intact: true }; }"),
+        )
+        .unwrap();
+    let mut destination = destination.get_loaded_sandbox().unwrap();
+
+    let error = destination.restore(snapshot).unwrap_err();
+    assert!(error.to_string().contains("required"));
+
+    let result = destination
+        .handle_event("destination", "{}".to_owned(), None)
+        .unwrap();
+    assert_eq!(result, r#"{"intact":true}"#);
+}
+
+fn required_host_function_module() -> HostFunctionModule {
+    let mut required = HostFunctionModule::new("required");
+    required.register("value", |_: i32| 1);
+    required
+}
+
+fn extra_host_function_module() -> HostFunctionModule {
+    let mut extra = HostFunctionModule::new("extra");
+    extra.register("value", |_: i32| 2);
+    extra
+}
+
+fn loaded_snapshot_requiring_host_function() -> Snapshot<LoadedJSSandbox> {
+    let mut source = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    source
+        .add_handler(
+            "source",
+            Script::from_content(
+                r#"
+                import * as required from "required";
+                function handler(event) { return { value: required.value(0) }; }
+                "#,
+            ),
+        )
+        .unwrap();
+    source.get_loaded_sandbox().unwrap().snapshot().unwrap()
+}
+
+#[test]
+fn loaded_restore_keeps_captured_requirements_until_unload() {
+    let snapshot = loaded_snapshot_requiring_host_function();
+    let mut restored = SandboxBuilder::from_snapshot(snapshot)
+        .with_host_function_modules([
+            required_host_function_module(),
+            extra_host_function_module(),
+        ])
+        .build()
+        .unwrap();
+
+    let loaded_snapshot = restored.snapshot().unwrap();
+    SandboxBuilder::from_snapshot(loaded_snapshot)
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap();
+
+    let mut unloaded = restored.unload().unwrap();
+    let unloaded_snapshot = unloaded.snapshot().unwrap();
+    let error = match SandboxBuilder::from_snapshot(unloaded_snapshot)
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+    {
+        Ok(_) => panic!("restore without the extra module unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("extra"));
+
+    unloaded
+        .add_handler(
+            "extra",
+            Script::from_content(
+                r#"
+                import * as extra from "extra";
+                function handler(event) { return { value: extra.value(0) }; }
+                "#,
+            ),
+        )
+        .unwrap();
+    let mut reloaded = unloaded.get_loaded_sandbox().unwrap();
+    let result = reloaded
+        .handle_event("extra", "{}".to_owned(), None)
+        .unwrap();
+    assert_eq!(result, r#"{"value":2}"#);
+}
+
+#[test]
+fn restored_js_sandbox_records_supplied_host_functions() {
+    let source_proto = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap();
+    let mut source = source_proto.load_runtime().unwrap();
+    source
+        .add_handler(
+            "source",
+            Script::from_content(
+                r#"
+                import * as required from "required";
+                function handler(event) { return { value: required.value(0) }; }
+                "#,
+            ),
+        )
+        .unwrap();
+    let snapshot = source.snapshot().unwrap();
+
+    let mut restored = SandboxBuilder::from_snapshot(snapshot)
+        .with_host_function_modules([
+            required_host_function_module(),
+            extra_host_function_module(),
+        ])
+        .build()
+        .unwrap();
+    let complete_snapshot = restored.snapshot().unwrap();
+
+    let mut insufficient = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    let error = insufficient.restore(complete_snapshot).unwrap_err();
+    assert!(error.to_string().contains("extra"));
 }

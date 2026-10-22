@@ -18,7 +18,7 @@ limitations under the License.
 //! These tests exercise the full lifecycle: host-side registration → guest-side
 //! lazy compilation → handler import → execution.
 
-use hyperlight_js::{SandboxBuilder, Script};
+use hyperlight_js::{HostFunctionModule, SandboxBuilder, Script};
 
 // ── Basic import ─────────────────────────────────────────────────────
 
@@ -523,13 +523,14 @@ fn user_module_can_import_host_function() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto
-        .register(
-            "db",
-            "lookup",
-            |id: i32| serde_json::json!({ "id": id, "name": format!("User {}", id) }),
-        )
+    let mut db = HostFunctionModule::new("db");
+    db.register(
+        "lookup",
+        |id: i32| serde_json::json!({ "id": id, "name": format!("User {}", id) }),
+    );
+    let proto = SandboxBuilder::new()
+        .with_host_function_modules([db])
+        .build()
         .unwrap();
 
     let mut sandbox = proto.load_runtime().unwrap();
@@ -834,11 +835,9 @@ fn external_text_payloads_preserve_capacity_across_buffer_sizes() {
         assert_eq!(config.get_h2g_pool_pages(), input_pages);
         assert_eq!(config.get_g2h_pool_pages(), output_pages);
 
-        let mut proto = builder.build().unwrap();
-
-        proto
-            .register("host", "echo", |value: String| value)
-            .unwrap();
+        let mut host = HostFunctionModule::new("host");
+        host.register("echo", |value: String| value);
+        let proto = builder.with_host_function_modules([host]).build().unwrap();
 
         let mut sandbox = proto.load_runtime().unwrap();
         sandbox

@@ -28,8 +28,12 @@ pub mod sandbox;
 
 use hyperlight_host::func::HostFunction;
 // Re-export FnReturn for the NAPI bridge (used in register_js signature).
+/// OCI tags, digests, and references used to save and load snapshots.
+pub use hyperlight_host::sandbox::snapshot::{OciDigest, OciReference, OciTag};
 #[doc(hidden)]
 pub use sandbox::host_fn::FnReturn;
+/// A named group of host functions that guest JavaScript imports as a module.
+pub use sandbox::host_fn::HostFunctionModule;
 /// Validate a module identifier (name or namespace).
 pub use sandbox::js_sandbox::validate_module_identifier;
 /// Validate that a namespace is not reserved.
@@ -45,8 +49,12 @@ pub use sandbox::loaded_js_sandbox::LoadedJSSandbox;
 /// A Hyperlight Sandbox with no JavaScript run time loaded and no guest code.
 /// This is used to register new host functions prior to loading the JavaScript runtime.
 pub use sandbox::proto_js_sandbox::ProtoJSSandbox;
-/// A builder for creating a new `JSSandbox`
-pub use sandbox::sandbox_builder::SandboxBuilder;
+/// Configures a new sandbox, or one restored from a [`Snapshot`].
+pub use sandbox::sandbox_builder::{NewSandbox, SandboxBuilder};
+#[doc(hidden)]
+pub use sandbox::snapshot::AnySnapshot;
+/// A persistent snapshot of a Hyperlight JavaScript sandbox.
+pub use sandbox::snapshot::{Snapshot, SnapshotTarget};
 /// Types for working with JS script.
 pub use script::Script;
 /// The function to pass to a new `JSSandbox` to tell it how to handle
@@ -69,8 +77,6 @@ pub type ParameterValue = hyperlight_host::func::ParameterValue;
 pub type ReturnValue = hyperlight_host::func::ReturnValue;
 /// The type of the return value from a guest function call.
 pub type ReturnType = hyperlight_host::func::ReturnType;
-/// A snapshot of sandbox state that can be used to restore it later.
-pub use hyperlight_host::sandbox::snapshot::Snapshot;
 /// Configuration for sandbox resource limits and behavior.
 pub use hyperlight_host::sandbox::{SandboxConfiguration, SandboxStatus};
 /// Module resolution and loading functionality.

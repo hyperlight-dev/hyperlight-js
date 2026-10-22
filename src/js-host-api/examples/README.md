@@ -117,6 +117,34 @@ Testing calculator operations:
 === All tests passed! ===
 ```
 
+### Host Functions
+
+Defines a function that creates fresh `HostFunctionModule` objects for
+each `SandboxBuilder` before loading the guest runtime:
+
+```bash
+node host-functions.js
+```
+
+### User Modules
+
+Demonstrates embedded JavaScript modules, custom namespaces, dependencies, and
+shared module state:
+
+```bash
+node user-modules.js
+```
+
+### Persistent Snapshots
+
+Writes and restores a loaded snapshot in separate processes. Both processes
+construct the same reusable host-function module catalog:
+
+```bash
+node persistent-snapshot.js write ../../target/persistent-node-snapshot
+node persistent-snapshot.js read ../../target/persistent-node-snapshot
+```
+
 ## API Overview
 
 ### SandboxBuilder

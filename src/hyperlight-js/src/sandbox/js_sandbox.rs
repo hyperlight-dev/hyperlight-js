@@ -84,9 +84,6 @@ pub struct JSSandbox {
     modules: HashMap<String, Script>,
     // Host functions selected by SandboxBuilder.
     host_functions: HostFunctionManifest,
-    // Whether guest memory already holds `host_functions`. Restores replace guest
-    // memory, so `get_loaded_sandbox` registers the manifest again after them.
-    guest_has_host_functions: bool,
     // Snapshot of state before any handlers are added.
     // This is used to restore state back to a neutral JSSandbox.
     snapshot: Arc<HyperlightSnapshot>,
@@ -103,7 +100,6 @@ impl JSSandbox {
             handlers: HashMap::new(),
             modules: HashMap::new(),
             host_functions,
-            guest_has_host_functions: true,
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
         })
@@ -116,12 +112,12 @@ impl JSSandbox {
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
         loaded.restore(snapshot.clone())?;
+        register_host_function_manifest(&mut loaded, &host_functions)?;
         Ok(Self {
             inner: loaded,
             handlers: HashMap::new(),
             modules: HashMap::new(),
             host_functions,
-            guest_has_host_functions: false,
             snapshot,
             _metric_guard: SandboxMetricsGuard::new(),
         })
@@ -137,7 +133,6 @@ impl JSSandbox {
             handlers: snapshot.metadata().handlers().collect(),
             modules: snapshot.metadata().modules().collect(),
             host_functions,
-            guest_has_host_functions: false,
             snapshot: snapshot.inner(),
             _metric_guard: SandboxMetricsGuard::new(),
         })
@@ -168,7 +163,6 @@ impl JSSandbox {
         snapshot
             .metadata()
             .validate_host_functions(&self.host_functions)?;
-        self.guest_has_host_functions = false;
         self.inner.restore(snapshot.inner())?;
         self.handlers = snapshot.metadata().handlers().collect();
         self.modules = snapshot.metadata().modules().collect();
@@ -385,9 +379,7 @@ impl JSSandbox {
 
         // Publish the builder-selected host functions before compiling modules
         // and handlers that may import them.
-        if !self.guest_has_host_functions {
-            register_host_function_manifest(&mut self.inner, &self.host_functions)?;
-        }
+        register_host_function_manifest(&mut self.inner, &self.host_functions)?;
 
         // Register user modules first so that handlers can import them.
         // NOTE: HashMap iteration order is non-deterministic, but this is safe

@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SandboxBuilder } from '../lib.js';
-import { expectThrowsWithCode, expectRejectsWithCode } from './test-helpers.js';
+import { expectThrowsWithCode, expectRejectsWithCode, trackSandbox } from './test-helpers.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -16,7 +16,7 @@ import { expectThrowsWithCode, expectRejectsWithCode } from './test-helpers.js';
  */
 async function createSandbox() {
     const proto = await new SandboxBuilder().build();
-    return proto.loadRuntime();
+    return trackSandbox(proto.loadRuntime());
 }
 
 // ── Module registration ──────────────────────────────────────────────
@@ -86,7 +86,7 @@ describe('Module registration', () => {
             function handler(e) { e.x = x; return e; }
         `
         );
-        await sandbox.getLoadedSandbox();
+        await trackSandbox(sandbox.getLoadedSandbox());
         expectThrowsWithCode(
             () => sandbox.addModule('another', 'export const y = 2;'),
             'ERR_CONSUMED'
@@ -118,7 +118,7 @@ describe('Handler importing user module', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const result = await loaded.callHandler('handler', { a: 6, b: 7 });
         expect(result.sum).toBe(13);
         expect(result.product).toBe(42);
@@ -138,7 +138,7 @@ describe('Handler importing user module', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const result = await loaded.callHandler('handler', { a: 10, b: 20 });
         expect(result.result).toBe(30);
     });
@@ -176,7 +176,7 @@ describe('Inter-module imports', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const result = await loaded.callHandler('handler', { radius: 5 });
         expect(result.area).toBeCloseTo(78.53975, 3);
     });
@@ -205,7 +205,7 @@ describe('Inter-module imports', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const result = await loaded.callHandler('handler', { data: 'hello' });
         expect(result.hash).toBeTruthy();
         expect(typeof result.hash).toBe('string');
@@ -220,7 +220,7 @@ describe('User module importing host functions', () => {
         const proto = await new SandboxBuilder().build();
         proto.hostModule('db').register('lookup', (id) => ({ id, name: `User ${id}` }));
 
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
 
         sandbox.addModule(
             'enricher',
@@ -244,7 +244,7 @@ describe('User module importing host functions', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const result = await loaded.callHandler('handler', { userId: 42 });
         expect(result.userName).toBe('User 42');
     });
@@ -273,7 +273,7 @@ describe('Module state retention', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const r1 = await loaded.callHandler('handler', {});
         expect(r1.count).toBe(1);
         const r2 = await loaded.callHandler('handler', {});
@@ -308,7 +308,7 @@ describe('Multiple handlers sharing a module', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const r1 = await loaded.callHandler('doubler', { x: 5 });
         expect(r1.result).toBe(10);
         const r2 = await loaded.callHandler('tripler', { x: 5 });
@@ -356,7 +356,7 @@ describe('Cross-handler mutable state sharing', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         // writer increments → count=1
         const r1 = await loaded.callHandler('writer', {});
@@ -412,7 +412,7 @@ describe('Cross-handler mutable state sharing', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
         // Write two entries via the 'put' handler
         await loaded.callHandler('put', { key: 'name', value: 'Hyperlight' });
@@ -442,12 +442,12 @@ describe('Unload and reload with modules', () => {
         `
         );
 
-        let loaded = await sandbox.getLoadedSandbox();
+        let loaded = await trackSandbox(sandbox.getLoadedSandbox());
         let result = await loaded.callHandler('handler', { x: 5 });
         expect(result.result).toBe(6); // 5 + 1
 
         // Unload, swap module, reload
-        const sandbox2 = await loaded.unload();
+        const sandbox2 = await trackSandbox(loaded.unload());
         sandbox2.addModule('math', 'export function compute(x) { return x * 2; }');
         sandbox2.addHandler(
             'handler',
@@ -457,7 +457,7 @@ describe('Unload and reload with modules', () => {
         `
         );
 
-        loaded = await sandbox2.getLoadedSandbox();
+        loaded = await trackSandbox(sandbox2.getLoadedSandbox());
         result = await loaded.callHandler('handler', { x: 5 });
         expect(result.result).toBe(10); // 5 * 2
     });
@@ -542,7 +542,7 @@ describe('Snapshot and restore with modules', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const r1 = await loaded.callHandler('handler', {});
         expect(r1.count).toBe(1);
 
@@ -595,7 +595,7 @@ describe('Circular module dependencies', () => {
         `
         );
 
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         const result = await loaded.callHandler('handler', {});
         expect(result.xy).toBe('XY');
         expect(result.yx).toBe('YX');

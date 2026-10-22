@@ -475,26 +475,24 @@ impl<S> SandboxBuilder<S> {
     /// Apply settings that the snapshot layout does not fix.
     fn apply_runtime_config(
         &self,
-        mut builder: HyperlightSandboxBuilder,
+        builder: HyperlightSandboxBuilder,
     ) -> Result<HyperlightSandboxBuilder> {
         #[cfg(target_os = "linux")]
-        {
-            builder = builder.interrupt_vcpu_sigrtmin_offset(
-                self.base_config.get_interrupt_vcpu_sigrtmin_offset(),
-            )?;
-        }
+        let builder = builder.interrupt_vcpu_sigrtmin_offset(
+            self.base_config.get_interrupt_vcpu_sigrtmin_offset(),
+        )?;
         #[cfg(any(kvm, mshv3))]
-        {
-            builder = builder.interrupt_retry_delay(self.base_config.get_interrupt_retry_delay());
-        }
+        let builder = builder.interrupt_retry_delay(self.base_config.get_interrupt_retry_delay());
         #[cfg(crashdump)]
-        if let Some(enabled) = self.guest_core_dump {
-            builder = builder.guest_core_dump(enabled);
-        }
+        let builder = match self.guest_core_dump {
+            Some(enabled) => builder.guest_core_dump(enabled),
+            None => builder,
+        };
         #[cfg(gdb)]
-        if let Some(debug_info) = self.guest_debug_info {
-            builder = builder.guest_debug_info(debug_info);
-        }
+        let builder = match self.guest_debug_info {
+            Some(debug_info) => builder.guest_debug_info(debug_info),
+            None => builder,
+        };
         Ok(builder)
     }
 }
@@ -505,12 +503,11 @@ impl Default for SandboxBuilder<NewSandbox> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(kvm, mshv3)))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(all(target_os = "linux", any(kvm, mshv3)))]
     fn runtime_config_reaches_hyperlight_builder() {
         let mut builder =
             SandboxBuilder::new().with_interrupt_retry_delay(Duration::from_millis(7));

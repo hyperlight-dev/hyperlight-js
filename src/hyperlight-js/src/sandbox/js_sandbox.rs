@@ -125,16 +125,9 @@ impl JSSandbox {
 
     pub(crate) fn from_snapshot(
         inner: Sandbox,
-        snapshot: &Snapshot,
+        snapshot: &Snapshot<JSSandbox>,
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
-        if snapshot.kind() != SnapshotKind::JsSandbox {
-            return Err(new_error!(
-                "Cannot restore a {:?} snapshot as a JSSandbox",
-                snapshot.kind()
-            ));
-        }
-
         Ok(Self {
             inner,
             handlers: snapshot.metadata().handlers().collect(),
@@ -148,7 +141,7 @@ impl JSSandbox {
     /// Capture the current runtime state and handlers and modules added to this
     /// sandbox but not yet registered in the guest.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn snapshot(&mut self) -> Result<Snapshot> {
+    pub fn snapshot(&mut self) -> Result<Snapshot<JSSandbox>> {
         let inner = self.inner.snapshot()?;
         let metadata = SnapshotMetadata::new(
             SnapshotKind::JsSandbox,
@@ -166,13 +159,7 @@ impl JSSandbox {
     /// Restore the runtime state and handlers and modules that were added to the
     /// snapshotted sandbox but not yet registered in the guest.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn restore(&mut self, snapshot: Snapshot) -> Result<()> {
-        if snapshot.kind() != SnapshotKind::JsSandbox {
-            return Err(new_error!(
-                "Cannot restore a {:?} snapshot into a JSSandbox",
-                snapshot.kind()
-            ));
-        }
+    pub fn restore(&mut self, snapshot: Snapshot<JSSandbox>) -> Result<()> {
         snapshot
             .metadata()
             .validate_host_functions(&self.host_functions)?;

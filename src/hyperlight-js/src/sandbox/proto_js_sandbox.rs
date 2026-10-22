@@ -43,7 +43,7 @@ pub(super) fn current_time_micros() -> hyperlight_host::Result<u64> {
 /// A fresh Hyperlight sandbox before the JavaScript runtime is loaded.
 ///
 /// Register host resources, then call [`Self::load_runtime`] to create a
-/// [`JSSandbox`]. Snapshot restoration uses [`crate::SandboxRestorer`] instead.
+/// [`JSSandbox`]. Restore snapshots with [`crate::SandboxBuilder::from_snapshot`].
 pub struct ProtoJSSandbox {
     inner: UninitializedSandbox,
     host_modules: HashMap<String, HostModule>,

@@ -138,8 +138,7 @@ node user-modules.js
 ### Persistent Snapshots
 
 Writes and restores a loaded snapshot in separate processes. Both processes
-construct the same reusable host-function module catalog; restore filters it to
-the snapshot requirements:
+construct the same reusable host-function module catalog:
 
 ```bash
 node persistent-snapshot.js write ../../target/persistent-node-snapshot

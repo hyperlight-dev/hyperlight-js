@@ -28,7 +28,7 @@ limitations under the License.
 //!
 //! This recipe builds the custom runtime automatically during the host build.
 
-use hyperlight_js::{SandboxBuilder, Script, Snapshot};
+use hyperlight_js::{OciTag, SandboxBuilder, Script, Snapshot};
 
 /// Test that a custom native module ("math") can be imported and used
 /// from a handler running inside the Hyperlight VM.
@@ -179,14 +179,18 @@ fn persistent_snapshot_restores_custom_native_module() {
 
     let snapshot = loaded.snapshot().unwrap();
     snapshot
-        .save(directory.path(), "custom-module-ready")
+        .save(
+            directory.path(),
+            &OciTag::new("custom-module-ready").unwrap(),
+        )
         .unwrap();
 
-    let snapshot = Snapshot::load(directory.path(), "custom-module-ready").unwrap();
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
-    let mut restored = restorer
-        .restore::<hyperlight_js::LoadedJSSandbox>()
-        .unwrap();
+    let snapshot = Snapshot::<hyperlight_js::LoadedJSSandbox>::checked_load(
+        directory.path(),
+        OciTag::new("custom-module-ready").unwrap(),
+    )
+    .unwrap();
+    let mut restored = SandboxBuilder::from_snapshot(snapshot).build().unwrap();
 
     let result = restored
         .handle_event("compute", r#"{"a":10,"b":32}"#.to_string(), None)

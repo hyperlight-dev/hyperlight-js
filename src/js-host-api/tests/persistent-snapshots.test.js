@@ -21,7 +21,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { URL } from 'node:url';
 
-import { HostFunctionModule, SandboxBuilder, Snapshot } from '../lib.js';
+import {
+    HostFunctionModule,
+    JSSandbox,
+    LoadedJSSandbox,
+    SandboxBuilder,
+    Snapshot,
+} from '../lib.js';
 
 const directories = [];
 
@@ -49,9 +55,9 @@ describe('Persistent snapshots', () => {
 
         expect(esm.HostFunctionModule).toBe(HostFunctionModule);
         expect(Object.keys(esm).some((name) => name.endsWith('Wrapper'))).toBe(false);
-        expect(typeof esm.SandboxRestorer).toBe('function');
+        expect(esm.SandboxBuilder).toBe(SandboxBuilder);
+        expect(typeof esm.SandboxBuilder.fromSnapshot).toBe('function');
         expect(esm.SandboxStatus).toBeDefined();
-        expect(esm.SnapshotRequirementStatus).toBeDefined();
     });
 
     it('generates self-contained TypeScript declarations', async () => {
@@ -59,9 +65,8 @@ describe('Persistent snapshots', () => {
 
         expect(declarations).not.toContain('JsHostFunction');
         expect(declarations).not.toMatch(/\b\w+Wrapper\b/);
-        expect(declarations).toContain(
-            "setHostFunctionFilter(filter: 'all' | 'snapshotRequirements'): this"
-        );
+        expect(declarations).not.toMatch(/^export type (\w+) = \1$/m);
+        expect(declarations).toContain('build(): Promise<T>');
     });
 
     it('enriches reusable host-function configuration errors', async () => {
@@ -70,9 +75,6 @@ describe('Persistent snapshots', () => {
         );
 
         const builder = new SandboxBuilder();
-        expect(() => builder.setHostFunctionFilter('invalid')).toThrow(
-            expect.objectContaining({ code: 'ERR_INVALID_ARG' })
-        );
         const proto = await builder.build();
         expect(() => builder.setHostFunctionModules(() => [])).toThrow(
             expect.objectContaining({ code: 'ERR_CONSUMED' })
@@ -141,6 +143,27 @@ describe('Persistent snapshots', () => {
         await expect(Snapshot.load('missing-snapshot-layout', 'missing')).rejects.toMatchObject({
             code: 'ERR_INTERNAL',
         });
+        await expect(Snapshot.checkedLoad('missing-snapshot-layout', '')).rejects.toMatchObject({
+            code: 'ERR_INVALID_ARG',
+        });
+    });
+
+    it('rejects restoring a snapshot into the other sandbox type', async () => {
+        const proto = await new SandboxBuilder().build();
+        const sandbox = await proto.loadRuntime();
+        sandbox.addHandler('handler', 'function handler(event) { return event; }');
+        const jsSnapshot = await sandbox.snapshot();
+        const loaded = await sandbox.getLoadedSandbox();
+        const loadedSnapshot = await loaded.snapshot();
+
+        await expect(loaded.restore(jsSnapshot)).rejects.toMatchObject({
+            code: 'ERR_INVALID_ARG',
+        });
+        const unloaded = await loaded.unload();
+        await expect(unloaded.restore(loadedSnapshot)).rejects.toMatchObject({
+            code: 'ERR_INVALID_ARG',
+        });
+        unloaded.dispose();
     });
 
     it('persists and restores a JSSandbox with handlers not yet registered in the guest', async () => {
@@ -159,16 +182,13 @@ describe('Persistent snapshots', () => {
         );
 
         const snapshot = await sandbox.snapshot();
-        expect(snapshot.kind).toBe('jsSandbox');
         const digest = await snapshot.save(directory, 'runtime-ready');
         expect(digest).toMatch(/^sha256:/);
         sandbox.dispose();
 
         const persisted = await Snapshot.load(directory, 'runtime-ready');
-        const restorer = await new SandboxBuilder().buildFromSnapshot(persisted);
-        expect(restorer.loadRuntime).toBeUndefined();
-        expect(typeof restorer.restoreJsSandbox).toBe('function');
-        const restoredSandbox = await restorer.restoreJsSandbox();
+        const restoredSandbox = await SandboxBuilder.fromSnapshot(persisted).build();
+        expect(restoredSandbox).toBeInstanceOf(JSSandbox);
         const loaded = await restoredSandbox.getLoadedSandbox();
 
         await expect(loaded.callHandler('counter', {})).resolves.toEqual({ count: 1 });
@@ -193,13 +213,12 @@ describe('Persistent snapshots', () => {
         await expect(loaded.callHandler('counter', {})).resolves.toEqual({ count: 1 });
 
         const snapshot = await loaded.snapshot();
-        expect(snapshot.kind).toBe('loadedJsSandbox');
         await snapshot.save(directory, 'application-ready');
         await loaded.dispose();
 
-        const persisted = await Snapshot.load(directory, 'application-ready');
-        const restorer = await new SandboxBuilder().buildFromSnapshot(persisted);
-        const restored = await restorer.restoreLoadedSandbox();
+        const persisted = await Snapshot.checkedLoad(directory, 'application-ready');
+        const restored = await SandboxBuilder.fromSnapshot(persisted).build();
+        expect(restored).toBeInstanceOf(LoadedJSSandbox);
 
         await expect(restored.callHandler('counter', {})).resolves.toEqual({ count: 2 });
         const unloaded = await restored.unload();
@@ -232,21 +251,14 @@ describe('Persistent snapshots', () => {
         await snapshot.save(directory, 'host-functions');
         await loaded.dispose();
 
-        const persisted = await Snapshot.load(directory, 'host-functions');
-        expect(persisted.requirements).toEqual({
-            hostFunctions: [{ module: 'host:state', functions: ['next'] }],
-            moduleLoader: 'unknown',
-        });
-        const missingRestorer = await new SandboxBuilder().buildFromSnapshot(persisted);
-        await expect(missingRestorer.restoreLoadedSandbox()).rejects.toThrow(
+        const persisted = await Snapshot.checkedLoad(directory, 'host-functions');
+        await expect(SandboxBuilder.fromSnapshot(persisted).build()).rejects.toThrow(
             /requires host module 'host:state'/
         );
 
-        const restorer = await new SandboxBuilder()
+        const restored = await SandboxBuilder.fromSnapshot(persisted)
             .setHostFunctionModules(stateHostFunctionModules)
-            .setHostFunctionFilter('snapshotRequirements')
-            .buildFromSnapshot(persisted);
-        const restored = await restorer.restoreLoadedSandbox();
+            .build();
         await expect(restored.callHandler('handler', {})).resolves.toEqual({ value: 1 });
         await restored.dispose();
     });

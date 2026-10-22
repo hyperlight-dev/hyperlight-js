@@ -60,9 +60,10 @@ Creates and configures a new sandbox.
 - `setInputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy input/host-reply capacity in bytes; use `setInputTransportPoolPages` and `setOutputTransportPoolPages` for explicit pool budgets
 - `setOutputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy output/host-request capacity in bytes; use `setOutputTransportPoolPages`
 - `setHostFunctionModules(factory: () => HostFunctionModule[])` → `this` — Define fresh host callbacks for one sandbox
-- `setHostFunctionFilter(filter: "all" | "snapshotRequirements")` → `this` — Retain all supplied callbacks across unload, or only snapshot-declared requirements
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
-- `buildFromSnapshot(snapshot)` → `Promise<SandboxRestorer>` — Builds a restorer using the same configured host resources
+
+**Static methods:**
+- `SandboxBuilder.fromSnapshot(snapshot)` → `SandboxBuilder` — Creates a builder whose `build()` returns the `JSSandbox` or `LoadedJSSandbox` the snapshot captured. The snapshot's memory layout overrides heap, scratch, and transport settings.
 
 ```javascript
 const builder = new SandboxBuilder()
@@ -74,10 +75,6 @@ const builder = new SandboxBuilder()
     .setOutputTransportPoolPages(9);
 const protoSandbox = await builder.build();
 ```
-
-When restoring a loaded snapshot, `all` keeps extra supplied callbacks available
-for handlers staged after `unload()`, without adding them to the current loaded
-snapshot's requirements. `snapshotRequirements` discards those extras.
 
 ### ProtoJSSandbox
 
@@ -321,18 +318,20 @@ console.log(loaded.status); // "ready"
 await snapshot.save('./snapshots', 'application-ready');
 
 // Later, potentially in another process.
-const persisted = await Snapshot.load('./snapshots', 'application-ready');
-const restorer = await new SandboxBuilder()
+const persisted = await Snapshot.checkedLoad('./snapshots', 'application-ready');
+const restored = await SandboxBuilder.fromSnapshot(persisted)
     .setHostFunctionModules(hostFunctionModules)
-    .setHostFunctionFilter('snapshotRequirements')
-    .buildFromSnapshot(persisted);
-const restored = await restorer.restoreLoadedSandbox();
+    .build();
 ```
 
-`JSSandbox.snapshot()` and `restorer.restoreJsSandbox()` provide the equivalent
-workflow before handlers are loaded. Native callbacks are not serialized, so
-the restoring builder must receive a factory that creates compatible
-`HostFunctionModule`s.
+`Snapshot.checkedLoad()` checks every blob against its recorded digest.
+`Snapshot.load()` skips the check. Use it only for trusted local layouts.
+
+The same workflow restores a `JSSandbox` snapshot taken before handlers are
+loaded. Native callbacks are not serialized, so the restoring builder must
+receive a factory that creates compatible `HostFunctionModule`s. Restoring a
+snapshot of the other sandbox type into an existing sandbox fails with
+`ERR_INVALID_ARG`.
 See [Persistent snapshots](../../docs/persistent-snapshots.md).
 
 ### Error Codes
@@ -627,8 +626,7 @@ function handler(event) {
 
 ### Registration Timing
 
-Host-function modules must be supplied to the builder before `build()` or
-`buildFromSnapshot()`.
+Host-function modules must be supplied to the builder before `build()`.
 
 ```javascript
 function hostFunctionModules() {
@@ -883,7 +881,7 @@ dependencies, custom namespaces, multiple handlers sharing a module, and
 
 ### Persistent Snapshots (`persistent-snapshot.js`)
 Separate write/read processes using the same reusable host-function module
-definition and `snapshotRequirements` filtering during restore.
+definition.
 
 ## Requirements
 

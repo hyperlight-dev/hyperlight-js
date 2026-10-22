@@ -29,10 +29,8 @@ export const {
     LoadedJSSandbox,
     ProtoJSSandbox,
     SandboxBuilder,
-    SandboxRestorer,
     SandboxStatus,
     Snapshot,
-    SnapshotRequirementStatus,
 } = native;
 
 export default native;

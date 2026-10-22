@@ -19,13 +19,14 @@ use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
 use hyperlight_js::{
-    CpuTimeMonitor, ExecutionStats, HostFunctionFilter, HostFunctionModule, HyperlightError,
-    InterruptHandle, JSSandbox, LoadedJSSandbox, ProtoJSSandbox, SandboxBuilder, SandboxRestorer,
-    SandboxStatus as HyperlightSandboxStatus, Script, Snapshot, WallClockMonitor,
+    AnySnapshot, CpuTimeMonitor, ExecutionStats, HostFunctionModule, HyperlightError,
+    InterruptHandle, JSSandbox, LoadedJSSandbox, OciReference, OciTag, ProtoJSSandbox,
+    SandboxBuilder, SandboxStatus as HyperlightSandboxStatus, Script, Snapshot, WallClockMonitor,
 };
 use hyperlight_js_common::Bytes;
 use napi::bindgen_prelude::{
-    Buffer, ClassInstance, FromNapiValue, JsValuesTupleIntoVec, Object, Promise, ToNapiValue,
+    Buffer, ClassInstance, Either3, FromNapiValue, JsValuesTupleIntoVec, Object, Promise,
+    ToNapiValue,
 };
 use napi::sys::{napi_env, napi_value};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
@@ -365,83 +366,12 @@ impl Drop for JSSandboxBusyGuard {
 
 // ── Snapshot ─────────────────────────────────────────────────────────
 
-/// Whether a host resource is required by a snapshot.
-#[napi(string_enum)]
-#[derive(Clone, Copy)]
-pub enum SnapshotRequirementStatus {
-    /// The underlying snapshot API does not expose this requirement yet.
-    #[napi(value = "unknown")]
-    Unknown,
-    /// The resource is required to restore the snapshot.
-    #[napi(value = "required")]
-    Required,
-    /// The resource is not required to restore the snapshot.
-    #[napi(value = "notRequired")]
-    NotRequired,
-}
-
-impl From<hyperlight_js::RequirementStatus> for SnapshotRequirementStatus {
-    fn from(status: hyperlight_js::RequirementStatus) -> Self {
-        match status {
-            hyperlight_js::RequirementStatus::Unknown => Self::Unknown,
-            hyperlight_js::RequirementStatus::Required => Self::Required,
-            hyperlight_js::RequirementStatus::NotRequired => Self::NotRequired,
-        }
-    }
-}
-
-/// Required host functions in one Hyperlight-JS host module.
-#[napi(object)]
-pub struct SnapshotHostModuleRequirement {
-    /// Qualified module name, for example `host:database`.
-    pub module: String,
-    /// Host function names required from this module.
-    pub functions: Vec<String>,
-}
-
-/// Host resources required to restore a snapshot.
-#[napi(object)]
-pub struct SnapshotRequirements {
-    /// Required Hyperlight-JS host functions grouped by module.
-    pub host_functions: Vec<SnapshotHostModuleRequirement>,
-    /// Whether a custom JavaScript module loader is required.
-    ///
-    /// This is currently `unknown` pending
-    /// https://github.com/hyperlight-dev/hyperlight/issues/1870.
-    pub module_loader: SnapshotRequirementStatus,
-}
-
-fn snapshot_kind_name(kind: hyperlight_js::SnapshotKind) -> String {
-    match kind {
-        hyperlight_js::SnapshotKind::JsSandbox => "jsSandbox",
-        hyperlight_js::SnapshotKind::LoadedJsSandbox => "loadedJsSandbox",
-    }
-    .to_owned()
-}
-
-fn snapshot_requirements(
-    requirements: hyperlight_js::SnapshotRequirements,
-) -> SnapshotRequirements {
-    let host_functions = requirements
-        .host_functions()
-        .iter()
-        .map(|(module, functions)| SnapshotHostModuleRequirement {
-            module: module.clone(),
-            functions: functions.clone(),
-        })
-        .collect();
-
-    SnapshotRequirements {
-        host_functions,
-        module_loader: requirements.module_loader().into(),
-    }
-}
-
-/// A captured point-in-time state of a sandbox.
+/// A captured point-in-time state of a `JSSandbox` or `LoadedJSSandbox`.
 ///
 /// Take a snapshot before risky operations (e.g., running untrusted code
 /// with monitors). If the sandbox becomes poisoned, restore from the
-/// snapshot to recover.
+/// snapshot to recover. Restore a saved snapshot into a new sandbox with
+/// `SandboxBuilder.fromSnapshot()`.
 ///
 /// ```js
 /// const snapshot = await loaded.snapshot();
@@ -453,48 +383,61 @@ fn snapshot_requirements(
 /// ```
 #[napi(js_name = "Snapshot")]
 pub struct SnapshotWrapper {
-    inner: Snapshot,
+    inner: AnySnapshot,
+}
+
+fn parse_reference(reference: &str) -> napi::Result<OciReference> {
+    reference
+        .parse()
+        .map_err(|error: HyperlightError| invalid_arg_error(error))
 }
 
 #[napi]
 impl SnapshotWrapper {
-    /// The lifecycle state captured by this snapshot.
-    #[napi(getter)]
-    pub fn kind(&self) -> String {
-        snapshot_kind_name(self.inner.kind())
-    }
-
-    /// Host resources required to restore this snapshot.
-    #[napi(getter)]
-    pub fn requirements(&self) -> SnapshotRequirements {
-        snapshot_requirements(self.inner.requirements())
-    }
-
-    /// Save this snapshot to an OCI image layout on disk.
+    /// Save this snapshot to an OCI image layout and return its manifest digest.
+    ///
+    /// A `LoadedJSSandbox` snapshot also saves its runtime-ready baseline under
+    /// `<tag>.hljs-base`, which limits `tag` to 118 bytes.
     #[napi]
     pub async fn save(&self, path: String, tag: String) -> napi::Result<String> {
+        let tag = OciTag::new(tag).map_err(invalid_arg_error)?;
         let snapshot = self.inner.clone();
-        tokio::task::spawn_blocking(move || snapshot.save(path, tag).map_err(to_napi_error))
-            .await
-            .map_err(join_error)?
+        tokio::task::spawn_blocking(move || {
+            snapshot
+                .save(path, &tag)
+                .map(|digest| digest.to_string())
+                .map_err(to_napi_error)
+        })
+        .await
+        .map_err(join_error)?
     }
 
-    /// Load and verify a snapshot from an OCI image layout.
+    /// Load a snapshot from an OCI image layout without checking blob digests.
+    ///
+    /// The layout's blobs stay memory-mapped while the snapshot or any sandbox
+    /// built from it is alive. Overwriting, truncating, or deleting them during
+    /// that time can corrupt guest memory.
     #[napi(factory)]
     pub async fn load(path: String, reference: String) -> napi::Result<Self> {
+        let reference = parse_reference(&reference)?;
         let snapshot = tokio::task::spawn_blocking(move || {
-            Snapshot::load(path, reference).map_err(to_napi_error)
+            AnySnapshot::load(path, reference).map_err(to_napi_error)
         })
         .await
         .map_err(join_error)??;
         Ok(Self { inner: snapshot })
     }
 
-    /// Load a trusted snapshot without verifying its OCI blob digests.
+    /// Load a snapshot like `load()` and check every blob against its recorded
+    /// sha256 digest.
+    ///
+    /// A digest check does not prove the bytes are authentic. Load only from a
+    /// trusted source.
     #[napi(factory)]
-    pub async fn load_unverified(path: String, reference: String) -> napi::Result<Self> {
+    pub async fn checked_load(path: String, reference: String) -> napi::Result<Self> {
+        let reference = parse_reference(&reference)?;
         let snapshot = tokio::task::spawn_blocking(move || {
-            Snapshot::load_unverified(path, reference).map_err(to_napi_error)
+            AnySnapshot::checked_load(path, reference).map_err(to_napi_error)
         })
         .await
         .map_err(join_error)??;
@@ -504,20 +447,42 @@ impl SnapshotWrapper {
 
 // ── SandboxBuilder ───────────────────────────────────────────────────
 
-/// Configures and creates a new sandbox.
+/// The sandbox a `SandboxBuilder` creates.
+enum BuilderState {
+    New(SandboxBuilder),
+    JsSandbox(SandboxBuilder<Snapshot<JSSandbox>>),
+    LoadedJsSandbox(SandboxBuilder<Snapshot<LoadedJSSandbox>>),
+}
+
+/// Apply one builder setter to whichever sandbox the builder creates.
+macro_rules! map_builder {
+    ($state:expr, $builder:ident => $body:expr) => {
+        match $state {
+            BuilderState::New($builder) => BuilderState::New($body),
+            BuilderState::JsSandbox($builder) => BuilderState::JsSandbox($body),
+            BuilderState::LoadedJsSandbox($builder) => BuilderState::LoadedJsSandbox($body),
+        }
+    };
+}
+
+/// Configures and creates a new sandbox, or restores one from a snapshot.
 ///
 /// Use the builder to set memory limits before constructing the sandbox.
-/// All size setters support method chaining.
+/// All size setters support method chaining. A snapshot's memory layout
+/// overrides heap, scratch, and transport settings.
 ///
 /// ```js
 /// const proto = await new SandboxBuilder()
 ///     .setHeapSize(8 * 1024 * 1024)
 ///     .setScratchSize(1024 * 1024)
 ///     .build();
+///
+/// const snapshot = await Snapshot.checkedLoad('./snapshots', 'app');
+/// const restored = await SandboxBuilder.fromSnapshot(snapshot).build();
 /// ```
 #[napi(js_name = "SandboxBuilder")]
 pub struct SandboxBuilderWrapper {
-    inner: Arc<Mutex<Option<SandboxBuilder>>>,
+    inner: Arc<Mutex<Option<BuilderState>>>,
 }
 
 impl Default for SandboxBuilderWrapper {
@@ -531,7 +496,7 @@ impl SandboxBuilderWrapper {
     /// consumed (after `build()` has been called).
     fn with_inner<F>(&self, f: F) -> napi::Result<&Self>
     where
-        F: FnOnce(SandboxBuilder) -> SandboxBuilder,
+        F: FnOnce(BuilderState) -> BuilderState,
     {
         let mut guard = self.inner.lock().map_err(|_| lock_error())?;
         let builder = guard
@@ -542,7 +507,7 @@ impl SandboxBuilderWrapper {
     }
 
     /// Take ownership of the inner builder, or error if consumed.
-    fn take_inner(&self) -> napi::Result<SandboxBuilder> {
+    fn take_inner(&self) -> napi::Result<BuilderState> {
         self.inner
             .lock()
             .map_err(|_| lock_error())?
@@ -557,7 +522,29 @@ impl SandboxBuilderWrapper {
     #[napi(constructor)]
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(Some(SandboxBuilder::new()))),
+            inner: Arc::new(Mutex::new(Some(BuilderState::New(SandboxBuilder::new())))),
+        }
+    }
+
+    /// Create a builder that restores `snapshot`.
+    ///
+    /// `build()` returns the sandbox type the snapshot captured. Supply every
+    /// host function the snapshot uses.
+    #[napi(
+        factory,
+        ts_return_type = "SandboxBuilder<JSSandbox | LoadedJSSandbox>"
+    )]
+    pub fn from_snapshot(snapshot: &SnapshotWrapper) -> Self {
+        let state = match &snapshot.inner {
+            AnySnapshot::JsSandbox(snapshot) => {
+                BuilderState::JsSandbox(SandboxBuilder::from_snapshot(snapshot.clone()))
+            }
+            AnySnapshot::LoadedJsSandbox(snapshot) => {
+                BuilderState::LoadedJsSandbox(SandboxBuilder::from_snapshot(snapshot.clone()))
+            }
+        };
+        Self {
+            inner: Arc::new(Mutex::new(Some(state))),
         }
     }
 
@@ -580,7 +567,9 @@ impl SandboxBuilderWrapper {
             ));
         }
 
-        self.with_inner(|b| b.with_guest_output_buffer_size(size as usize))
+        self.with_inner(
+            |state| map_builder!(state, b => b.with_guest_output_buffer_size(size as usize)),
+        )
     }
 
     /// Set the legacy host-to-guest message capacity in bytes.
@@ -602,7 +591,9 @@ impl SandboxBuilderWrapper {
             ));
         }
 
-        self.with_inner(|b| b.with_guest_input_buffer_size(size as usize))
+        self.with_inner(
+            |state| map_builder!(state, b => b.with_guest_input_buffer_size(size as usize)),
+        )
     }
 
     /// Set the guest scratch size in bytes.
@@ -619,7 +610,7 @@ impl SandboxBuilderWrapper {
         if size == 0 {
             return Err(invalid_arg_error("Scratch size must be greater than 0"));
         }
-        self.with_inner(|b| b.with_guest_scratch_size(size as usize))
+        self.with_inner(|state| map_builder!(state, b => b.with_guest_scratch_size(size as usize)))
     }
 
     /// Set the guest heap size in bytes.
@@ -636,7 +627,7 @@ impl SandboxBuilderWrapper {
         if size == 0 {
             return Err(invalid_arg_error("Heap size must be greater than 0"));
         }
-        self.with_inner(|b| b.with_guest_heap_size(size as u64))
+        self.with_inner(|state| map_builder!(state, b => b.with_guest_heap_size(size as u64)))
     }
 
     /// Supply host-function modules for this sandbox.
@@ -687,66 +678,47 @@ impl SandboxBuilderWrapper {
         let builder = builder_guard
             .take()
             .ok_or_else(|| consumed_error("SandboxBuilder"))?;
-        *builder_guard = Some(builder.with_host_function_modules(move || modules));
+        *builder_guard = Some(map_builder!(
+            builder,
+            b => b.with_host_function_modules(|| modules)
+        ));
         Ok(self)
     }
 
-    /// Select which supplied host functions are installed.
-    #[napi]
-    pub fn set_host_function_filter(
-        &self,
-        #[napi(ts_arg_type = "'all' | 'snapshotRequirements'")] filter: String,
-    ) -> napi::Result<&Self> {
-        let filter = match filter.as_str() {
-            "all" => HostFunctionFilter::All,
-            "snapshotRequirements" => HostFunctionFilter::SnapshotRequirements,
-            value => {
-                return Err(invalid_arg_error(format!(
-                    "Unknown host-function filter '{value}'"
-                )))
-            }
-        };
-        self.with_inner(|builder| builder.with_host_function_filter(filter))
-    }
-
-    /// Build a `ProtoJSSandbox` from this builder's configuration.
+    /// Build the sandbox from this builder's configuration.
     ///
-    /// This allocates the sandbox VM resources. The builder is consumed
-    /// and cannot be reused after calling this method.
+    /// A new builder returns a `ProtoJSSandbox`. A builder from
+    /// `SandboxBuilder.fromSnapshot()` returns the sandbox type the snapshot
+    /// captured. The builder is consumed and cannot be reused.
     ///
     /// This is an async operation — it returns a `Promise` and does not
     /// block the Node.js event loop.
     ///
-    /// @returns A `Promise<ProtoJSSandbox>` ready to load the JavaScript runtime
-    /// @throws On resource allocation failure, or if already consumed
-    #[napi]
-    pub async fn build(&self) -> napi::Result<ProtoJSSandboxWrapper> {
-        let builder = self.take_inner()?;
-        let proto_sandbox =
-            tokio::task::spawn_blocking(move || builder.build().map_err(to_napi_error))
-                .await
-                .map_err(join_error)??;
-        Ok(ProtoJSSandboxWrapper {
-            inner: Arc::new(Mutex::new(Some(proto_sandbox))),
-        })
-    }
-
-    /// Build a restorer configured for the supplied snapshot.
-    #[napi]
-    pub async fn build_from_snapshot(
+    /// @throws On resource allocation failure, missing host functions, or if already consumed
+    #[napi(ts_return_type = "Promise<T>")]
+    pub async fn build(
         &self,
-        snapshot: &SnapshotWrapper,
-    ) -> napi::Result<SandboxRestorerWrapper> {
-        let builder = self.take_inner()?;
-        let snapshot = snapshot.inner.clone();
-        let restorer = tokio::task::spawn_blocking(move || {
-            builder.build_from_snapshot(snapshot).map_err(to_napi_error)
+    ) -> napi::Result<Either3<ProtoJSSandboxWrapper, JSSandboxWrapper, LoadedJSSandboxWrapper>>
+    {
+        let state = self.take_inner()?;
+        tokio::task::spawn_blocking(move || match state {
+            BuilderState::New(builder) => {
+                let proto_sandbox = builder.build().map_err(to_napi_error)?;
+                Ok(Either3::A(ProtoJSSandboxWrapper {
+                    inner: Arc::new(Mutex::new(Some(proto_sandbox))),
+                }))
+            }
+            BuilderState::JsSandbox(builder) => {
+                let sandbox = builder.build().map_err(to_napi_error)?;
+                Ok(Either3::B(JSSandboxWrapper::from_sandbox(sandbox)))
+            }
+            BuilderState::LoadedJsSandbox(builder) => {
+                let sandbox = builder.build().map_err(to_napi_error)?;
+                Ok(Either3::C(LoadedJSSandboxWrapper::from_sandbox(sandbox)))
+            }
         })
         .await
-        .map_err(join_error)??;
-        Ok(SandboxRestorerWrapper {
-            inner: Arc::new(Mutex::new(Some(restorer))),
-        })
+        .map_err(join_error)?
     }
 
     /// Set a callback that receives guest `console.log` / `print` output.
@@ -772,7 +744,7 @@ impl SandboxBuilderWrapper {
             false,  // Not accepting unknown return types
         >,
     ) -> napi::Result<&Self> {
-        self.with_inner(|b| {
+        self.with_inner(|state| {
             // Blocking mode ensures the TSFN call is queued even when the
             // queue is full (it blocks until space is available), preventing
             // silent message drops that NonBlocking mode would cause.
@@ -794,7 +766,7 @@ impl SandboxBuilderWrapper {
                     -1
                 }
             };
-            b.with_host_print_fn(print_fn.into())
+            map_builder!(state, b => b.with_host_print_fn(print_fn.into()))
         })
     }
 
@@ -816,7 +788,9 @@ impl SandboxBuilderWrapper {
             ));
         }
 
-        self.with_inner(|b| b.with_output_transport_pool_pages(pages as usize))
+        self.with_inner(
+            |state| map_builder!(state, b => b.with_output_transport_pool_pages(pages as usize)),
+        )
     }
 
     /// Set the total host-to-guest buffer pool size in 4 KiB pages.
@@ -834,7 +808,9 @@ impl SandboxBuilderWrapper {
             return Err(invalid_arg_error("Input pool pages must be greater than 0"));
         }
 
-        self.with_inner(|b| b.with_input_transport_pool_pages(pages as usize))
+        self.with_inner(
+            |state| map_builder!(state, b => b.with_input_transport_pool_pages(pages as usize)),
+        )
     }
 
     /// Set each large guest-to-host transport buffer's capacity in bytes.
@@ -852,7 +828,9 @@ impl SandboxBuilderWrapper {
             ));
         }
 
-        self.with_inner(|b| b.with_output_transport_buffer_size(size as usize))
+        self.with_inner(
+            |state| map_builder!(state, b => b.with_output_transport_buffer_size(size as usize)),
+        )
     }
 
     /// Set each host-to-guest transport buffer's capacity in bytes.
@@ -870,7 +848,9 @@ impl SandboxBuilderWrapper {
             ));
         }
 
-        self.with_inner(|b| b.with_input_transport_buffer_size(size as usize))
+        self.with_inner(
+            |state| map_builder!(state, b => b.with_input_transport_buffer_size(size as usize)),
+        )
     }
 }
 
@@ -1007,89 +987,6 @@ impl ProtoJSSandboxWrapper {
         >,
     ) -> napi::Result<()> {
         self.host_module(module_name)?.register(function_name, func)
-    }
-}
-
-// ── SandboxRestorer ──────────────────────────────────────────────────
-
-/// Restores a snapshot using host resources configured on `SandboxBuilder`.
-#[napi(js_name = "SandboxRestorer")]
-#[derive(Clone)]
-pub struct SandboxRestorerWrapper {
-    inner: Arc<Mutex<Option<SandboxRestorer>>>,
-}
-
-impl SandboxRestorerWrapper {
-    fn with_inner_mut<F, R>(&self, f: F) -> napi::Result<R>
-    where
-        F: FnOnce(&mut SandboxRestorer) -> napi::Result<R>,
-    {
-        let mut guard = self.inner.lock().map_err(|_| lock_error())?;
-        let restorer = guard
-            .as_mut()
-            .ok_or_else(|| consumed_error("SandboxRestorer"))?;
-        f(restorer)
-    }
-
-    fn take_inner(&self) -> napi::Result<SandboxRestorer> {
-        self.inner
-            .lock()
-            .map_err(|_| lock_error())?
-            .take()
-            .ok_or_else(|| consumed_error("SandboxRestorer"))
-    }
-}
-
-#[napi]
-impl SandboxRestorerWrapper {
-    /// The lifecycle state captured by the snapshot.
-    #[napi(getter)]
-    pub fn kind(&self) -> napi::Result<String> {
-        self.with_inner_mut(|restorer| Ok(snapshot_kind_name(restorer.kind())))
-    }
-
-    /// Host resources required to restore the snapshot.
-    #[napi(getter)]
-    pub fn requirements(&self) -> napi::Result<SnapshotRequirements> {
-        self.with_inner_mut(|restorer| Ok(snapshot_requirements(restorer.requirements())))
-    }
-
-    /// Restore the snapshot as a `JSSandbox`.
-    #[napi]
-    pub async fn restore_js_sandbox(&self) -> napi::Result<JSSandboxWrapper> {
-        let restorer = self.take_inner()?;
-        let sandbox = tokio::task::spawn_blocking(move || {
-            restorer.restore::<JSSandbox>().map_err(to_napi_error)
-        })
-        .await
-        .map_err(join_error)??;
-        Ok(JSSandboxWrapper {
-            inner: Arc::new(Mutex::new(Some(sandbox))),
-            busy_flag: Arc::new(AtomicBool::new(false)),
-        })
-    }
-
-    /// Restore the snapshot as a `LoadedJSSandbox`.
-    #[napi]
-    pub async fn restore_loaded_sandbox(&self) -> napi::Result<LoadedJSSandboxWrapper> {
-        let restorer = self.take_inner()?;
-        let loaded_sandbox = tokio::task::spawn_blocking(move || {
-            restorer.restore::<LoadedJSSandbox>().map_err(to_napi_error)
-        })
-        .await
-        .map_err(join_error)??;
-        let interrupt = loaded_sandbox.interrupt_handle();
-        let status = Arc::new(AtomicU8::new(
-            SandboxStatus::from_hyperlight(loaded_sandbox.status()).as_u8(),
-        ));
-        Ok(LoadedJSSandboxWrapper {
-            inner: Arc::new(AsyncMutex::new(Some(loaded_sandbox))),
-            interrupt,
-            status,
-            last_call_stats: Arc::new(ArcSwapOption::empty()),
-            disposed_flag: Arc::new(AtomicBool::new(false)),
-            executing_flag: Arc::new(AtomicBool::new(false)),
-        })
     }
 }
 
@@ -1953,6 +1850,13 @@ pub struct JSSandboxWrapper {
 }
 
 impl JSSandboxWrapper {
+    fn from_sandbox(sandbox: JSSandbox) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Some(sandbox))),
+            busy_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     /// Borrow the inner value mutably via Mutex, or error if consumed.
     fn with_inner_mut<F, R>(&self, f: F) -> napi::Result<R>
     where
@@ -2170,16 +2074,23 @@ impl JSSandboxWrapper {
         })
         .await
         .map_err(join_error)??;
-        Ok(SnapshotWrapper { inner: snapshot })
+        Ok(SnapshotWrapper {
+            inner: AnySnapshot::JsSandbox(snapshot),
+        })
     }
 
     /// Restore the runtime state and handlers and modules that were added to the
     /// snapshotted sandbox but not yet registered in the guest.
     #[napi]
     pub async fn restore(&self, snapshot: &SnapshotWrapper) -> napi::Result<()> {
+        let AnySnapshot::JsSandbox(snapshot) = &snapshot.inner else {
+            return Err(invalid_arg_error(
+                "Cannot restore a LoadedJSSandbox snapshot into a JSSandbox",
+            ));
+        };
+        let snapshot = snapshot.clone();
         let _busy_guard = JSSandboxBusyGuard::acquire(Arc::clone(&self.busy_flag))?;
         let inner = Arc::clone(&self.inner);
-        let snapshot = snapshot.inner.clone();
         tokio::task::spawn_blocking(move || {
             let mut guard = inner.lock().map_err(|_| lock_error())?;
             let sandbox = guard.as_mut().ok_or_else(|| consumed_error("JSSandbox"))?;
@@ -2309,6 +2220,21 @@ pub struct LoadedJSSandboxWrapper {
 type LoadedJSSandboxGuard = OwnedMappedMutexGuard<Option<LoadedJSSandbox>, LoadedJSSandbox>;
 
 impl LoadedJSSandboxWrapper {
+    fn from_sandbox(sandbox: LoadedJSSandbox) -> Self {
+        let interrupt = sandbox.interrupt_handle();
+        let status = Arc::new(AtomicU8::new(
+            SandboxStatus::from_hyperlight(sandbox.status()).as_u8(),
+        ));
+        Self {
+            inner: Arc::new(AsyncMutex::new(Some(sandbox))),
+            interrupt,
+            status,
+            last_call_stats: Arc::new(ArcSwapOption::empty()),
+            disposed_flag: Arc::new(AtomicBool::new(false)),
+            executing_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     /// Borrow the inner value mutably via Mutex, or error if consumed.
     ///
     /// Performs deadlock detection: if `executing_flag` is set (meaning we're
@@ -2683,7 +2609,9 @@ impl LoadedJSSandboxWrapper {
                 result
             })
             .await?;
-        Ok(SnapshotWrapper { inner: snapshot })
+        Ok(SnapshotWrapper {
+            inner: AnySnapshot::LoadedJsSandbox(snapshot),
+        })
     }
 
     /// Restore the sandbox to a previously captured snapshot state.
@@ -2697,7 +2625,12 @@ impl LoadedJSSandboxWrapper {
     /// @throws If the snapshot doesn't match this sandbox, or if consumed
     #[napi]
     pub async fn restore(&self, snapshot: &SnapshotWrapper) -> napi::Result<()> {
-        let snap = snapshot.inner.clone();
+        let AnySnapshot::LoadedJsSandbox(snap) = &snapshot.inner else {
+            return Err(invalid_arg_error(
+                "Cannot restore a JSSandbox snapshot into a LoadedJSSandbox",
+            ));
+        };
+        let snap = snap.clone();
         let status = self.status.clone();
 
         self.with_blocking_inner(move |mut sandbox| {

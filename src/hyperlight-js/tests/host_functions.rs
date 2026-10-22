@@ -17,10 +17,7 @@ limitations under the License.
 
 #![allow(clippy::disallowed_macros)]
 
-use hyperlight_js::{
-    HostFunctionFilter, HostFunctionModule, LoadedJSSandbox, RequirementStatus, SandboxBuilder,
-    Script, Snapshot,
-};
+use hyperlight_js::{HostFunctionModule, LoadedJSSandbox, SandboxBuilder, Script, Snapshot};
 
 #[test]
 fn can_call_host_functions() {
@@ -1062,12 +1059,6 @@ fn js_restore_rejects_missing_host_function_before_mutation() {
         )
         .unwrap();
     let snapshot = source.snapshot().unwrap();
-    let requirements = snapshot.requirements();
-    assert_eq!(
-        requirements.host_functions().get("required"),
-        Some(&vec!["value".to_owned()])
-    );
-    assert_eq!(requirements.module_loader(), RequirementStatus::Unknown);
 
     let mut destination = SandboxBuilder::new()
         .build()
@@ -1145,7 +1136,7 @@ fn extra_host_function_module() -> HostFunctionModule {
     extra
 }
 
-fn loaded_snapshot_requiring_host_function() -> Snapshot {
+fn loaded_snapshot_requiring_host_function() -> Snapshot<LoadedJSSandbox> {
     let mut source = SandboxBuilder::new()
         .with_host_function_modules(|| [required_host_function_module()])
         .build()
@@ -1169,31 +1160,32 @@ fn loaded_snapshot_requiring_host_function() -> Snapshot {
 #[test]
 fn loaded_restore_keeps_captured_requirements_until_unload() {
     let snapshot = loaded_snapshot_requiring_host_function();
-    let mut restored = SandboxBuilder::new()
+    let mut restored = SandboxBuilder::from_snapshot(snapshot)
         .with_host_function_modules(|| {
             [
                 required_host_function_module(),
                 extra_host_function_module(),
             ]
         })
-        .with_host_function_filter(HostFunctionFilter::all())
-        .build_from_snapshot(snapshot)
-        .unwrap()
-        .restore::<LoadedJSSandbox>()
+        .build()
         .unwrap();
 
     let loaded_snapshot = restored.snapshot().unwrap();
-    assert_eq!(
-        loaded_snapshot.requirements().host_functions(),
-        &std::collections::BTreeMap::from([("required".to_owned(), vec!["value".to_owned()])])
-    );
+    SandboxBuilder::from_snapshot(loaded_snapshot)
+        .with_host_function_modules(|| [required_host_function_module()])
+        .build()
+        .unwrap();
 
     let mut unloaded = restored.unload().unwrap();
     let unloaded_snapshot = unloaded.snapshot().unwrap();
-    assert!(unloaded_snapshot
-        .requirements()
-        .host_functions()
-        .contains_key("extra"));
+    let error = match SandboxBuilder::from_snapshot(unloaded_snapshot)
+        .with_host_function_modules(|| [required_host_function_module()])
+        .build()
+    {
+        Ok(_) => panic!("restore without the extra module unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("extra"));
 
     unloaded
         .add_handler(
@@ -1214,31 +1206,7 @@ fn loaded_restore_keeps_captured_requirements_until_unload() {
 }
 
 #[test]
-fn loaded_restore_filter_limits_capabilities_after_unload() {
-    let snapshot = loaded_snapshot_requiring_host_function();
-    let restored = SandboxBuilder::new()
-        .with_host_function_modules(|| {
-            [
-                required_host_function_module(),
-                extra_host_function_module(),
-            ]
-        })
-        .with_host_function_filter(HostFunctionFilter::snapshot_requirements())
-        .build_from_snapshot(snapshot)
-        .unwrap()
-        .restore::<LoadedJSSandbox>()
-        .unwrap();
-
-    let mut unloaded = restored.unload().unwrap();
-    let unloaded_snapshot = unloaded.snapshot().unwrap();
-    assert_eq!(
-        unloaded_snapshot.requirements().host_functions(),
-        &std::collections::BTreeMap::from([("required".to_owned(), vec!["value".to_owned()])])
-    );
-}
-
-#[test]
-fn snapshot_filter_preserves_required_capability_contract() {
+fn restored_js_sandbox_records_supplied_host_functions() {
     let source_proto = SandboxBuilder::new()
         .with_host_function_modules(|| [required_host_function_module()])
         .build()
@@ -1257,71 +1225,16 @@ fn snapshot_filter_preserves_required_capability_contract() {
         .unwrap();
     let snapshot = source.snapshot().unwrap();
 
-    let mut restored = SandboxBuilder::new()
+    let mut restored = SandboxBuilder::from_snapshot(snapshot)
         .with_host_function_modules(|| {
             [
                 required_host_function_module(),
                 extra_host_function_module(),
             ]
         })
-        .with_host_function_filter(HostFunctionFilter::snapshot_requirements())
-        .build_from_snapshot(snapshot)
-        .unwrap()
-        .restore::<hyperlight_js::JSSandbox>()
-        .unwrap();
-
-    let filtered_snapshot = restored.snapshot().unwrap();
-    assert_eq!(
-        filtered_snapshot.requirements().host_functions(),
-        &std::collections::BTreeMap::from([("required".to_owned(), vec!["value".to_owned()])])
-    );
-
-    let mut compatible = SandboxBuilder::new()
-        .with_host_function_modules(|| [required_host_function_module()])
         .build()
-        .unwrap()
-        .load_runtime()
-        .unwrap();
-    compatible.restore(filtered_snapshot).unwrap();
-}
-
-#[test]
-fn all_filter_records_the_complete_capability_contract() {
-    let source_proto = SandboxBuilder::new()
-        .with_host_function_modules(|| [required_host_function_module()])
-        .build()
-        .unwrap();
-    let mut source = source_proto.load_runtime().unwrap();
-    source
-        .add_handler(
-            "source",
-            Script::from_content(
-                r#"
-                import * as required from "required";
-                function handler(event) { return { value: required.value(0) }; }
-                "#,
-            ),
-        )
-        .unwrap();
-    let snapshot = source.snapshot().unwrap();
-
-    let mut restored = SandboxBuilder::new()
-        .with_host_function_modules(|| {
-            [
-                required_host_function_module(),
-                extra_host_function_module(),
-            ]
-        })
-        .with_host_function_filter(HostFunctionFilter::all())
-        .build_from_snapshot(snapshot)
-        .unwrap()
-        .restore::<hyperlight_js::JSSandbox>()
         .unwrap();
     let complete_snapshot = restored.snapshot().unwrap();
-    assert!(complete_snapshot
-        .requirements()
-        .host_functions()
-        .contains_key("extra"));
 
     let mut insufficient = SandboxBuilder::new()
         .with_host_function_modules(|| [required_host_function_module()])

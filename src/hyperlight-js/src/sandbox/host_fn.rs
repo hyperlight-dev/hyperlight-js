@@ -109,36 +109,6 @@ pub(crate) fn host_function_dispatch(
     }
 }
 
-/// Selects host functions to install when building a sandbox.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum HostFunctionFilter {
-    /// Make every supplied host function available to the sandbox.
-    ///
-    /// Restoring a loaded snapshot preserves its captured requirements. Extra
-    /// supplied functions become visible only after unloading back to a
-    /// [`crate::JSSandbox`] and loading newly staged handlers.
-    #[default]
-    All,
-    /// Install only functions declared by the snapshot requirements.
-    ///
-    /// Extra supplied functions are discarded and do not become available after
-    /// unload. This filter is valid only with
-    /// [`crate::SandboxBuilder::build_from_snapshot`].
-    SnapshotRequirements,
-}
-
-impl HostFunctionFilter {
-    /// Make every supplied host function available to the sandbox lifecycle.
-    pub const fn all() -> Self {
-        Self::All
-    }
-
-    /// Make only functions required by the restored snapshot available.
-    pub const fn snapshot_requirements() -> Self {
-        Self::SnapshotRequirements
-    }
-}
-
 /// The closure type for JS bridge host functions.
 ///
 /// Receives the parsed JSON arguments (with `{"__bin__": N}` placeholders
@@ -207,11 +177,6 @@ impl Serialize for HostModule {
 impl HostModule {
     pub(crate) fn function_names(&self) -> impl Iterator<Item = &str> {
         self.functions.keys().map(String::as_str)
-    }
-
-    fn filtered(mut self, names: &[String]) -> Self {
-        self.functions.retain(|name, _| names.contains(name));
-        self
     }
 
     /// Register a typed host function that can be called from the guest
@@ -382,42 +347,18 @@ impl std::fmt::Debug for HostFunctionModule {
     }
 }
 
-pub(crate) fn select_host_function_modules(
+pub(crate) fn host_modules_by_name(
     modules: Vec<HostFunctionModule>,
-    filter: HostFunctionFilter,
-    requirements: Option<&HostFunctionManifest>,
 ) -> crate::Result<HashMap<String, HostModule>> {
-    if filter == HostFunctionFilter::SnapshotRequirements && requirements.is_none() {
-        return Err(crate::new_error!(
-            "HostFunctionFilter::SnapshotRequirements requires build_from_snapshot()"
-        ));
-    }
-
     let mut selected = HashMap::with_capacity(modules.len());
-    for module in modules {
-        let HostFunctionModule { name, module } = module;
+    for HostFunctionModule { name, module } in modules {
         if selected.contains_key(&name) {
             return Err(crate::new_error!(
                 "Duplicate host-function module '{}'",
                 name
             ));
         }
-
-        let functions = match filter {
-            HostFunctionFilter::All => module,
-            HostFunctionFilter::SnapshotRequirements => {
-                let Some(requirements) = requirements else {
-                    return Err(crate::new_error!(
-                        "HostFunctionFilter::SnapshotRequirements requires build_from_snapshot()"
-                    ));
-                };
-                let Some(names) = requirements.get(&name) else {
-                    continue;
-                };
-                module.filtered(names)
-            }
-        };
-        selected.insert(name, functions);
+        selected.insert(name, module);
     }
     Ok(selected)
 }
@@ -477,8 +418,7 @@ mod tests {
             .register("add", |a: i32, b: i32| a + b)
             .register("multiply", |a: i32, b: i32| a * b);
 
-        let selected =
-            select_host_function_modules(vec![module], HostFunctionFilter::All, None).unwrap();
+        let selected = host_modules_by_name(vec![module]).unwrap();
 
         assert_eq!(
             host_function_manifest(&selected).get("math"),
@@ -488,15 +428,14 @@ mod tests {
 
     #[test]
     fn repeated_factory_calls_create_independent_callback_state() {
-        let first = select_host_function_modules(stateful_modules(), HostFunctionFilter::All, None)
+        let first = host_modules_by_name(stateful_modules())
             .unwrap()
             .remove("state")
             .unwrap();
-        let second =
-            select_host_function_modules(stateful_modules(), HostFunctionFilter::All, None)
-                .unwrap()
-                .remove("state")
-                .unwrap();
+        let second = host_modules_by_name(stateful_modules())
+            .unwrap()
+            .remove("state")
+            .unwrap();
 
         let first_call = hyperlight_js_common::encode_json_return("1");
         let second_call = hyperlight_js_common::encode_json_return("2");
@@ -516,50 +455,13 @@ mod tests {
     }
 
     #[test]
-    fn modules_select_snapshot_requirements() {
-        let mut module = HostFunctionModule::new("math");
-        module
-            .register("add", |a: i32, b: i32| a + b)
-            .register("multiply", |a: i32, b: i32| a * b);
-        let requirements =
-            HostFunctionManifest::from([("math".to_owned(), vec!["multiply".to_owned()])]);
-
-        let selected = select_host_function_modules(
-            vec![module],
-            HostFunctionFilter::SnapshotRequirements,
-            Some(&requirements),
-        )
-        .unwrap();
-
-        assert_eq!(
-            host_function_manifest(&selected).get("math"),
-            Some(&vec!["multiply".to_owned()])
-        );
-    }
-
-    #[test]
-    fn snapshot_filter_rejects_fresh_builds() {
-        let result = select_host_function_modules(
-            Vec::new(),
-            HostFunctionFilter::SnapshotRequirements,
-            None,
-        );
-        let error = match result {
-            Ok(_) => panic!("snapshot filtering unexpectedly accepted a fresh build"),
-            Err(error) => error,
-        };
-
-        assert!(error.to_string().contains("requires build_from_snapshot()"));
-    }
-
-    #[test]
     fn duplicate_module_names_are_rejected() {
         let modules = vec![
             HostFunctionModule::new("math"),
             HostFunctionModule::new("math"),
         ];
 
-        let result = select_host_function_modules(modules, HostFunctionFilter::All, None);
+        let result = host_modules_by_name(modules);
         let error = match result {
             Ok(_) => panic!("duplicate host-function modules were unexpectedly accepted"),
             Err(error) => error,

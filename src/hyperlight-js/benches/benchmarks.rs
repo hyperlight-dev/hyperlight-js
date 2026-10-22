@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 #[cfg(all(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]
 use hyperlight_js::{CpuTimeMonitor, WallClockMonitor};
-use hyperlight_js::{SandboxBuilder, Script, Snapshot};
+use hyperlight_js::{OciTag, SandboxBuilder, Script, Snapshot};
 
 fn js_load_handler_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("js_get_loaded_sandbox");
@@ -370,23 +370,35 @@ fn persistent_snapshot_benchmark(c: &mut Criterion) {
         .unwrap();
     let snapshot = loaded.snapshot().unwrap();
     let directory = tempfile::tempdir().unwrap();
-    snapshot.save(directory.path(), "benchmark").unwrap();
+    snapshot
+        .save(directory.path(), &OciTag::new("benchmark").unwrap())
+        .unwrap();
 
     let mut group = c.benchmark_group("persistent_snapshots");
     group.bench_function("save_loaded_snapshot", |b| {
-        b.iter(|| snapshot.save(directory.path(), "benchmark").unwrap())
+        b.iter(|| {
+            snapshot
+                .save(directory.path(), &OciTag::new("benchmark").unwrap())
+                .unwrap()
+        })
     });
     group.bench_function("checked_load", |b| {
-        b.iter(|| Snapshot::load(directory.path(), "benchmark").unwrap())
+        b.iter(|| {
+            Snapshot::<hyperlight_js::LoadedJSSandbox>::checked_load(
+                directory.path(),
+                OciTag::new("benchmark").unwrap(),
+            )
+            .unwrap()
+        })
     });
     group.bench_function("restore_loaded_sandbox", |b| {
         b.iter(|| {
-            let snapshot = Snapshot::load(directory.path(), "benchmark").unwrap();
-            SandboxBuilder::new()
-                .build_from_snapshot(snapshot)
-                .unwrap()
-                .restore::<hyperlight_js::LoadedJSSandbox>()
-                .unwrap()
+            let snapshot = Snapshot::<hyperlight_js::LoadedJSSandbox>::checked_load(
+                directory.path(),
+                OciTag::new("benchmark").unwrap(),
+            )
+            .unwrap();
+            SandboxBuilder::from_snapshot(snapshot).build().unwrap()
         })
     });
     group.finish();

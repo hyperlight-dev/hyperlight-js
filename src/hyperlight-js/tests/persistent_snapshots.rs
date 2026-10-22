@@ -16,7 +16,11 @@ limitations under the License.
 
 #![allow(clippy::disallowed_macros)]
 
-use hyperlight_js::{JSSandbox, LoadedJSSandbox, SandboxBuilder, Script, Snapshot, SnapshotKind};
+use hyperlight_js::{JSSandbox, LoadedJSSandbox, OciTag, SandboxBuilder, Script, Snapshot};
+
+fn oci_tag(name: &str) -> OciTag {
+    OciTag::new(name).unwrap()
+}
 
 fn counter_handler() -> Script {
     Script::from_content(
@@ -42,13 +46,14 @@ fn persists_and_restores_js_sandbox() {
     sandbox.add_handler("counter", counter_handler()).unwrap();
 
     let snapshot = sandbox.snapshot().unwrap();
-    assert_eq!(snapshot.kind(), SnapshotKind::JsSandbox);
-    let digest = snapshot.save(directory.path(), "runtime-ready").unwrap();
-    assert!(digest.starts_with("sha256:"));
+    let digest = snapshot
+        .save(directory.path(), &oci_tag("runtime-ready"))
+        .unwrap();
+    assert!(digest.to_string().starts_with("sha256:"));
 
-    let snapshot = Snapshot::load(directory.path(), "runtime-ready").unwrap();
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
-    let sandbox = restorer.restore::<JSSandbox>().unwrap();
+    let snapshot =
+        Snapshot::<JSSandbox>::checked_load(directory.path(), oci_tag("runtime-ready")).unwrap();
+    let sandbox = SandboxBuilder::from_snapshot(snapshot).build().unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
     let result = loaded
@@ -67,12 +72,11 @@ fn js_sandbox_snapshot_accepts_maximum_oci_tag_length() {
         .load_runtime()
         .unwrap();
     let snapshot = sandbox.snapshot().unwrap();
-    let tag = "a".repeat(128);
+    let tag = oci_tag(&"a".repeat(128));
 
     snapshot.save(directory.path(), &tag).unwrap();
 
-    let snapshot = Snapshot::load(directory.path(), &tag).unwrap();
-    assert_eq!(snapshot.kind(), SnapshotKind::JsSandbox);
+    Snapshot::<JSSandbox>::load(directory.path(), tag).unwrap();
 }
 
 #[test]
@@ -106,38 +110,44 @@ fn restores_pending_js_sandbox_state_in_memory() {
 }
 
 #[test]
-fn rejects_wrong_persisted_snapshot_lifecycle_restore() {
+fn rejects_loading_snapshot_as_wrong_lifecycle() {
+    let directory = tempfile::tempdir().unwrap();
     let mut sandbox = SandboxBuilder::new()
         .build()
         .unwrap()
         .load_runtime()
         .unwrap();
     sandbox.add_handler("counter", counter_handler()).unwrap();
-    let js_snapshot = sandbox.snapshot().unwrap();
+    sandbox
+        .snapshot()
+        .unwrap()
+        .save(directory.path(), &oci_tag("runtime-ready"))
+        .unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
-    let loaded_snapshot = loaded.snapshot().unwrap();
-
-    let restorer = SandboxBuilder::new()
-        .build_from_snapshot(js_snapshot)
+    loaded
+        .snapshot()
+        .unwrap()
+        .save(directory.path(), &oci_tag("application-ready"))
         .unwrap();
-    let error = match restorer.restore::<LoadedJSSandbox>() {
-        Ok(_) => panic!("restoring a JSSandbox snapshot as loaded should fail"),
-        Err(error) => error,
-    };
+
+    let error =
+        match Snapshot::<LoadedJSSandbox>::checked_load(directory.path(), oci_tag("runtime-ready"))
+        {
+            Ok(_) => panic!("loading a JSSandbox snapshot as loaded should fail"),
+            Err(error) => error,
+        };
     assert!(error
         .to_string()
-        .contains("Cannot restore a JsSandbox snapshot as a LoadedJSSandbox"));
+        .contains("Snapshot captures a JsSandbox, not a LoadedJsSandbox"));
 
-    let restorer = SandboxBuilder::new()
-        .build_from_snapshot(loaded_snapshot)
-        .unwrap();
-    let error = match restorer.restore::<JSSandbox>() {
-        Ok(_) => panic!("restoring a LoadedJSSandbox snapshot as runtime-ready should fail"),
-        Err(error) => error,
-    };
+    let error =
+        match Snapshot::<JSSandbox>::checked_load(directory.path(), oci_tag("application-ready")) {
+            Ok(_) => panic!("loading a LoadedJSSandbox snapshot as runtime-ready should fail"),
+            Err(error) => error,
+        };
     assert!(error
         .to_string()
-        .contains("Cannot restore a LoadedJsSandbox snapshot as a JSSandbox"));
+        .contains("Snapshot captures a LoadedJsSandbox, not a JsSandbox"));
 }
 
 #[test]
@@ -158,14 +168,14 @@ fn persists_loaded_state_and_preserves_unload() {
     assert_eq!(result["count"], 1);
 
     let snapshot = loaded.snapshot().unwrap();
-    assert_eq!(snapshot.kind(), SnapshotKind::LoadedJsSandbox);
     snapshot
-        .save(directory.path(), "application-ready")
+        .save(directory.path(), &oci_tag("application-ready"))
         .unwrap();
 
-    let snapshot = Snapshot::load(directory.path(), "application-ready").unwrap();
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
-    let mut loaded = restorer.restore::<LoadedJSSandbox>().unwrap();
+    let snapshot =
+        Snapshot::<LoadedJSSandbox>::checked_load(directory.path(), oci_tag("application-ready"))
+            .unwrap();
+    let mut loaded = SandboxBuilder::from_snapshot(snapshot).build().unwrap();
 
     let result = loaded
         .handle_event("counter", "{}".to_owned(), None)
@@ -203,18 +213,20 @@ fn loaded_snapshot_can_be_resaved_to_another_layout() {
 
     let snapshot = loaded.snapshot().unwrap();
     let first_digest = snapshot
-        .save(first_directory.path(), "application-ready")
+        .save(first_directory.path(), &oci_tag("application-ready"))
         .unwrap();
-    let snapshot = Snapshot::load(first_directory.path(), &first_digest).unwrap();
+    let snapshot =
+        Snapshot::<LoadedJSSandbox>::checked_load(first_directory.path(), first_digest.clone())
+            .unwrap();
     let second_digest = snapshot
-        .save(second_directory.path(), "application-copy")
+        .save(second_directory.path(), &oci_tag("application-copy"))
         .unwrap();
 
     assert_eq!(second_digest, first_digest);
 
-    let snapshot = Snapshot::load(second_directory.path(), &second_digest).unwrap();
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
-    let mut loaded = restorer.restore::<LoadedJSSandbox>().unwrap();
+    let snapshot =
+        Snapshot::<LoadedJSSandbox>::checked_load(second_directory.path(), second_digest).unwrap();
+    let mut loaded = SandboxBuilder::from_snapshot(snapshot).build().unwrap();
     let result = loaded
         .handle_event("counter", "{}".to_owned(), None)
         .unwrap();
@@ -242,9 +254,9 @@ fn loaded_snapshot_rejects_tag_that_would_collide_after_truncation() {
     sandbox.add_handler("counter", counter_handler()).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
     let snapshot = loaded.snapshot().unwrap();
-    let tag = "a".repeat(119);
+    let tag = oci_tag(&"a".repeat(119));
 
-    let error = snapshot.save(directory.path(), tag).unwrap_err();
+    let error = snapshot.save(directory.path(), &tag).unwrap_err();
 
     assert!(error.to_string().contains("must be at most 118 bytes"));
     assert!(!directory.path().join("index.json").exists());
@@ -277,11 +289,13 @@ fn persisted_js_sandbox_restores_embedded_javascript_modules() {
         .unwrap();
 
     let snapshot = sandbox.snapshot().unwrap();
-    snapshot.save(directory.path(), "embedded-js").unwrap();
-    let snapshot = Snapshot::load(directory.path(), "embedded-js").unwrap();
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
-    let mut loaded = restorer
-        .restore::<JSSandbox>()
+    snapshot
+        .save(directory.path(), &oci_tag("embedded-js"))
+        .unwrap();
+    let snapshot =
+        Snapshot::<JSSandbox>::checked_load(directory.path(), oci_tag("embedded-js")).unwrap();
+    let mut loaded = SandboxBuilder::from_snapshot(snapshot)
+        .build()
         .unwrap()
         .get_loaded_sandbox()
         .unwrap();

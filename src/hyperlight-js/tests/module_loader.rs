@@ -22,8 +22,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use hyperlight_js::{
-    embed_modules, FileMetadata, FileSystem, FileSystemEmbedded, ResolveError, SandboxBuilder,
-    Script, Snapshot,
+    embed_modules, FileMetadata, FileSystem, FileSystemEmbedded, OciTag, ResolveError,
+    SandboxBuilder, Script, Snapshot,
 };
 
 struct CloneCountingFileSystem {
@@ -245,12 +245,9 @@ fn restored_sandbox_reuses_module_resolver() {
     sandbox.add_handler("calculator", handler).unwrap();
     let snapshot = sandbox.snapshot().unwrap();
 
-    let restorer = SandboxBuilder::new()
-        .with_module_loader(file_system)
-        .build_from_snapshot(snapshot)
-        .unwrap();
+    let builder = SandboxBuilder::from_snapshot(snapshot).with_module_loader(file_system);
     let clones_after_setup = clone_count.load(Ordering::Relaxed);
-    let sandbox = restorer.restore::<hyperlight_js::JSSandbox>().unwrap();
+    let sandbox = builder.build().unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
     assert_eq!(clone_count.load(Ordering::Relaxed), clones_after_setup);
@@ -273,9 +270,8 @@ fn restore_reports_required_module_loader() {
         .unwrap();
     let mut sandbox = proto.load_runtime().unwrap();
     let snapshot = sandbox.snapshot().unwrap();
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot).unwrap();
 
-    let error = match restorer.restore::<hyperlight_js::JSSandbox>() {
+    let error = match SandboxBuilder::from_snapshot(snapshot).build() {
         Ok(_) => panic!("restore unexpectedly succeeded without a module loader"),
         Err(error) => error,
     };
@@ -307,15 +303,18 @@ fn persisted_snapshot_restores_with_a_replacement_module_loader() {
     sandbox.add_handler("increment", handler).unwrap();
     let snapshot = sandbox.snapshot().unwrap();
     let directory = tempfile::tempdir().unwrap();
-    snapshot.save(directory.path(), "external-modules").unwrap();
-
-    let snapshot = Snapshot::load(directory.path(), "external-modules").unwrap();
-    let restorer = SandboxBuilder::new()
-        .with_module_loader(modules)
-        .build_from_snapshot(snapshot)
+    snapshot
+        .save(directory.path(), &OciTag::new("external-modules").unwrap())
         .unwrap();
-    let mut loaded = restorer
-        .restore::<hyperlight_js::JSSandbox>()
+
+    let snapshot = Snapshot::<hyperlight_js::JSSandbox>::checked_load(
+        directory.path(),
+        OciTag::new("external-modules").unwrap(),
+    )
+    .unwrap();
+    let mut loaded = SandboxBuilder::from_snapshot(snapshot)
+        .with_module_loader(modules)
+        .build()
         .unwrap()
         .get_loaded_sandbox()
         .unwrap();

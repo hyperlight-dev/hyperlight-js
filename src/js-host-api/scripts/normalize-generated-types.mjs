@@ -26,16 +26,30 @@ const publicTypes = [
     'LoadedJSSandbox',
     'ProtoJSSandbox',
     'SandboxBuilder',
-    'SandboxRestorer',
     'Snapshot',
 ];
 
 let declarations = await readFile(declarationsPath, 'utf8');
+// Remove every alias first. Renaming `JSSandboxWrapper` would otherwise also
+// rewrite `LoadedJSSandboxWrapper` before its own alias is removed.
 for (const publicType of publicTypes) {
     declarations = declarations.replace(
         new RegExp(`^export type ${publicType}Wrapper = ${publicType}\\r?\\n`, 'm'),
         ''
     );
-    declarations = declarations.replaceAll(`${publicType}Wrapper`, publicType);
 }
+for (const publicType of publicTypes) {
+    declarations = declarations.replace(new RegExp(`\\b${publicType}Wrapper\\b`, 'g'), publicType);
+}
+
+// `build()` returns the sandbox type selected by `new SandboxBuilder()` or
+// `SandboxBuilder.fromSnapshot()`. napi cannot declare class type parameters.
+const builderClass = /^export declare class SandboxBuilder \{/m;
+if (!builderClass.test(declarations)) {
+    throw new Error('Generated declarations do not declare class SandboxBuilder');
+}
+declarations = declarations.replace(
+    builderClass,
+    'export declare class SandboxBuilder<T extends ProtoJSSandbox | JSSandbox | LoadedJSSandbox = ProtoJSSandbox> {'
+);
 await writeFile(declarationsPath, declarations);

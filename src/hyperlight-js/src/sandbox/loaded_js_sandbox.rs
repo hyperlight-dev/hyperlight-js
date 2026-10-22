@@ -29,7 +29,7 @@ use super::js_sandbox::JSSandbox;
 use super::metrics::{METRIC_SANDBOX_LOADS, METRIC_SANDBOX_UNLOADS};
 use super::monitor::runtime::get_monitor_runtime;
 use super::monitor::MonitorSet;
-use super::snapshot::{HostFunctionManifest, Snapshot, SnapshotKind, SnapshotMetadata};
+use super::snapshot::{HostFunctionManifest, Snapshot, SnapshotMetadata};
 #[cfg(feature = "function_call_metrics")]
 use crate::sandbox::metrics::EventHandlerMetricGuard;
 use crate::sandbox::metrics::SandboxMetricsGuard;
@@ -90,15 +90,9 @@ impl LoadedJSSandbox {
 
     pub(crate) fn from_snapshot(
         inner: Sandbox,
-        snapshot: &Snapshot,
+        snapshot: &Snapshot<LoadedJSSandbox>,
         available_host_functions: HostFunctionManifest,
     ) -> Result<LoadedJSSandbox> {
-        if snapshot.kind() != SnapshotKind::LoadedJsSandbox {
-            return Err(crate::new_error!(
-                "Cannot restore a {:?} snapshot as a LoadedJSSandbox",
-                snapshot.kind()
-            ));
-        }
         let base = snapshot.base().ok_or_else(|| {
             crate::new_error!("LoadedJSSandbox snapshot is missing its base snapshot")
         })?;
@@ -218,7 +212,7 @@ impl LoadedJSSandbox {
     /// Take a snapshot of the the current state of the sandbox.
     /// This can be used to restore the state of the sandbox later.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn snapshot(&mut self) -> Result<Snapshot> {
+    pub fn snapshot(&mut self) -> Result<Snapshot<LoadedJSSandbox>> {
         let inner = self.inner.snapshot()?;
         Ok(Snapshot::new(
             inner,
@@ -229,13 +223,7 @@ impl LoadedJSSandbox {
 
     /// Restore the state of the sandbox to a previous snapshot.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
-    pub fn restore(&mut self, snapshot: Snapshot) -> Result<()> {
-        if snapshot.kind() != SnapshotKind::LoadedJsSandbox {
-            return Err(crate::new_error!(
-                "Cannot restore a {:?} snapshot into a LoadedJSSandbox",
-                snapshot.kind()
-            ));
-        }
+    pub fn restore(&mut self, snapshot: Snapshot<LoadedJSSandbox>) -> Result<()> {
         snapshot
             .metadata()
             .validate_host_functions(&self.available_host_functions)?;

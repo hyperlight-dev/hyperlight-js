@@ -50,12 +50,10 @@ async function writeSnapshot() {
 }
 
 async function readSnapshot() {
-    const snapshot = await Snapshot.load(path, 'application-ready');
-    const restorer = await new SandboxBuilder()
+    const snapshot = await Snapshot.checkedLoad(path, 'application-ready');
+    const loaded = await SandboxBuilder.fromSnapshot(snapshot)
         .setHostFunctionModules(hostFunctionModules)
-        .setHostFunctionFilter('snapshotRequirements')
-        .buildFromSnapshot(snapshot);
-    const loaded = await restorer.restoreLoadedSandbox();
+        .build();
     console.log('After restore:', await loaded.callHandler('counter', {}));
     await loaded.dispose();
 }

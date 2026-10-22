@@ -24,7 +24,7 @@ workflow.
 ## Rust
 
 ```rust
-use hyperlight_js::{LoadedJSSandbox, SandboxBuilder, Script, Snapshot};
+use hyperlight_js::{LoadedJSSandbox, OciTag, SandboxBuilder, Script, Snapshot};
 
 fn main() -> hyperlight_js::Result<()> {
     let mut sandbox = SandboxBuilder::new().build()?.load_runtime()?;
@@ -35,19 +35,18 @@ fn main() -> hyperlight_js::Result<()> {
     let mut loaded = sandbox.get_loaded_sandbox()?;
 
     let snapshot = loaded.snapshot()?;
-    let digest = snapshot.save("./snapshots", "application-ready")?;
+    let digest = snapshot.save("./snapshots", &OciTag::new("application-ready")?)?;
 
     // Later, potentially in another process.
-    // "application-ready" can be used instead of digest to load by tag.
-    let snapshot = Snapshot::load("./snapshots", digest)?;
-    let restorer = SandboxBuilder::new().build_from_snapshot(snapshot)?;
-    let _loaded = restorer.restore::<LoadedJSSandbox>()?;
+    // The tag can be used instead of the digest.
+    let snapshot = Snapshot::<LoadedJSSandbox>::checked_load("./snapshots", digest)?;
+    let _loaded = SandboxBuilder::from_snapshot(snapshot).build()?;
     Ok(())
 }
 ```
 
-Use `restore::<JSSandbox>()` for a snapshot whose `kind()` is
-`SnapshotKind::JsSandbox`. The requested type must match the snapshot kind.
+`Snapshot<T>` names the sandbox type the snapshot captured. Loading fails if the
+saved snapshot holds the other type. `build()` returns `T`.
 
 ## Node.js
 
@@ -59,26 +58,25 @@ const digest = await snapshot.save('./snapshots', 'application-ready');
 
 // Later, potentially in another process.
 // 'application-ready' can be used instead of digest to load by tag.
-const persisted = await Snapshot.load('./snapshots', digest);
-const restorer = await new SandboxBuilder().buildFromSnapshot(persisted);
-const restored = await restorer.restoreLoadedSandbox();
+const persisted = await Snapshot.checkedLoad('./snapshots', digest);
+const restored = await SandboxBuilder.fromSnapshot(persisted).build();
 ```
 
-`build_from_snapshot()` in Rust and `buildFromSnapshot()` in Node create a
-`SandboxRestorer`. Configure process-local host resources on `SandboxBuilder`
-before creating the restorer, then restore the matching lifecycle type. Rust uses
-`restore::<JSSandbox>()` or `restore::<LoadedJSSandbox>()`; Node uses
-`restoreJsSandbox()` or `restoreLoadedSandbox()`. A restorer does not expose
-`load_runtime()` or `loadRuntime()`; those methods belong to a fresh
-`ProtoJSSandbox`.
+`build()` returns a `JSSandbox` or `LoadedJSSandbox`, matching the saved
+snapshot. TypeScript types the result as `JSSandbox | LoadedJSSandbox`. Narrow it
+with `instanceof`.
 
-Both bindings verify every OCI blob when loading a snapshot. Use
-`Snapshot::load()` in Rust or `Snapshot.load()` in Node; both accept either a
-tag or manifest digest.
+Configure process-local host resources on the builder before calling `build()`.
+A snapshot's memory layout overrides heap, scratch, and transport settings.
 
-For trusted local layouts, `Snapshot::load_unverified()` in Rust and
-`Snapshot.loadUnverified()` in Node skip digest verification and reduce I/O.
-Do not use them with untrusted snapshot data.
+`Snapshot::checked_load()` in Rust and `Snapshot.checkedLoad()` in Node check
+every OCI blob against its recorded digest. `Snapshot::load()` and
+`Snapshot.load()` skip the check and reduce I/O. Use them only for trusted local
+layouts. All four accept a tag or a manifest digest.
+
+The loaded blobs stay memory-mapped while the snapshot or any sandbox built from
+it is alive. Overwriting, truncating, or deleting them during that time can
+corrupt guest memory.
 
 ## Modules and host resources
 
@@ -103,27 +101,24 @@ that state between sandboxes, which breaks the Sandbox isolation model.
 Rust:
 
 ```rust
-use hyperlight_js::{
-    HostFunctionFilter, HostFunctionModule, JSSandbox, SandboxBuilder, Snapshot,
-};
+use hyperlight_js::{HostFunctionModule, JSSandbox, OciTag, SandboxBuilder, Snapshot};
 
 fn host_function_modules() -> Vec<HostFunctionModule> {
-  let mut database = HostFunctionModule::new("host:database");
-  database.register("query", |id: u64| format!("record-{id}"));
-  vec![database]
+    let mut database = HostFunctionModule::new("host:database");
+    database.register("query", |id: u64| format!("record-{id}"));
+    vec![database]
 }
 
 let fresh = SandboxBuilder::new()
-  .with_host_function_modules(host_function_modules)
+    .with_host_function_modules(host_function_modules)
     .build()?
     .load_runtime()?;
 
-let snapshot = Snapshot::load("./snapshots", "with-host-functions")?;
-let restorer = SandboxBuilder::new()
-  .with_host_function_modules(host_function_modules)
-    .with_host_function_filter(HostFunctionFilter::snapshot_requirements())
-    .build_from_snapshot(snapshot)?;
-let restored: JSSandbox = restorer.restore()?;
+let snapshot =
+    Snapshot::<JSSandbox>::checked_load("./snapshots", OciTag::new("with-host-functions")?)?;
+let restored = SandboxBuilder::from_snapshot(snapshot)
+    .with_host_function_modules(host_function_modules)
+    .build()?;
 ```
 
 Node.js:
@@ -146,37 +141,29 @@ const freshProto = await new SandboxBuilder()
   .build();
 const fresh = await freshProto.loadRuntime();
 
-const snapshot = await Snapshot.load('./snapshots', 'with-host-functions');
-const restorer = await new SandboxBuilder()
+const snapshot = await Snapshot.checkedLoad('./snapshots', 'with-host-functions');
+const restored = await SandboxBuilder.fromSnapshot(snapshot)
   .setHostFunctionModules(hostFunctionModules)
-  .setHostFunctionFilter('snapshotRequirements')
-  .buildFromSnapshot(snapshot);
-const restored = await restorer.restoreJsSandbox();
+  .build();
 ```
 
-Loaded sandboxes track two host-function manifests:
+A snapshot records the host functions its guest state needs. `build()` fails
+before running the guest if a recorded module or function is not supplied.
 
-- **Required** functions belong to the currently captured guest state and are
-  reported by `Snapshot::requirements()` / `snapshot.requirements`.
-- **Available** functions are callbacks retained by the host for dispatch and
-  possible future handlers after `unload()`.
+The guest can call every supplied host function, including ones the snapshot
+does not record. Handlers loaded after `unload()` can import them too. Supply
+only the modules the guest should reach.
 
-Restoring a loaded snapshot never inflates its required manifest. With the
-default `HostFunctionFilter::All` / `"all"`, every supplied callback remains
-available; unloading promotes that complete set into the resulting `JSSandbox`,
-where newly staged handlers may import it. With `SnapshotRequirements` /
-`"snapshotRequirements"`, callbacks not declared by the snapshot are discarded,
-so they remain unavailable after unload. The requirements filter is valid only
-with `build_from_snapshot()` / `buildFromSnapshot()`.
-
-For `JSSandbox`, no handlers are executing in the guest, but its snapshot still
-records the host capabilities configured for the next load. It therefore records
-the available manifest rather than an empty requirement set.
+A loaded snapshot records the host functions its evaluated handlers need. Saving
+it again after a restore keeps that record, even when the restoring builder
+supplied more functions. A `JSSandbox` snapshot records every function supplied
+to its builder, because its staged handlers are not compiled yet.
 
 hyperlight validates only the typed `CallHostJsFunction` bridge. hyperlight-js
 therefore validates individual logical module and function names itself. It
-cannot verify argument types, return types, or behavior; [hyperlight-js#339]
-[hyperlight-js-host-function-signatures] tracks stable semantic signatures.
+cannot verify argument types, return types, or behavior.
+[hyperlight-js#339][hyperlight-js-host-function-signatures] tracks stable
+semantic signatures.
 
 ### Embedded JavaScript modules
 
@@ -200,11 +187,11 @@ QuickJS traverses an import that earlier loaders did not satisfy. Modules never
 imported before the snapshot are not present in guest memory.
 
 ```rust
-let snapshot = Snapshot::load("./snapshots", "with-module-loader")?;
-let restorer = SandboxBuilder::new()
-  .with_module_loader(file_system)
-  .build_from_snapshot(snapshot)?;
-let sandbox = restorer.restore::<JSSandbox>()?;
+let snapshot =
+    Snapshot::<JSSandbox>::checked_load("./snapshots", OciTag::new("with-module-loader")?)?;
+let sandbox = SandboxBuilder::from_snapshot(snapshot)
+    .with_module_loader(file_system)
+    .build()?;
 ```
 
 hyperlight records `ResolveModule` and `LoadModule`, including their exact type
@@ -227,30 +214,14 @@ require host-side registration. The `JSRUNTIME` embedded in the current host
 binary is used only when constructing a fresh sandbox, not when restoring one.
 CPU architecture and hyperlight snapshot-format compatibility still apply.
 
-### What hyperlight #1870 blocks
+### Module-loader requirements
 
-hyperlight already enforces low-level host-function requirements during restore.
-[hyperlight#1870][hyperlight-snapshot-host-functions] is not needed for safety;
-it is needed to inspect those requirements before attempting to build.
-
-Until #1870 is available, `Snapshot::requirements().module_loader()` returns
-`RequirementStatus::Unknown` and `snapshot.requirements.moduleLoader` returns
-`"unknown"`. hyperlight-js cannot determine in advance whether the underlying
-snapshot requires `ResolveModule` and `LoadModule`. It must rely on the
-application's contract or attempt restoration and translate the mismatch error.
-This prevents automatic preflight selection between a captured-source loader, a
-caller-supplied live loader, and no loader. It also prevents a complete public
-view of future low-level hyperlight host-function requirements without
-duplicating hyperlight's canonical ABI metadata.
-
-Logical host-function names remain inspectable because hyperlight-js owns that
-metadata:
-
-```rust
-for (module, functions) in snapshot.requirements().host_functions() {
-    println!("{module}: {functions:?}");
-}
-```
+hyperlight checks `ResolveModule` and `LoadModule` during `build()`. It does not
+yet expose a snapshot's host-function requirements for inspection.
+[hyperlight#1870][hyperlight-snapshot-host-functions] tracks that. Until then,
+hyperlight-js cannot tell before building whether a snapshot needs a module
+loader. Supply one when the application's contract requires it, or handle the
+build error.
 
 `HostPrint` is handled separately. hyperlight provides a default stdout printer
 when no custom handler is supplied. Reinstall a custom print handler only when
@@ -277,7 +248,7 @@ OCI layout:
   were registered.
 
 The rollback state is not an independently restorable hyperlight-js
-`JSSandbox` snapshot: it has no `SnapshotKind::JsSandbox` lifecycle metadata or
+`JSSandbox` snapshot: it has no hyperlight-js lifecycle metadata or
 staged handler and module definitions. The loaded snapshot's hyperlight-js
 metadata stores its digest solely so `unload()` can discard evaluated handlers,
 modules, and mutable guest state and return a clean `JSSandbox` after restore.

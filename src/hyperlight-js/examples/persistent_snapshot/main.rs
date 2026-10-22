@@ -17,7 +17,7 @@ limitations under the License.
 use std::path::PathBuf;
 
 use hyperlight_js::{
-    HostFunctionFilter, HostFunctionModule, LoadedJSSandbox, SandboxBuilder, Script, Snapshot,
+    HostFunctionModule, LoadedJSSandbox, OciTag, SandboxBuilder, Script, Snapshot,
 };
 
 fn host_function_modules() -> Vec<HostFunctionModule> {
@@ -67,18 +67,17 @@ fn write_snapshot(path: PathBuf) -> hyperlight_js::Result<()> {
     println!("Before snapshot: {result}");
 
     let snapshot = loaded.snapshot()?;
-    let digest = snapshot.save(path, "application-ready")?;
+    let digest = snapshot.save(path, &OciTag::new("application-ready")?)?;
     println!("Saved application-ready as {digest}");
     Ok(())
 }
 
 fn read_snapshot(path: PathBuf) -> hyperlight_js::Result<()> {
-    let snapshot = Snapshot::load(path, "application-ready")?;
-    let restorer = SandboxBuilder::new()
+    let snapshot =
+        Snapshot::<LoadedJSSandbox>::checked_load(path, OciTag::new("application-ready")?)?;
+    let mut loaded = SandboxBuilder::from_snapshot(snapshot)
         .with_host_function_modules(host_function_modules)
-        .with_host_function_filter(HostFunctionFilter::snapshot_requirements())
-        .build_from_snapshot(snapshot)?;
-    let mut loaded = restorer.restore::<LoadedJSSandbox>()?;
+        .build()?;
     let result = loaded.handle_event("counter", "{}".to_owned(), None)?;
     println!("After restore: {result}");
     Ok(())

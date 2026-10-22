@@ -121,7 +121,6 @@ const {
     LoadedJSSandbox,
     JSSandbox,
     ProtoJSSandbox,
-    SandboxRestorer,
     SandboxBuilder,
     Snapshot,
     HostFunctionModule,
@@ -192,15 +191,6 @@ for (const method of ['loadRuntime']) {
     ProtoJSSandbox.prototype[method] = wrapAsync(orig);
 }
 
-// SandboxRestorer — snapshot restoration
-for (const method of ['restoreJsSandbox', 'restoreLoadedSandbox']) {
-    const orig = SandboxRestorer.prototype[method];
-    if (!orig) throw new Error(`Cannot wrap missing method: SandboxRestorer.${method}`);
-    SandboxRestorer.prototype[method] = wrapAsync(orig);
-}
-wrapGetter(SandboxRestorer, 'kind');
-wrapGetter(SandboxRestorer, 'requirements');
-
 // hostModule() is sync — just wrap for error enrichment
 ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModule);
 
@@ -262,29 +252,39 @@ const HostFunctionModuleExport = new Proxy(HostFunctionModule, {
 native.HostFunctionModule = HostFunctionModuleExport;
 native.HostFunctionModuleWrapper = HostFunctionModuleExport;
 
-// SandboxBuilder — async build + sync setters
-for (const method of ['build', 'buildFromSnapshot']) {
-    const orig = SandboxBuilder.prototype[method];
-    if (!orig) throw new Error(`Cannot wrap missing method: SandboxBuilder.${method}`);
-    SandboxBuilder.prototype[method] = wrapAsync(orig);
+/**
+ * Replace a native class export with one whose static factories have
+ * enriched errors. Native static properties cannot be reassigned.
+ *
+ * @param {Function} cls      — the native class
+ * @param {Object}   statics  — wrapped static methods keyed by name
+ * @returns {Function} the class to export
+ */
+function withWrappedStatics(cls, statics) {
+    function ClassExport(...args) {
+        return Reflect.construct(cls, args, cls);
+    }
+    ClassExport.prototype = cls.prototype;
+    Object.setPrototypeOf(ClassExport, cls);
+    Object.defineProperties(
+        ClassExport,
+        Object.fromEntries(Object.entries(statics).map(([name, value]) => [name, { value }]))
+    );
+    return ClassExport;
 }
+
+// SandboxBuilder — async build, static snapshot factory, sync setters
+SandboxBuilder.prototype.build = wrapAsync(SandboxBuilder.prototype.build);
+native.SandboxBuilder = withWrappedStatics(SandboxBuilder, {
+    fromSnapshot: wrapSync(SandboxBuilder.fromSnapshot.bind(SandboxBuilder)),
+});
 
 // Snapshot — async persistence and static loaders
 Snapshot.prototype.save = wrapAsync(Snapshot.prototype.save);
-wrapGetter(Snapshot, 'kind');
-
-const snapshotLoad = wrapAsync(Snapshot.load.bind(Snapshot));
-const snapshotLoadUnverified = wrapAsync(Snapshot.loadUnverified.bind(Snapshot));
-function SnapshotExport(...args) {
-    return Reflect.construct(Snapshot, args, Snapshot);
-}
-SnapshotExport.prototype = Snapshot.prototype;
-Object.setPrototypeOf(SnapshotExport, Snapshot);
-Object.defineProperties(SnapshotExport, {
-    load: { value: snapshotLoad },
-    loadUnverified: { value: snapshotLoadUnverified },
+native.Snapshot = withWrappedStatics(Snapshot, {
+    load: wrapAsync(Snapshot.load.bind(Snapshot)),
+    checkedLoad: wrapAsync(Snapshot.checkedLoad.bind(Snapshot)),
 });
-native.Snapshot = SnapshotExport;
 
 for (const method of [
     'setHeapSize',
@@ -295,7 +295,6 @@ for (const method of [
     'setOutputTransportBufferSize',
     'setInputBufferSize',
     'setOutputBufferSize',
-    'setHostFunctionFilter',
 ]) {
     const orig = SandboxBuilder.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: SandboxBuilder.${method}`);

@@ -35,8 +35,6 @@ pub mod monitor;
 pub(crate) mod proto_js_sandbox;
 /// A builder for creating a new `JSSandbox`
 pub(crate) mod sandbox_builder;
-/// Restores a Hyperlight JavaScript sandbox from a snapshot.
-pub(crate) mod sandbox_restorer;
 /// Persistent Hyperlight JavaScript snapshots.
 pub(crate) mod snapshot;
 // This include! macro is replaced by the build.rs script.

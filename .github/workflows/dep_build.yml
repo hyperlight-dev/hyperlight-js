@@ -89,7 +89,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - uses: hyperlight-dev/ci-setup-workflow@2f4142ba17cf573af44fc1e1f1ffc743daded5b3 # v1.10.0
+    - uses: hyperlight-dev/ci-setup-workflow@3935a41ca357d6acb4274edc072b75a73a19e2b3 # v2.3.0
       with:
           rust-toolchain: "1.90"
           just-version: "1.51"

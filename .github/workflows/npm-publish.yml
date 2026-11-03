@@ -79,7 +79,7 @@ jobs:
       - name: Hyperlight setup
         uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
         with:
-          rust-toolchain: "1.90"
+          additional-toolchain-directory: src/hyperlight-js-runtime
           just-version: "1.51"
 
       - name: Setup Node.js
@@ -94,10 +94,11 @@ jobs:
       # cannot produce ELF archives, and cargo-hyperlight silently falls back to
       # it when llvm-ar is absent from PATH, leaving every QuickJS and libc
       # symbol undefined at the guest link. Prefer a provisioned llvm-ar and
-      # fall back to the active Rust toolchain's llvm-tools component.
+      # fall back to the guest Rust toolchain's llvm-tools component.
       - name: Set up LLVM guest toolchain (macOS)
         if: runner.os == 'macOS'
         shell: bash
+        working-directory: src/hyperlight-js-runtime
         run: |
           set -euo pipefail
           if command -v llvm-ar >/dev/null 2>&1; then

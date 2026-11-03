@@ -4,7 +4,7 @@
 // sandboxed code can call via `import * as <module> from "host:<module>"`.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SandboxBuilder } from '../lib.js';
-import { expectThrowsWithCode } from './test-helpers.js';
+import { expectThrowsWithCode, trackSandbox } from './test-helpers.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -20,9 +20,9 @@ import { expectThrowsWithCode } from './test-helpers.js';
 async function buildLoadedSandbox(registerFns, handlerScript) {
     const proto = await new SandboxBuilder().build();
     registerFns(proto);
-    const sandbox = await proto.loadRuntime();
+    const sandbox = await trackSandbox(proto.loadRuntime());
     sandbox.addHandler('handler', handlerScript);
-    return sandbox.getLoadedSandbox();
+    return trackSandbox(sandbox.getLoadedSandbox());
 }
 
 // ── HostModule ────────────────────────────────────────────────
@@ -96,9 +96,9 @@ describe('Host function invocation', () => {
         ]) {
             const proto = await builder.build();
             proto.hostModule('host').register('echo', (value) => value);
-            const sandbox = await proto.loadRuntime();
+            const sandbox = await trackSandbox(proto.loadRuntime());
             sandbox.addHandler('handler', source);
-            const loaded = await sandbox.getLoadedSandbox();
+            const loaded = await trackSandbox(sandbox.getLoadedSandbox());
 
             expect(await loaded.callHandler('handler', { value: payload })).toEqual({
                 value: payload,
@@ -406,9 +406,9 @@ describe('Multi-sandbox isolation', () => {
     async function buildTaggedSandbox(tag, hostFnImpl, handlerScript) {
         const proto = await new SandboxBuilder().build();
         hostFnImpl(proto);
-        const sandbox = await proto.loadRuntime();
+        const sandbox = await trackSandbox(proto.loadRuntime());
         sandbox.addHandler('handler', handlerScript);
-        const loaded = await sandbox.getLoadedSandbox();
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
         return { loaded, tag };
     }
 

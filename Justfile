@@ -124,6 +124,7 @@ build-rust-trace target=default-target features="":
 build-js-host-api target=default-target features="": check-npm (build-rust target features)
     cd src/js-host-api && npm install
     cd src/js-host-api && npx napi build --platform {{ if target == "release" { "--release" } else { "" } }} {{ if features == "" { "" } else { "--features=" + features } }}
+    cd src/js-host-api && npm run normalize:types
 
 build-all: (build "debug") (build "release")
     @echo "✅ All builds complete!"
@@ -135,6 +136,8 @@ run-examples target=default-target features="": (build target)
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F function_call_metrics," + features } }} --example metrics
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example metrics
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {'--features guest-call-stats,monitor-wall-clock,monitor-cpu-time'} else if features=="no-default-features" {"--no-default-features -F guest-call-stats,monitor-wall-clock,monitor-cpu-time" } else {"--no-default-features -F guest-call-stats,monitor-wall-clock,monitor-cpu-time," + features } }} --example execution_stats
+    cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example persistent_snapshot -- write target/persistent-rust-snapshot
+    cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example persistent_snapshot -- read target/persistent-rust-snapshot
 
 run-examples-tracing target=default-target features="": (build target)
     cargo run --profile={{ if target == "debug" {"dev"} else { target } }} {{ if features =="" {'--features function_call_metrics'} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --example tracing fmt
@@ -170,6 +173,7 @@ test-monitors target=default-target:
     cd src/hyperlight-js && cargo test --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }} -- --include-ignored --skip test_metrics --skip custom_native_module --skip builtin_modules_work_with_custom --skip console_log_works_with_custom --skip custom_globals_and_host_clock
 
 test-js-host-api target=default-target features="": (build-js-host-api target features)
+    cargo test --manifest-path src/js-host-api/Cargo.toml --profile={{ if target == "debug" {"dev"} else { target } }}
     cd src/js-host-api && npm test
 
 # Test custom native modules:
@@ -246,6 +250,9 @@ run-js-host-api-examples target=default-target features="": (build-js-host-api t
     cd src/js-host-api && node examples/host-functions.js
     @echo ""
     cd src/js-host-api && node examples/user-modules.js
+    @echo ""
+    cd src/js-host-api && node examples/persistent-snapshot.js write ../../target/persistent-node-snapshot
+    cd src/js-host-api && node examples/persistent-snapshot.js read ../../target/persistent-node-snapshot
     @echo ""
     @echo "✅ All examples completed successfully!"
 

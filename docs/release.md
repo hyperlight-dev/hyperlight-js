@@ -57,6 +57,17 @@ Pushing a `vX.Y.Z` tag is the **only** manual trigger you need — you do **not*
 
 Both crates.io and established npm packages use trusted publishing (OIDC), so they do not need long-lived publishing tokens. A new npm package needs a short-lived `NPM_TOKEN` for its first release, as described below. Provenance attestations are generated for every npm package.
 
+### Release-note labels
+
+GitHub generates release notes from merged pull-request titles and labels using
+`.github/release.yml`. Commit messages, including conventional-commit
+`BREAKING CHANGE` footers, are not used for categorization.
+
+Any pull request that breaks a released API must have the `breaking-change`
+label so it appears under **Breaking Changes**. This is in addition to the
+single required `kind/*` label enforced by `PRLabelChecker.yml`. Describe the
+affected Rust and Node APIs and their migration in the pull-request body.
+
 > **Note:** Only a `vX.Y.Z` **tag** push triggers a real release. Pushing to `main`, or running the workflow manually with **Run workflow**, performs a **dry run** — it builds and validates everything but publishes nothing.
 
 ### npm trusted publishing setup

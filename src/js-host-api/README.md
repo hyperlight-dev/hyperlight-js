@@ -59,7 +59,11 @@ Creates and configures a new sandbox.
 - `setOutputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each large guest-to-host transport buffer (must be > 0, chainable)
 - `setInputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy input/host-reply capacity in bytes; use `setInputTransportPoolPages` and `setOutputTransportPoolPages` for explicit pool budgets
 - `setOutputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy output/host-request capacity in bytes; use `setOutputTransportPoolPages`
+- `setHostFunctionModules(modules: HostFunctionModule[])` → `this` — Supply host callbacks for one sandbox. Each module is consumed
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
+
+**Static methods:**
+- `SandboxBuilder.fromSnapshot(snapshot)` → `SandboxBuilder` — Creates a builder whose `build()` returns the `JSSandbox` or `LoadedJSSandbox` the snapshot captured. The snapshot's memory layout overrides heap, scratch, and transport settings.
 
 ```javascript
 const builder = new SandboxBuilder()
@@ -74,21 +78,22 @@ const protoSandbox = await builder.build();
 
 ### ProtoJSSandbox
 
-A proto sandbox ready to load the JavaScript runtime. This is also where
-you register **host functions** — callbacks that guest sandboxed code can
-call. See [Host Functions](#host-functions) below.
+A proto sandbox is a fresh sandbox ready to load the JavaScript runtime.
+Configure host functions on `SandboxBuilder` before calling `build()`.
 
 **Methods:**
-- `loadRuntime()` → `Promise<JSSandbox>` — Loads the JavaScript runtime into the sandbox. All host functions registered via `hostModule()` / `register()` are applied before the runtime loads.
-- `hostModule(name: string)` → `HostModule` — Create a builder for registering functions in a named module
-- `register(moduleName, functionName, callback)` — Convenience method to register a single host function (args are spread, return value auto-stringified)
+- `loadRuntime()` → `Promise<JSSandbox>` — Loads the JavaScript runtime into the sandbox.
+- `hostModule()` / `register()` — **Deprecated:** use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
 
 ```javascript
-// Register host functions, then load the runtime
-const math = protoSandbox.hostModule('math');
-math.register('add', (a, b) => a + b);
+function hostFunctionModules() {
+    const math = new HostFunctionModule('math');
+    math.register('add', (a, b) => a + b);
+    return [math];
+}
 
-const jsSandbox = await protoSandbox.loadRuntime();
+const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
+const jsSandbox = await proto.loadRuntime();
 ```
 
 ### JSSandbox
@@ -107,6 +112,13 @@ A sandbox with the JavaScript runtime loaded, ready for handlers and modules.
 
 **Other Methods:**
 - `getLoadedSandbox()` → `Promise<LoadedJSSandbox>` — Registers all module sources and compiles/loads handlers into the guest; modules are compiled on-demand when first imported.
+- `snapshot()` → `Promise<Snapshot>` — Captures runtime state and staged definitions.
+- `restore(snapshot)` → `Promise<void>` — Restores runtime state and staged definitions.
+
+While `snapshot()` or `restore()` is running, synchronous methods and properties
+fail immediately with `ERR_BUSY`. They never wait on the background VM operation
+and therefore do not block the Node.js event loop. Await the operation before
+accessing the same `JSSandbox` again.
 
 ```javascript
 // Add a module (sync)
@@ -289,7 +301,9 @@ try {
 
 ### Snapshot
 
-An opaque handle representing a point-in-time snapshot of the sandbox state. Use `snapshot()` to capture and `restore()` to roll back after a poisoned state or any other reason.
+An immutable point-in-time snapshot of a `JSSandbox` or `LoadedJSSandbox`.
+Use `restore()` for fast in-memory rollback, or save the snapshot to an OCI
+image layout for later or cross-process restoration.
 
 ```javascript
 const snapshot = await loaded.snapshot();
@@ -299,6 +313,26 @@ const snapshot = await loaded.snapshot();
 await loaded.restore(snapshot);
 console.log(loaded.status); // "ready"
 ```
+
+```javascript
+await snapshot.save('./snapshots', 'application-ready');
+
+// Later, potentially in another process.
+const persisted = await Snapshot.checkedLoad('./snapshots', 'application-ready');
+const restored = await SandboxBuilder.fromSnapshot(persisted)
+    .setHostFunctionModules(hostFunctionModules())
+    .build();
+```
+
+`Snapshot.checkedLoad()` checks every blob against its recorded digest.
+`Snapshot.load()` skips the check. Use it only for trusted local layouts.
+
+The same workflow restores a `JSSandbox` snapshot taken before handlers are
+loaded. Native callbacks are not serialized, so the restoring builder must
+receive fresh, compatible `HostFunctionModule`s. Restoring a
+snapshot of the other sandbox type into an existing sandbox fails with
+`ERR_INVALID_ARG`.
+See [Persistent snapshots](../../docs/persistent-snapshots.md).
 
 ### Error Codes
 
@@ -311,6 +345,7 @@ All errors thrown by the API include a `code` property for programmatic handling
 | `ERR_POISONED` | Sandbox is in an inconsistent state (after timeout kill, guest abort, stack overflow, etc.) — restore from snapshot or unload |
 | `ERR_CANCELLED` | Execution was cancelled (by monitor timeout or manual `kill()`) |
 | `ERR_GUEST_ABORT` | Guest code aborted |
+| `ERR_BUSY` | A `JSSandbox` method was called while its `snapshot()` or `restore()` was still running |
 | `ERR_INTERNAL` | Unexpected internal error |
 
 ```javascript
@@ -344,9 +379,9 @@ sequenceDiagram
     participant Bridge as NAPI Bridge
     participant Host as Host Callback (Node.js)
 
-    Note over Guest,Host: Registration (before loadRuntime)
-    Host->>Bridge: proto.hostModule('math').register('add', callback)
-    Bridge->>HL: Stores closure in HostModule
+    Note over Guest,Host: Builder configuration
+    Host->>Bridge: builder.setHostFunctionModules(hostFunctionModules())
+    Bridge->>HL: Installs callback closures
 
     Note over Guest,Host: Invocation (during callHandler)
     Guest->>HL: math.add(1, 2)
@@ -358,21 +393,22 @@ sequenceDiagram
     HL-->>Guest: 3
 ```
 
-1. **Register** host functions on the `ProtoJSSandbox` (before loading the runtime)
+1. **Define** a function that creates fresh `HostFunctionModule` objects and supply its result to `SandboxBuilder`
 2. **Guest code** imports them as ES modules: `import * as math from "host:math"`
 3. **At call time**, the guest's arguments are JSON-serialised and dispatched to the Node.js main thread via a threadsafe function (V8 is single-threaded, so callbacks *must* execute there). The JSON result is then returned to the guest
 
 ### Quick Start
 
 ```javascript
-const { SandboxBuilder } = require('@hyperlight-dev/js-host-api');
+const { HostFunctionModule, SandboxBuilder } = require('@hyperlight-dev/js-host-api');
 
-const proto = await new SandboxBuilder().build();
+function hostFunctionModules() {
+    const math = new HostFunctionModule('math');
+    math.register('add', (a, b) => a + b);
+    return [math];
+}
 
-// Register a sync host function — args are spread, return auto-stringified
-proto.hostModule('math').register('add', (a, b) => a + b);
-
-// Load the runtime (applies all registrations)
+const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
 const sandbox = await proto.loadRuntime();
 
 // Guest code can now call math.add()
@@ -424,39 +460,37 @@ db.register('query', (table) => ({
 
 ### API Reference
 
-#### `proto.hostModule(name)` → `HostModule`
+#### `new HostFunctionModule(name)`
 
 Creates a builder for a named module. The module name is what guest code
 uses in its `import` statement.
 
 ```javascript
-const math = proto.hostModule('math');
+const math = new HostFunctionModule('math');
 // Guest: import * as math from "host:math";
 ```
 
 Throws `ERR_INVALID_ARG` if name is empty.
 
-#### `builder.register(name, callback)` → `void`
+#### `module.register(name, callback)` → `HostFunctionModule`
 
 Registers a function within the module.
 Arguments are auto-parsed from the guest's JSON array and spread into your
 callback. The return value is automatically `JSON.stringify`'d.
 
 ```javascript
-const math = proto.hostModule('math');
+const math = new HostFunctionModule('math');
 math.register('add', (a, b) => a + b);
 math.register('multiply', (a, b) => a * b);
 ```
 
 Throws `ERR_INVALID_ARG` if function name is empty.
 
-#### `proto.register(moduleName, functionName, callback)`
-
-Convenience shorthand — equivalent to `proto.hostModule(moduleName).register(functionName, callback)`.
-
-```javascript
-proto.register('strings', 'upper', (s) => s.toUpperCase());
-```
+Supply modules with `builder.setHostFunctionModules(hostFunctionModules())`.
+The builder consumes them. Call `hostFunctionModules()` again for each fresh or
+restored builder. Create mutable state inside the function to isolate it per
+sandbox. State captured from an outer scope is shared between every sandbox
+using those modules.
 
 ### Async Callbacks
 
@@ -464,7 +498,8 @@ Host function callbacks can be `async` or return a `Promise`. The bridge
 automatically awaits the result before returning to the guest:
 
 ```javascript
-proto.hostModule('api').register('fetchUser', async (userId) => {
+const api = new HostFunctionModule('api');
+api.register('fetchUser', async (userId) => {
     const response = await fetch(`https://api.example.com/users/${userId}`);
     return await response.json();
 });
@@ -501,25 +536,32 @@ and arrays are also extracted into the binary sidecar and restored on the
 guest side.
 
 ```javascript
-const { SandboxBuilder } = require('@hyperlight/js-host-api');
+const { HostFunctionModule, SandboxBuilder } = require('@hyperlight/js-host-api');
 const { createHash } = require('crypto');
 const zlib = require('zlib');
 
-const proto = await new SandboxBuilder().build();
+function hostFunctionModules() {
+    // Buffer arguments: guest Uint8Array → host Buffer
+    const crypto = new HostFunctionModule('crypto');
+    crypto.register('sha256', (data) => {
+        // data is a Node.js Buffer
+        return createHash('sha256').update(data).digest();  // returns Buffer
+    });
 
-// Buffer arguments: guest Uint8Array → host Buffer
-proto.hostModule('crypto').register('sha256', (data) => {
-    // data is a Node.js Buffer
-    return createHash('sha256').update(data).digest();  // returns Buffer
-});
+    // Mixed args: regular values and Buffers together
+    const io = new HostFunctionModule('io');
+    io.register('compress', (algorithm, data) => {
+        // algorithm is a string, data is a Buffer
+        if (algorithm === 'gzip') return zlib.gzipSync(data);
+        return data;
+    });
 
-// Mixed args: regular values and Buffers together
-proto.hostModule('io').register('compress', (algorithm, data) => {
-    // algorithm is a string, data is a Buffer
-    if (algorithm === 'gzip') return zlib.gzipSync(data);
-    return data;
-});
+    return [crypto, io];
+}
 
+const proto = await new SandboxBuilder()
+    .setHostFunctionModules(hostFunctionModules())
+    .build();
 const sandbox = await proto.loadRuntime();
 sandbox.addHandler('handler', `
     import * as crypto from "host:crypto";
@@ -561,7 +603,8 @@ If your callback throws (sync) or rejects (async), the error propagates
 to the guest as a `HostFunctionError`:
 
 ```javascript
-proto.hostModule('auth').register('validate', (token) => {
+const auth = new HostFunctionModule('auth');
+auth.register('validate', (token) => {
     if (!token) {
         throw new Error('Token is required');
     }
@@ -583,35 +626,42 @@ function handler(event) {
 
 ### Registration Timing
 
-Host functions must be registered **before** calling `loadRuntime()`.
-Registrations are accumulated and applied in bulk when the runtime loads.
+Host-function modules must be supplied to the builder before `build()`.
 
 ```javascript
-const proto = await new SandboxBuilder().build();
+function hostFunctionModules() {
+    const math = new HostFunctionModule('math');
+    math.register('add', (a, b) => a + b);
+    const strings = new HostFunctionModule('strings');
+    strings.register('upper', (s) => s.toUpperCase());
+    return [math, strings];
+}
 
-// ✅ Register before loadRuntime()
-proto.hostModule('math').register('add', (a, b) => a + b);
-proto.hostModule('strings').register('upper', (s) => s.toUpperCase());
-
-const sandbox = await proto.loadRuntime(); // all registrations applied here
+const proto = await new SandboxBuilder()
+    .setHostFunctionModules(hostFunctionModules())
+    .build();
+const sandbox = await proto.loadRuntime();
 ```
 
 ### Snapshot / Restore
 
-Host functions survive snapshot/restore cycles. The snapshot captures the
-guest micro-VM's memory — the host-side JS callbacks live in the Node.js
-process and are unaffected by restore:
+Host callbacks remain attached during in-memory restore because the same host
+process and sandbox are reused. Persistent snapshots do not serialize callbacks;
+supply fresh modules to the restoring builder as shown above.
 
 ```javascript
-// Host-side counter — lives in Node.js, outside the micro-VM
-let callCount = 0;
+function hostFunctionModules() {
+    // This counter belongs to one sandbox because each call creates it.
+    let callCount = 0;
+    const stats = new HostFunctionModule('stats');
+    stats.register('hit', () => {
+        callCount++;
+        return callCount;
+    });
+    return [stats];
+}
 
-const proto = await new SandboxBuilder().build();
-proto.register('stats', 'hit', () => {
-    callCount++;
-    return callCount;
-});
-
+const proto = await new SandboxBuilder().setHostFunctionModules(hostFunctionModules()).build();
 const sandbox = await proto.loadRuntime();
 sandbox.addHandler('handler', `
     import * as stats from "host:stats";
@@ -703,7 +753,7 @@ Module imports use the format `<namespace>:<name>`:
 |-----------|-----------|----------------|
 | `user` | `addModule()` (default) | `import { add } from 'user:math'` |
 | Custom | `addModule(name, source, namespace)` | `import { greet } from 'mylib:utils'` |
-| `host` | `hostModule().register()` (reserved) | `import * as db from 'host:db'` |
+| `host` | `HostFunctionModule` (reserved) | `import * as db from 'host:db'` |
 
 The `host` namespace is reserved — you cannot use it for user modules.
 
@@ -821,14 +871,17 @@ Timeout-based handler termination using wall-clock timeout. Demonstrates killing
 Combined CPU + wall-clock monitoring — the recommended pattern for comprehensive resource protection. Demonstrates OR semantics where the CPU monitor fires first for compute-bound work, with wall-clock as backstop.
 
 ### Host Functions (`host-functions.js`)
-Registering sync and async host functions that guest code can call. Demonstrates
-`hostModule().register()` with spread args, `async` callbacks, and the convenience
-`register()` API.
+Reusable sync and async `HostFunctionModule` objects supplied through
+`SandboxBuilder`, with spread arguments and Promise-returning callbacks.
 
 ### User Modules (`user-modules.js`)
 Registering reusable ES modules that handlers can import. Demonstrates inter-module
 dependencies, custom namespaces, multiple handlers sharing a module, and
 **cross-handler mutable state sharing** via a shared counter module.
+
+### Persistent Snapshots (`persistent-snapshot.js`)
+Separate write/read processes using the same reusable host-function module
+definition.
 
 ## Requirements
 

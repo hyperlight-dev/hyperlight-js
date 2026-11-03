@@ -117,7 +117,15 @@ function wrapSync(fn) {
 // cached by require(), so prototypes are patched once per process, after
 // this module has been required at least once.
 
-const { LoadedJSSandbox, JSSandbox, ProtoJSSandbox, SandboxBuilder, HostModule } = native;
+const {
+    LoadedJSSandbox,
+    JSSandbox,
+    ProtoJSSandbox,
+    SandboxBuilder,
+    Snapshot,
+    HostFunctionModule,
+    HostModule,
+} = native;
 
 /**
  * Wrap a getter so that thrown errors have enriched codes.
@@ -154,7 +162,11 @@ wrapGetter(LoadedJSSandbox, 'interruptHandle');
 wrapGetter(LoadedJSSandbox, 'lastCallStats');
 
 // JSSandbox — async + sync methods + getters
-JSSandbox.prototype.getLoadedSandbox = wrapAsync(JSSandbox.prototype.getLoadedSandbox);
+for (const method of ['getLoadedSandbox', 'snapshot', 'restore']) {
+    const orig = JSSandbox.prototype[method];
+    if (!orig) throw new Error(`Cannot wrap missing method: JSSandbox.${method}`);
+    JSSandbox.prototype[method] = wrapAsync(orig);
+}
 
 for (const method of [
     'addHandler',
@@ -169,10 +181,15 @@ for (const method of [
     if (!orig) throw new Error(`Cannot wrap missing method: JSSandbox.${method}`);
     JSSandbox.prototype[method] = wrapSync(orig);
 }
+wrapGetter(JSSandbox, 'status');
 wrapGetter(JSSandbox, 'poisoned');
 
-// ProtoJSSandbox — async + sync methods
-ProtoJSSandbox.prototype.loadRuntime = wrapAsync(ProtoJSSandbox.prototype.loadRuntime);
+// ProtoJSSandbox — fresh runtime construction
+for (const method of ['loadRuntime']) {
+    const orig = ProtoJSSandbox.prototype[method];
+    if (!orig) throw new Error(`Cannot wrap missing method: ProtoJSSandbox.${method}`);
+    ProtoJSSandbox.prototype[method] = wrapAsync(orig);
+}
 
 // hostModule() is sync — just wrap for error enrichment
 ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModule);
@@ -189,11 +206,11 @@ ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModu
     });
 }
 
-// HostModule — register() with Buffer support
-{
-    const origRegister = HostModule.prototype.register;
-    if (!origRegister) throw new Error('Cannot wrap missing method: HostModule.register');
-    HostModule.prototype.register = wrapSync(function (name, callback) {
+// Host-function modules — register() with Buffer support
+function wrapHostFunctionModule(cls) {
+    const origRegister = cls.prototype.register;
+    if (!origRegister) throw new Error(`Cannot wrap missing method: ${cls.name}.register`);
+    cls.prototype.register = wrapSync(function (name, callback) {
         // Wrap the callback to handle Buffer returns.
         // Args: Rust creates native Buffer objects directly via the
         //       NAPI C API — no conversion needed on the JS side.
@@ -220,9 +237,54 @@ ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModu
         );
     });
 }
+wrapHostFunctionModule(HostFunctionModule);
+wrapHostFunctionModule(HostModule);
 
-// SandboxBuilder — async build + sync setters
+const HostFunctionModuleExport = new Proxy(HostFunctionModule, {
+    construct(target, args, newTarget) {
+        try {
+            return Reflect.construct(target, args, newTarget);
+        } catch (err) {
+            throw enrichError(err);
+        }
+    },
+});
+native.HostFunctionModule = HostFunctionModuleExport;
+native.HostFunctionModuleWrapper = HostFunctionModuleExport;
+
+/**
+ * Replace a native class export with one whose static factories have
+ * enriched errors. Native static properties cannot be reassigned.
+ *
+ * @param {Function} cls      — the native class
+ * @param {Object}   statics  — wrapped static methods keyed by name
+ * @returns {Function} the class to export
+ */
+function withWrappedStatics(cls, statics) {
+    function ClassExport(...args) {
+        return Reflect.construct(cls, args, cls);
+    }
+    ClassExport.prototype = cls.prototype;
+    Object.setPrototypeOf(ClassExport, cls);
+    Object.defineProperties(
+        ClassExport,
+        Object.fromEntries(Object.entries(statics).map(([name, value]) => [name, { value }]))
+    );
+    return ClassExport;
+}
+
+// SandboxBuilder — async build, static snapshot factory, sync setters
 SandboxBuilder.prototype.build = wrapAsync(SandboxBuilder.prototype.build);
+native.SandboxBuilder = withWrappedStatics(SandboxBuilder, {
+    fromSnapshot: wrapSync(SandboxBuilder.fromSnapshot.bind(SandboxBuilder)),
+});
+
+// Snapshot — async persistence and static loaders
+Snapshot.prototype.save = wrapAsync(Snapshot.prototype.save);
+native.Snapshot = withWrappedStatics(Snapshot, {
+    load: wrapAsync(Snapshot.load.bind(Snapshot)),
+    checkedLoad: wrapAsync(Snapshot.checkedLoad.bind(Snapshot)),
+});
 
 for (const method of [
     'setHeapSize',
@@ -233,6 +295,7 @@ for (const method of [
     'setOutputTransportBufferSize',
     'setInputBufferSize',
     'setOutputBufferSize',
+    'setHostFunctionModules',
 ]) {
     const orig = SandboxBuilder.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: SandboxBuilder.${method}`);

@@ -52,6 +52,14 @@
     "prettier": "^3.8.1",
     "vitest": "^5.0.0"
   },
+  "overrides": {
+    "eslint": {
+      "minimatch": "^11.0.1"
+    },
+    "@eslint/config-array": {
+      "minimatch": "^11.0.1"
+    }
+  },
   "engines": {
     "node": ">= 18"
   },

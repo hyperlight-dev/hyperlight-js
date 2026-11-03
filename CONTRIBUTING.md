@@ -118,3 +118,18 @@ For more detailed instructions on setting up GPG signing, see [GitHub's document
 ### Rust Analyzer
 
 If you are using the [Rust Analyzer](https://rust-analyzer.github.io/manual.html) then you may need to set the configuration option `rust-analyzer.rustfmt.extraArgs` to `["+nightly"]` to ensure that formatting works correctly as this project has a [`rustfmt.toml`](./rustfmt.toml) file that uses nightly features.
+
+### Rust Toolchains
+
+Host builds and tools use the root `rust-toolchain.toml`. The guest runtime
+uses a separate toolchain pinned in
+`src/hyperlight-js-runtime/rust-toolchain.toml`, allowing the host compiler to
+advance independently of guest target support.
+
+Build with:
+
+```sh
+just build
+```
+
+The build installs both toolchains and their required components automatically.

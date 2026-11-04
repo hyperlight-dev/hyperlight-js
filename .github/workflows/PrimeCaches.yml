@@ -1,0 +1,173 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+# The only workflow that writes the Rust caches pull requests restore. Entries
+# saved on main are restorable from every pull request. Every other workflow
+# only reads them.
+#
+# Each job looks up the entry for its current lockfiles and toolchain. If it
+# is missing, the job builds from a cold target and saves. rust-cache keeps
+# every dependency version it restores, so a build on a restored entry would
+# grow it with each lockfile change. Tests build but do not run.
+#
+# Keys hash lockfiles and toolchains, not build commands. Bump `prefix-key` in
+# every rust-cache step after changing what a job here builds.
+
+name: Prime Caches
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new run replaces a pending one and never cancels the running one, so the
+# newest commit always saves.
+concurrency:
+  group: prime-caches-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Populate the code-checks-{linux,windows} caches.
+  code-checks:
+    uses: ./.github/workflows/dep_code_checks.yml
+    with:
+      prime_cache: true
+
+  # Populate the caches dep_build.yml restores, keyed by build name.
+  # dep_benchmarks.yml restores the release entries. macOS runners are shared
+  # and persistent, so they have no cache.
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build: windows-2025-debug
+            hypervisor: whp
+            arch: X64
+            config: debug
+          - build: windows-arm64-debug
+            hypervisor: whp
+            arch: arm64
+            config: debug
+          - build: linux-kvm-debug
+            hypervisor: kvm
+            arch: X64
+            config: debug
+          - build: linux-kvm-arm64-debug
+            hypervisor: kvm
+            arch: arm64
+            config: debug
+          - build: linux-hyperv3-debug
+            hypervisor: hyperv3
+            arch: X64
+            config: debug
+          - build: windows-2025-release
+            hypervisor: whp
+            arch: X64
+            config: release
+          - build: windows-arm64-release
+            hypervisor: whp
+            arch: arm64
+            config: release
+          - build: linux-kvm-release
+            hypervisor: kvm
+            arch: X64
+            config: release
+          - build: linux-kvm-arm64-release
+            hypervisor: kvm
+            arch: arm64
+            config: release
+          - build: linux-hyperv3-release
+            hypervisor: hyperv3
+            arch: X64
+            config: release
+    timeout-minutes: ${{ fromJSON(vars.PRIME_CACHES_JOB_TIMEOUT || '45') }}
+    runs-on: ${{ fromJson(matrix.hypervisor == 'whp' && matrix.arch == 'arm64'
+      && format('["self-hosted", "Windows", "ARM64", "1ES.Pool=hl-windows-arm", "JobId=prime-cache-{0}-{1}-{2}-{3}"]',
+        matrix.build, github.run_id, github.run_number, github.run_attempt)
+      || matrix.arch == 'arm64'
+      && '["self-hosted", "Linux", "arm64", "kvm"]'
+      || format('["self-hosted", "{0}", "{1}", "1ES.Pool=hld-{2}-amd", "JobId=prime-cache-{3}-{4}-{5}-{6}"]',
+        matrix.hypervisor == 'whp' && 'Windows' || 'Linux',
+        matrix.arch,
+        matrix.hypervisor == 'whp' && 'win2025' || matrix.hypervisor == 'hyperv3' && 'azlinux3-mshv' || 'kvm',
+        matrix.build,
+        github.run_id,
+        github.run_number,
+        github.run_attempt)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
+        with:
+          rust-toolchain: "1.90"
+          just-version: "1.51"
+
+      - name: install nodejs
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          architecture: ${{ matrix.arch == 'arm64' && 'arm64' || 'x64' }}
+
+      # Keep the steps before this one in sync with dep_build.yml and
+      # dep_benchmarks.yml. The Rust cache key hashes the installed toolchains
+      # and the Rust and C build environment variables.
+      - name: Rust cache
+        id: rust-cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust
+          shared-key: ${{ matrix.build }}
+          lookup-only: true
+
+      - name: Restore sysroot cache
+        id: sysroot-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/hyperlight-js-runtime/sysroot
+          key: sysroot-${{ matrix.build }}-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Build host, tests and examples
+        if: steps.rust-cache.outputs.cache-hit != 'true' || steps.sysroot-cache.outputs.cache-hit != 'true'
+        run: just prime-caches ${{ matrix.config }}
+
+      # A job step, not a post-job step, so the save runs before rust-cache's
+      # post-job cleanup deletes the sysroot.
+      - name: Save sysroot cache
+        if: steps.sysroot-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/hyperlight-js-runtime/sysroot
+          key: ${{ steps.sysroot-cache.outputs.cache-primary-key }}
+
+  # Rust keys end in a toolchain hash and a lockfile hash. Sysroot keys end in
+  # one hash. Each change leaves the old entry behind. Keep the newest entry
+  # per key and delete the rest to stay under the repository cache quota.
+  cleanup:
+    needs: [code-checks, host]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete superseded caches
+        run: |
+          # Filter by key prefix. The listing caps at 1000 entries.
+          for prefix in v1-rust- sysroot-; do
+            gh cache list --ref "$GITHUB_REF" --key "$prefix" --limit 1000 --json id,key,createdAt
+          done | jq -s -r '
+            add
+            | group_by(.key | if startswith("sysroot-") then sub("-[^-]*$"; "") else sub("-[^-]*-[^-]*$"; "") end)
+            | map(sort_by(.createdAt) | reverse | .[1:][])
+            | .[] | "\(.id) \(.key)"' |
+          while read -r id key; do
+            echo "Deleting $key"
+            gh cache delete "$id" || echo "::warning::Failed to delete $key"
+          done

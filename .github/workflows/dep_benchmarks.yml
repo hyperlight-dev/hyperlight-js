@@ -20,10 +20,6 @@ on:
         required: false
         type: string
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: FULL
-
 permissions:
   id-token: write
   contents: read
@@ -74,7 +70,26 @@ jobs:
         if: runner.os == 'Linux' && matrix.hypervisor == 'kvm'
         run: sudo apt install gh -y
 
+      # Restores the entries PrimeCaches saves for the release build job of
+      # the same name. The Rust cache key hashes the CARGO_* and RUST_*
+      # variables, so this workflow sets them only on later steps.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust
+          shared-key: ${{ matrix.build }}
+          save-if: "false"
+
+      - name: Restore sysroot cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/hyperlight-js-runtime/sysroot
+          key: sysroot-${{ matrix.build }}-${{ hashFiles('rust-toolchain.toml') }}
+
       - name: Build
+        env:
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: full
         run: |
             just build-rust release
 
@@ -88,6 +103,9 @@ jobs:
         if: ${{ inputs.download-benchmarks }}
 
       - name: Run benchmarks
+        env:
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: full
         run: |
           just bench-ci dev release
         working-directory: ./src/hyperlight-js 

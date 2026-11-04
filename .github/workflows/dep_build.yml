@@ -178,6 +178,26 @@ jobs:
         echo "$signed_bin" >> "$GITHUB_PATH"
         "$signed_bin/node" --version
 
+    # PrimeCaches saves these entries on main. Keep the steps before them in
+    # sync with its host job, because the Rust cache key hashes the toolchains
+    # and build environment variables those steps set. macOS runners are
+    # shared and persistent, so they have no cache. The sysroot restores after
+    # the Rust cache, which deletes it when it restores a partial match.
+    - name: Rust cache
+      if: runner.os != 'macOS'
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        prefix-key: v1-rust
+        shared-key: ${{ matrix.build }}
+        save-if: "false"
+
+    - name: Restore sysroot cache
+      if: runner.os != 'macOS'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/hyperlight-js-runtime/sysroot
+        key: sysroot-${{ matrix.build }}-${{ hashFiles('rust-toolchain.toml') }}
+
     - name: Build
       run: |
           just build ${{ matrix.config }}

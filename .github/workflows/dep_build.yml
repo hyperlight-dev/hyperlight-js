@@ -171,12 +171,6 @@ jobs:
         echo "$signed_bin" >> "$GITHUB_PATH"
         "$signed_bin/node" --version
 
-    - name: fmt
-      run: just fmt-check
-
-    - name: lint
-      run: just lint ${{ matrix.config }}
-
     - name: Build
       run: |
           just build ${{ matrix.config }}
@@ -184,6 +178,14 @@ jobs:
     - name: Build js-host-api
       run: |
           just build-js-host-api ${{ matrix.config }}
+
+    # dep_code_checks.yml lints Linux and Windows. macOS lints here, because
+    # a separate job would add load to the shared Mac runners. The guest
+    # target follows the host architecture, so this also lints the aarch64
+    # guest.
+    - name: clippy (macOS)
+      if: runner.os == 'macOS'
+      run: just clippy ${{ matrix.config }}
 
     - name: test
       run: just test-all ${{ matrix.config }}

@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+# Formatting and lints do not depend on the hypervisor, so they run once per
+# OS instead of in every build job. The macOS build jobs lint macOS, because
+# a separate job would add load to the shared Mac runners.
+
+name: Code Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-checks:
+    runs-on: ${{ fromJSON(format('["self-hosted", "Linux", "X64", "1ES.Pool=hld-kvm-amd", "JobId=linux-checks-{0}-{1}-{2}"]',
+        github.run_id,
+        github.run_number,
+        github.run_attempt)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
+        with:
+          rust-toolchain: "1.90"
+          just-version: "1.51"
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      - name: fmt
+        run: just fmt-check
+
+      - name: clippy (debug)
+        run: just clippy debug
+
+      - name: clippy (release)
+        run: just clippy release
+
+      - name: Lint JS
+        run: just lint-js
+
+  windows-checks:
+    runs-on: ${{ fromJSON(format('["self-hosted", "Windows", "X64", "1ES.Pool=hld-win2025-amd", "JobId=windows-checks-{0}-{1}-{2}"]',
+        github.run_id,
+        github.run_number,
+        github.run_attempt)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
+        with:
+          rust-toolchain: "1.90"
+          just-version: "1.51"
+
+      - name: clippy (debug)
+        run: just clippy debug
+
+      - name: clippy (release)
+        run: just clippy release

@@ -20,6 +20,9 @@ jobs:
     with:
         environment: release
 
+  code-checks:
+    uses: ./.github/workflows/dep_code_checks.yml
+
   benchmarks:
     uses: ./.github/workflows/dep_benchmarks.yml
     secrets: inherit
@@ -59,7 +62,7 @@ jobs:
           echo "dry_run=$dry_run" >> $GITHUB_OUTPUT
 
   create-release-branch:
-    needs: [build, benchmarks, set-version]
+    needs: [build, benchmarks, code-checks, set-version]
     runs-on: ubuntu-latest
     if: ${{ needs.set-version.outputs.dry_run == 'false' }}
 
@@ -73,14 +76,14 @@ jobs:
           git push --set-upstream origin release/v${{ needs.set-version.outputs.version }}
 
   publish-gh-release:
-    needs: [build, benchmarks, set-version]
+    needs: [build, benchmarks, code-checks, set-version]
     uses: ./.github/workflows/gh-publish.yml
     with:
       version: ${{ needs.set-version.outputs.version }}
       dry_run: ${{ needs.set-version.outputs.dry_run != 'false' }}
 
   publish-npm-packages:
-    needs: [build, benchmarks, set-version]
+    needs: [build, benchmarks, code-checks, set-version]
     uses: ./.github/workflows/npm-publish.yml
     secrets: inherit
     with:
@@ -88,7 +91,7 @@ jobs:
       dry_run: ${{ needs.set-version.outputs.dry_run != 'false' }}
 
   publish-cargo-crates:
-    needs: [build, benchmarks, set-version]
+    needs: [build, benchmarks, code-checks, set-version]
     uses: ./.github/workflows/cargo-publish.yml
     with:
       version: ${{ needs.set-version.outputs.version }}

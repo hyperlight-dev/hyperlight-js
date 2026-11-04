@@ -68,7 +68,7 @@ jobs:
             os: [self-hosted, Windows, ARM64, "1ES.Pool=hl-windows-arm"]
             build_name: win32-arm64-msvc
           - target: aarch64-apple-darwin
-            os: macos-15
+            os: [self-hosted, macos, arm64, hvf]
             build_name: darwin-arm64
           - target: aarch64-unknown-linux-gnu
             os: [self-hosted, Linux, arm64, kvm]
@@ -242,7 +242,7 @@ jobs:
               "artifact_name": "bindings-darwin-arm64",
               "artifact_dir": "darwin-arm64",
               "node_arch": "arm64",
-              "runner": "macos-15",
+              "runner": ["self-hosted", "macos", "arm64", "hvf"],
               "shell": "bash",
               "verify_command": "test \"$(uname -m)\" = \"arm64\"\ntest \"$(node -p process.arch)\" = \"arm64\"",
               "prepare_command": "mv artifacts/darwin-arm64/*.node npm/darwin-arm64/js-host-api.darwin-arm64.node\nmv js-bindings/index.js index.js\nmv js-bindings/index.d.ts index.d.ts",
@@ -294,6 +294,21 @@ jobs:
           architecture: ${{ matrix.node_arch }}
           cache: 'npm'
           cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      # The smoke test needs the hypervisor entitlement. Sign a private copy
+      # because self-hosted runners keep the shared tool cache.
+      - name: Sign node for Hypervisor.framework (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          signed_bin="$RUNNER_TEMP/node-signed"
+          mkdir -p "$signed_bin"
+          cp "$(command -v node)" "$signed_bin/node"
+          codesign -f -s - --entitlements dev/macos-entitlements.plist "$signed_bin/node"
+          codesign -d --entitlements - "$signed_bin/node"
+          echo "$signed_bin" >> "$GITHUB_PATH"
+          "$signed_bin/node" --version
 
       - name: Verify native runner
         run: ${{ matrix.verify_command }}

@@ -17,19 +17,47 @@ permissions:
   contents: read
 
 jobs:
+  # Lets later jobs skip building when a pull request only changes docs.
+  docs-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      docs-only: ${{ steps.docs-only.outputs.result }}
+    steps:
+      - id: docs-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename')
+          if [ -n "$files" ] && ! grep -qvE '\.(md|txt)$' <<< "$files"; then
+            echo "result=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=false" >> "$GITHUB_OUTPUT"
+          fi
+
   benchmarks:
+    needs: docs-pr
     uses: ./.github/workflows/dep_benchmarks.yml
     secrets: inherit
     with:
+      docs_only: ${{ needs.docs-pr.outputs.docs-only }}
       download-benchmarks: true
       upload-benchmarks: false
 
   build:
+    needs: docs-pr
     uses: ./.github/workflows/dep_build.yml
     secrets: inherit
+    with:
+      docs_only: ${{ needs.docs-pr.outputs.docs-only }}
 
   code-checks:
+    needs: docs-pr
     uses: ./.github/workflows/dep_code_checks.yml
+    with:
+      docs_only: ${{ needs.docs-pr.outputs.docs-only }}
 
   license-headers:
     name: check license headers
@@ -46,6 +74,7 @@ jobs:
       - benchmarks
       - build
       - code-checks
+      - docs-pr
       - license-headers
       - spelling
     if: always()

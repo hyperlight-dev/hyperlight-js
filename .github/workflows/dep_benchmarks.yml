@@ -5,6 +5,11 @@ name: Run benchmarks
 on:
   workflow_call:
     inputs:
+      docs_only:
+        description: Skip the benchmarks when "true"
+        required: false
+        type: string
+        default: "false"
       download-benchmarks:
         required: true
         type: boolean
@@ -25,6 +30,7 @@ permissions:
 
 jobs:
   benchmark:
+    if: ${{ inputs.docs_only == 'false' }}
     environment: ${{ inputs.environment }}
     strategy:
         fail-fast: true

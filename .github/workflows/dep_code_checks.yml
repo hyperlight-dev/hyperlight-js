@@ -8,12 +8,19 @@ name: Code Checks
 
 on:
   workflow_call:
+    inputs:
+      docs_only:
+        description: Skip the checks when "true"
+        required: false
+        type: string
+        default: "false"
 
 permissions:
   contents: read
 
 jobs:
   linux-checks:
+    if: ${{ inputs.docs_only == 'false' }}
     runs-on: ${{ fromJSON(format('["self-hosted", "Linux", "X64", "1ES.Pool=hld-kvm-amd", "JobId=linux-checks-{0}-{1}-{2}"]',
         github.run_id,
         github.run_number,
@@ -46,6 +53,7 @@ jobs:
         run: just lint-js
 
   windows-checks:
+    if: ${{ inputs.docs_only == 'false' }}
     runs-on: ${{ fromJSON(format('["self-hosted", "Windows", "X64", "1ES.Pool=hld-win2025-amd", "JobId=windows-checks-{0}-{1}-{2}"]',
         github.run_id,
         github.run_number,

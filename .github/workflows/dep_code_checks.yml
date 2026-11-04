@@ -21,6 +21,7 @@ permissions:
 jobs:
   linux-checks:
     if: ${{ inputs.docs_only == 'false' }}
+    timeout-minutes: ${{ fromJSON(vars.CODE_CHECKS_JOB_TIMEOUT || '30') }}
     runs-on: ${{ fromJSON(format('["self-hosted", "Linux", "X64", "1ES.Pool=hld-kvm-amd", "JobId=linux-checks-{0}-{1}-{2}"]',
         github.run_id,
         github.run_number,
@@ -54,6 +55,7 @@ jobs:
 
   windows-checks:
     if: ${{ inputs.docs_only == 'false' }}
+    timeout-minutes: ${{ fromJSON(vars.CODE_CHECKS_JOB_TIMEOUT || '30') }}
     runs-on: ${{ fromJSON(format('["self-hosted", "Windows", "X64", "1ES.Pool=hld-win2025-amd", "JobId=windows-checks-{0}-{1}-{2}"]',
         github.run_id,
         github.run_number,

@@ -31,6 +31,7 @@ permissions:
 jobs:
   benchmark:
     if: ${{ inputs.docs_only == 'false' }}
+    timeout-minutes: ${{ fromJSON(vars.BENCHMARKS_JOB_TIMEOUT || '60') }}
     environment: ${{ inputs.environment }}
     strategy:
         fail-fast: true

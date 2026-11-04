@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validate npm packages by packing to /tmp and installing into a clean project.
+# Validate npm packages by packing to a temporary directory and installing into a clean project.
 # Simulates what a consumer would experience after `npm install @hyperlight-dev/js-host-api`.
 #
 # Prerequisites:
@@ -10,15 +10,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACK_DIR="/tmp/hyperlight-npm-test-pack"
-INSTALL_DIR="/tmp/hyperlight-npm-test-install"
-MACOS_INSTALL_DIR="/tmp/hyperlight-npm-test-install-macos"
+# A fresh directory per run. The macOS CI hosts run each runner as its own
+# user with a shared /tmp, so fixed paths there can belong to another user.
+WORK_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hyperlight-npm-test.XXXXXX")"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+PACK_DIR="${WORK_DIR}/pack"
+INSTALL_DIR="${WORK_DIR}/install"
+MACOS_INSTALL_DIR="${WORK_DIR}/install-macos"
 PLATFORM_PACKAGE="${PLATFORM_PACKAGE:-linux-x64-gnu}"
 PLATFORM_BINARY="js-host-api.${PLATFORM_PACKAGE}.node"
 REQUIRE_MACOS_PACKAGE="${REQUIRE_MACOS_PACKAGE:-0}"
 
-# ── Cleanup ──────────────────────────────────────────────────────────
-rm -rf "${PACK_DIR}" "${INSTALL_DIR}" "${MACOS_INSTALL_DIR}"
 mkdir -p "${PACK_DIR}" "${INSTALL_DIR}" "${MACOS_INSTALL_DIR}"
 
 cd "${SCRIPT_DIR}"

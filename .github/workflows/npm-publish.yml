@@ -47,7 +47,7 @@ env:
   # Comma-delimited npm package names that have not yet been published and
   # therefore cannot have a trusted publisher configured. Remove each package
   # in a follow-up PR after its first release and trusted-publisher setup.
-  FIRST_TIME_PACKAGES: ",@hyperlight-dev/js-host-api-darwin-arm64,@hyperlight-dev/js-host-api-linux-arm64-gnu,@hyperlight-dev/js-host-api-win32-arm64-msvc,"
+  FIRST_TIME_PACKAGES: ""
 
 jobs:
   build:

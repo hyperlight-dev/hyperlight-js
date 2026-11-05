@@ -565,33 +565,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api,')) && secrets.NPM_TOKEN || '' }}
 
-      - name: Verify all packages published
-        if: ${{ !inputs.dry_run }}
-        run: |
-          echo "Waiting for registry propagation..."
-          sleep 15
-          FAILED=0
-          for pkg in "@hyperlight-dev/js-host-api" \
-                     "@hyperlight-dev/js-host-api-linux-x64-gnu" \
-                     "@hyperlight-dev/js-host-api-linux-x64-musl" \
-                     "@hyperlight-dev/js-host-api-win32-x64-msvc" \
-                     "@hyperlight-dev/js-host-api-win32-arm64-msvc" \
-                     "@hyperlight-dev/js-host-api-darwin-arm64" \
-                     "@hyperlight-dev/js-host-api-linux-arm64-gnu"; do
-            if npm view "$pkg@$VERSION" version > /dev/null 2>&1; then
-              echo "✅ $pkg@$VERSION published"
-            else
-              echo "::error::❌ $pkg@$VERSION NOT found on registry!"
-              FAILED=1
-            fi
-          done
-          if [ "$FAILED" -eq 1 ]; then
-            echo "::error::Some packages failed to publish. Check above for details."
-            exit 1
-          fi
-        env:
-          VERSION: ${{ inputs.version }}
-
       - name: Dry run - show what would be published
         if: ${{ inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}

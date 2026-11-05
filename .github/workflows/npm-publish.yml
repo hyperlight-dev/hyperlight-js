@@ -516,50 +516,65 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish Linux GNU package
+      # Skipping published versions lets a rerun finish a partial publish.
+      - name: Determine which packages need publishing
         if: ${{ !inputs.dry_run }}
+        run: |
+          ./dev/npm-packages-to-publish.sh "$VERSION" \
+            @hyperlight-dev/js-host-api-linux-x64-gnu \
+            @hyperlight-dev/js-host-api-linux-x64-musl \
+            @hyperlight-dev/js-host-api-win32-x64-msvc \
+            @hyperlight-dev/js-host-api-darwin-arm64 \
+            @hyperlight-dev/js-host-api-win32-arm64-msvc \
+            @hyperlight-dev/js-host-api-linux-arm64-gnu \
+            @hyperlight-dev/js-host-api >> "$GITHUB_ENV"
+        env:
+          VERSION: ${{ inputs.version }}
+
+      - name: Publish Linux GNU package
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API_LINUX_X64_GNU != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-gnu
         run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-x64-gnu,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Linux musl package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API_LINUX_X64_MUSL != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-x64-musl
         run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-x64-musl,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Windows package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API_WIN32_X64_MSVC != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}/npm/win32-x64-msvc
         run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-win32-x64-msvc,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish macOS arm64 package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API_DARWIN_ARM64 != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}/npm/darwin-arm64
         run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-darwin-arm64,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Windows arm64 package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API_WIN32_ARM64_MSVC != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}/npm/win32-arm64-msvc
         run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-win32-arm64-msvc,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish Linux arm64 GNU package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API_LINUX_ARM64_GNU != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}/npm/linux-arm64-gnu
         run: npm publish --access public --ignore-scripts --provenance
         env:
           NODE_AUTH_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || contains(env.FIRST_TIME_PACKAGES, ',@hyperlight-dev/js-host-api-linux-arm64-gnu,')) && secrets.NPM_TOKEN || '' }}
 
       - name: Publish main package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && env.PUBLISH_JS_HOST_API != 'false' }}
         working-directory: ${{ env.WORKING_DIR }}
         run: npm publish --access public --ignore-scripts --provenance
         env:

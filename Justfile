@@ -196,6 +196,16 @@ _test-native-modules-restore target=default-target:
     @echo "Rebuilding hyperlight-js with default guest runtime..."
     cd src/hyperlight-js && cargo build --profile={{ if target == "debug" {"dev"} else { target } }}
 
+# Compiles what the CI build job compiles, without running it, so the Prime
+# Caches workflow can save it.
+prime-caches target=default-target: (build target)
+    cd src/hyperlight-js && cargo test --no-run --profile={{ if target == "debug" {"dev"} else { target } }}
+    cd src/hyperlight-js && cargo test --no-run --features monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }}
+    cargo test --no-run --manifest-path=./src/hyperlight-js-runtime/Cargo.toml --test=native_cli --test=native_modules --profile={{ if target == "debug" {"dev"} else { target } }}
+    cargo test --no-run --manifest-path src/js-host-api/Cargo.toml --profile={{ if target == "debug" {"dev"} else { target } }}
+    cargo build --example run_handler --example metrics --example persistent_snapshot --example tracing --profile={{ if target == "debug" {"dev"} else { target } }}
+    cargo build --example execution_stats --features guest-call-stats,monitor-wall-clock,monitor-cpu-time --profile={{ if target == "debug" {"dev"} else { target } }}
+
 # ── Version bumping & fixture-lock consistency ──────────────────────────────
 # The extended_runtime test fixture is a separate `[workspace]` that is excluded
 # from the root workspace (see the root Cargo.toml `exclude`), so it keeps its

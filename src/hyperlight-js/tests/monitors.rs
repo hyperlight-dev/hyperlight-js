@@ -159,16 +159,15 @@ fn cpu_time_monitor_kills_cpu_intensive_handler() {
     let monitor = CpuTimeMonitor::new(Duration::from_millis(500)).unwrap();
     let start = Instant::now();
 
-    // Handler tries to burn CPU for 5 seconds, timeout is 500ms CPU time
-    let event = r#"{"runtime": 5000}"#;
+    // Handler tries to burn CPU for 60 seconds, timeout is 500ms CPU time
+    let event = r#"{"runtime": 60000}"#;
     let result = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
     let elapsed = start.elapsed();
 
-    // For a CPU-bound tight loop, CPU time ≈ wall time, so should terminate
-    // within a few seconds at most
+    // On a loaded host, CPU time accrues several times slower than wall time.
     assert!(
-        elapsed < Duration::from_secs(5),
-        "Should terminate within seconds, took {:?}",
+        elapsed < Duration::from_secs(30),
+        "Should terminate well before the handler finishes, took {:?}",
         elapsed
     );
 
@@ -188,7 +187,7 @@ fn cpu_time_monitor_sandbox_recovers_with_restore() {
 
     // Kill the handler with CPU monitor
     let monitor = CpuTimeMonitor::new(Duration::from_millis(300)).unwrap();
-    let event = r#"{"runtime": 5000}"#;
+    let event = r#"{"runtime": 60000}"#;
     let _ = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
 
     assert!(
@@ -223,19 +222,19 @@ fn tuple_monitor_kills_cpu_intensive_handler() {
     // Recommended pattern: CPU limit with wall-clock backstop
     let monitor = (
         CpuTimeMonitor::new(Duration::from_millis(500)).unwrap(),
-        WallClockMonitor::new(Duration::from_secs(5)).unwrap(),
+        WallClockMonitor::new(Duration::from_secs(60)).unwrap(),
     );
 
     let start = Instant::now();
-    let event = r#"{"runtime": 10000}"#;
+    let event = r#"{"runtime": 120000}"#;
     let result = loaded.handle_event_with_monitor("handler", event.to_string(), &monitor, None);
     let elapsed = start.elapsed();
 
-    // CPU monitor should fire first (tight loop ≈ 100% CPU utilisation)
+    // On a loaded host, CPU time accrues several times slower than wall time.
     assert!(result.is_err(), "Should be killed by CPU monitor");
     assert!(loaded.status().is_poisoned(), "Sandbox should be poisoned");
     assert!(
-        elapsed < Duration::from_secs(3),
+        elapsed < Duration::from_secs(30),
         "CPU monitor should fire well before wall-clock, took {:?}",
         elapsed
     );

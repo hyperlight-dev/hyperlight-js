@@ -5,6 +5,11 @@ name: Build hyperlight-js
 on:
   workflow_call:
     inputs:
+      docs_only:
+        description: Skip the build when "true"
+        required: false
+        type: string
+        default: "false"
       environment: 
         required: false
         type: string
@@ -15,6 +20,8 @@ permissions:
 
 jobs:
   build:
+    if: ${{ inputs.docs_only == 'false' }}
+    timeout-minutes: ${{ fromJSON(vars.BUILD_TEST_JOB_TIMEOUT || '45') }}
     environment: ${{ inputs.environment }}
     strategy:
       fail-fast: true
@@ -171,11 +178,25 @@ jobs:
         echo "$signed_bin" >> "$GITHUB_PATH"
         "$signed_bin/node" --version
 
-    - name: fmt
-      run: just fmt-check
+    # PrimeCaches saves these entries on main. Keep the steps before them in
+    # sync with its host job, because the Rust cache key hashes the toolchains
+    # and build environment variables those steps set. macOS runners are
+    # shared and persistent, so they have no cache. The sysroot restores after
+    # the Rust cache, which deletes it when it restores a partial match.
+    - name: Rust cache
+      if: runner.os != 'macOS'
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        prefix-key: v1-rust
+        shared-key: ${{ matrix.build }}
+        save-if: "false"
 
-    - name: lint
-      run: just lint ${{ matrix.config }}
+    - name: Restore sysroot cache
+      if: runner.os != 'macOS'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/hyperlight-js-runtime/sysroot
+        key: sysroot-${{ matrix.build }}-${{ hashFiles('rust-toolchain.toml') }}
 
     - name: Build
       run: |
@@ -184,6 +205,14 @@ jobs:
     - name: Build js-host-api
       run: |
           just build-js-host-api ${{ matrix.config }}
+
+    # dep_code_checks.yml lints Linux and Windows. macOS lints here, because
+    # a separate job would add load to the shared Mac runners. The guest
+    # target follows the host architecture, so this also lints the aarch64
+    # guest.
+    - name: clippy (macOS)
+      if: runner.os == 'macOS'
+      run: just clippy ${{ matrix.config }}
 
     - name: test
       run: just test-all ${{ matrix.config }}

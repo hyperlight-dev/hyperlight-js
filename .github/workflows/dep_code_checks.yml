@@ -1,0 +1,161 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+# Formatting and lints do not depend on the hypervisor, so they run once per
+# OS instead of in every build job. The macOS build jobs lint macOS, because
+# a separate job would add load to the shared Mac runners.
+
+name: Code Checks
+
+on:
+  workflow_call:
+    inputs:
+      docs_only:
+        description: Skip the checks when "true"
+        required: false
+        type: string
+        default: "false"
+      prime_cache:
+        description: >-
+          Run clippy from a cold target and save the caches. Skips it when the
+          caches are up to date.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  linux-checks:
+    if: ${{ inputs.docs_only == 'false' }}
+    timeout-minutes: ${{ fromJSON(vars.CODE_CHECKS_JOB_TIMEOUT || '30') }}
+    runs-on: ${{ fromJSON(format('["self-hosted", "Linux", "X64", "1ES.Pool=hld-kvm-amd", "JobId=linux-checks-{0}-{1}-{2}"]',
+        github.run_id,
+        github.run_number,
+        github.run_attempt)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
+        with:
+          rust-toolchain: "1.90"
+          just-version: "1.51"
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'src/js-host-api/package-lock.json'
+
+      # Priming builds cold, so the entry holds only what this commit needs.
+      - name: Rust cache
+        id: rust-cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust
+          shared-key: code-checks-linux
+          lookup-only: ${{ inputs.prime_cache }}
+          save-if: ${{ inputs.prime_cache }}
+
+      # cargo-hyperlight builds a guest sysroot in each target directory it
+      # uses. rust-cache deletes everything that is not a dependency, both when
+      # it saves and when it restores a partial match, so the sysroots have
+      # their own cache, restored after it.
+      - name: Restore sysroot cache
+        id: sysroot-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/sysroot
+            target/hyperlight-js-runtime/sysroot
+          key: sysroot-code-checks-linux-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Check whether the caches are up to date
+        id: prime
+        if: inputs.prime_cache
+        shell: bash
+        run: echo "skip=${{ steps.rust-cache.outputs.cache-hit == 'true' && steps.sysroot-cache.outputs.cache-hit == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      - name: fmt
+        if: ${{ !inputs.prime_cache }}
+        run: just fmt-check
+
+      - name: clippy (debug)
+        if: steps.prime.outputs.skip != 'true'
+        run: just clippy debug
+
+      - name: clippy (release)
+        if: steps.prime.outputs.skip != 'true'
+        run: just clippy release
+
+      - name: Lint JS
+        if: ${{ !inputs.prime_cache }}
+        run: just lint-js
+
+      # A job step, not a post-job step, so the save runs before rust-cache's
+      # post-job cleanup deletes the sysroots.
+      - name: Save sysroot cache
+        if: ${{ inputs.prime_cache && steps.sysroot-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/sysroot
+            target/hyperlight-js-runtime/sysroot
+          key: ${{ steps.sysroot-cache.outputs.cache-primary-key }}
+
+  windows-checks:
+    if: ${{ inputs.docs_only == 'false' }}
+    timeout-minutes: ${{ fromJSON(vars.CODE_CHECKS_JOB_TIMEOUT || '30') }}
+    runs-on: ${{ fromJSON(format('["self-hosted", "Windows", "X64", "1ES.Pool=hld-win2025-amd", "JobId=windows-checks-{0}-{1}-{2}"]',
+        github.run_id,
+        github.run_number,
+        github.run_attempt)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
+        with:
+          rust-toolchain: "1.90"
+          just-version: "1.51"
+
+      - name: Rust cache
+        id: rust-cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust
+          shared-key: code-checks-windows
+          lookup-only: ${{ inputs.prime_cache }}
+          save-if: ${{ inputs.prime_cache }}
+
+      - name: Restore sysroot cache
+        id: sysroot-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/sysroot
+            target/hyperlight-js-runtime/sysroot
+          key: sysroot-code-checks-windows-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Check whether the caches are up to date
+        id: prime
+        if: inputs.prime_cache
+        shell: bash
+        run: echo "skip=${{ steps.rust-cache.outputs.cache-hit == 'true' && steps.sysroot-cache.outputs.cache-hit == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      - name: clippy (debug)
+        if: steps.prime.outputs.skip != 'true'
+        run: just clippy debug
+
+      - name: clippy (release)
+        if: steps.prime.outputs.skip != 'true'
+        run: just clippy release
+
+      - name: Save sysroot cache
+        if: ${{ inputs.prime_cache && steps.sysroot-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/sysroot
+            target/hyperlight-js-runtime/sysroot
+          key: ${{ steps.sysroot-cache.outputs.cache-primary-key }}

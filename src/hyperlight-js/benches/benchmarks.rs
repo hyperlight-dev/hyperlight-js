@@ -506,18 +506,16 @@ fn monitor_overhead_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group! {
-    name = benches;
-    config = Criterion::default().measurement_time(Duration::from_secs(20));
-    targets = js_load_handler_benchmark, handle_events_benchmark, full_lifecycle_benchmark, persistent_snapshot_benchmark
-}
+criterion_group!(
+    benches,
+    js_load_handler_benchmark,
+    handle_events_benchmark,
+    full_lifecycle_benchmark,
+    persistent_snapshot_benchmark
+);
 
 #[cfg(all(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]
-criterion_group! {
-    name = monitor_benches;
-    config = Criterion::default().measurement_time(Duration::from_secs(20));
-    targets = monitor_overhead_benchmark
-}
+criterion_group!(monitor_benches, monitor_overhead_benchmark);
 
 #[cfg(all(feature = "monitor-wall-clock", feature = "monitor-cpu-time"))]
 criterion_main!(benches, monitor_benches);

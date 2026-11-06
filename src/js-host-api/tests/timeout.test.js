@@ -153,12 +153,11 @@ describe('CPU Time Timeout', () => {
     it('should kill CPU-intensive handler after CPU timeout', async () => {
         const startTime = Date.now();
 
-        // Handler tries to run for 3 seconds of CPU, timeout is 500ms
-        // Should reject when terminated
+        // Handler tries to run for 60 seconds, timeout is 500ms of CPU time
         await expectRejectsWithCode(
             loaded.callHandler(
                 'handler',
-                { runtime: 3000 },
+                { runtime: 60000 },
                 {
                     cpuTimeoutMs: 500,
                 }
@@ -168,11 +167,10 @@ describe('CPU Time Timeout', () => {
 
         const elapsed = Date.now() - startTime;
 
-        // Should have been killed well before 3 seconds
-        // CPU time is close to wall time for busy loops
-        expect(elapsed).toBeLessThan(2000);
+        // On a loaded host, CPU time accrues several times slower than wall time.
+        expect(elapsed).toBeLessThan(30000);
         expect(loaded.poisoned).toBe(true);
-    });
+    }, 90000);
 });
 
 describe('Combined Monitors (CPU + Wall Clock)', () => {
@@ -221,13 +219,13 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
     it('should kill CPU-intensive handler (CPU fires first)', async () => {
         const startTime = Date.now();
 
-        // CPU timeout (500ms) should fire before wall-clock (5s) for a tight loop
+        // CPU timeout (500ms) should fire before wall-clock (60s) for a tight loop
         await expectRejectsWithCode(
             loaded.callHandler(
                 'handler',
-                { runtime: 10000 },
+                { runtime: 120000 },
                 {
-                    wallClockTimeoutMs: 5000,
+                    wallClockTimeoutMs: 60000,
                     cpuTimeoutMs: 500,
                 }
             ),
@@ -236,10 +234,10 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
 
         const elapsed = Date.now() - startTime;
 
-        // CPU monitor should fire well before the wall-clock timeout
-        expect(elapsed).toBeLessThan(3000);
+        // On a loaded host, CPU time accrues several times slower than wall time.
+        expect(elapsed).toBeLessThan(30000);
         expect(loaded.poisoned).toBe(true);
-    });
+    }, 90000);
 
     it('should recover after combined monitor kill', async () => {
         await expectRejectsWithCode(

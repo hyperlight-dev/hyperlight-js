@@ -111,7 +111,6 @@ jobs:
 
     - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
       with:
-          rust-toolchain: "1.90"
           just-version: "1.51"
 
     # Unlike upstream hyperlight, which builds its guests once per architecture

@@ -116,7 +116,6 @@ jobs:
 
       - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
         with:
-          rust-toolchain: "1.90"
           just-version: "1.51"
 
       - name: Rust cache
@@ -142,6 +141,15 @@ jobs:
         if: inputs.prime_cache
         shell: bash
         run: echo "skip=${{ steps.rust-cache.outputs.cache-hit == 'true' && steps.sysroot-cache.outputs.cache-hit == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      # Temporary workaround until hyperlight-host preserves the surrogate
+      # inside OUT_DIR. rust-cache removes it but retains build-script state.
+      # can be removed once a hyperlight-host with https://github.com/hyperlight-dev/hyperlight/pull/2038 is referenced.
+      - name: Invalidate cached Windows surrogate build
+        if: runner.os == 'Windows'
+        run: |
+          cargo clean -p hyperlight-host --profile dev
+          cargo clean -p hyperlight-host --profile release
 
       - name: clippy (debug)
         if: steps.prime.outputs.skip != 'true'

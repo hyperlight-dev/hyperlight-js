@@ -85,6 +85,13 @@ jobs:
         with:
           path: target/hyperlight-js-runtime/sysroot
           key: sysroot-${{ matrix.build }}-${{ hashFiles('rust-toolchain.toml') }}
+          
+      # Temporary workaround until hyperlight-host preserves the surrogate
+      # inside OUT_DIR. rust-cache removes it but retains build-script state.
+      # can be removed once a hyperlight-host with https://github.com/hyperlight-dev/hyperlight/pull/2038 is referenced.
+      - name: Invalidate cached Windows surrogate build
+        if: runner.os == 'Windows'
+        run: cargo clean -p hyperlight-host --profile release
 
       - name: Build
         env:

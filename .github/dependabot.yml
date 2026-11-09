@@ -21,6 +21,11 @@ updates:
       default-days: 7
     labels:
       - "kind/dependencies"
+    groups:
+      napi:
+        patterns:
+          - "napi"
+          - "napi-*"
   - package-ecosystem: "npm"
     directories: 
       - "/src/js-host-api"

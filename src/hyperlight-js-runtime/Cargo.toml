@@ -44,11 +44,11 @@ hyperlight-guest-bin = { workspace = true }
 clap = { version = "4.6", features = ["derive"] }
 
 [target.'cfg(not(hyperlight))'.dev-dependencies]
-escargot = "1.0"
+escargot = "1.0.1"
 tempfile = "3.27"
 
 [build-dependencies]
-bindgen = "0.73"
+bindgen = "0.73.2"
 
 [features]
 default = []

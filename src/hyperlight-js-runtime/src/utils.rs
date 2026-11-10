@@ -29,8 +29,8 @@ pub fn as_bytes(key: Value) -> Result<Vec<u8>> {
     if let Some(obj) = key.as_object()
         && let Some(array) = obj.as_typed_array::<u8>()
     {
-        return Ok(array.as_bytes().unwrap().to_vec());
-    };
+        return Ok(unsafe { array.as_bytes() }.unwrap().to_vec());
+    }
 
     Err(Exception::throw_type(
         key.ctx(),

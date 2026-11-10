@@ -48,7 +48,7 @@ escargot = "1.0"
 tempfile = "3.27"
 
 [build-dependencies]
-bindgen = "0.72"
+bindgen = "0.73"
 
 [features]
 default = []

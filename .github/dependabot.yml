@@ -26,6 +26,10 @@ updates:
         patterns:
           - "napi"
           - "napi-*"
+      opentelemetry:
+        patterns:
+          - "opentelemetry*"
+          - "tracing-opentelemetry"
   - package-ecosystem: "npm"
     directories: 
       - "/src/js-host-api"

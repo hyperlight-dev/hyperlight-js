@@ -27,6 +27,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "allocator-api2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -287,15 +293,6 @@ checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
 dependencies = [
  "memchr",
  "serde_core",
-]
-
-[[package]]
-name = "buddy_system_allocator"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1af5a01adeeade54c9f5060300227a8ee64c05b6376f28e9b8ee3b72dd2056f"
-dependencies = [
- "spin 0.10.0",
 ]
 
 [[package]]
@@ -1454,7 +1451,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.2.21",
  "equivalent",
  "foldhash",
 ]
@@ -1465,7 +1462,7 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.2.21",
  "equivalent",
  "foldhash",
  "serde",
@@ -1623,9 +1620,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-common"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "360d5876788b26af66bf055bca6b4f2c9c930a0fdcaebda4bd7f808c6bd93068"
+checksum = "b8255ebc8f04272f64137e19f5c42cdcc1c92df56a63df964d258923c553add6"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
@@ -1635,7 +1632,7 @@ dependencies = [
  "flatbuffers",
  "log",
  "smallvec",
- "spin 0.12.3",
+ "spin",
  "thiserror",
  "tracing",
  "tracing-core",
@@ -1643,9 +1640,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7faceeab52cbc0f128e75fa4b0ee9fce17c3c462d7776feca66f41e98bf2a4bb"
+checksum = "b2d8614341a6365a37395a975077a6472f0065919fc4e1bbe551097f8682ec2c"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -1658,11 +1655,10 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-bin"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7eff3c3b94ae4da51f03d535e9a13a4132f5f87694a19514c038a9517cfd750"
+checksum = "9e81e9b723d4fb0804f0c6ef57383df6c66e768e443cf9d5bf8548d2e233fe57"
 dependencies = [
- "buddy_system_allocator",
  "flatbuffers",
  "hyperlight-common",
  "hyperlight-guest",
@@ -1671,15 +1667,16 @@ dependencies = [
  "hyperlight-libc",
  "linkme",
  "log",
- "spin 0.12.3",
+ "spin",
+ "talc",
  "tracing",
 ]
 
 [[package]]
 name = "hyperlight-guest-macro"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f957baa8d97e2787589bf084a18096c08ab4dd22d4f5a040f153f9f719330ec3"
+checksum = "79986640467531455c7a4189f11c6f3a9cb63225bad1525bb5a0c2523390a15a"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1689,24 +1686,24 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest-tracing"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a12c240f87acd92e80ea08e9a405e781e4a15b9f38fee5fe261e9ce69b816d3"
+checksum = "386e053d56679610902ef68feb1966e043c67c55006954a6afdca89567a2ce21"
 dependencies = [
  "hyperlight-common",
- "spin 0.12.3",
+ "spin",
  "tracing",
  "tracing-core",
 ]
 
 [[package]]
 name = "hyperlight-host"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40f8b85ddd688890477158b9921b228973d1b70c84b866698838df0f32d2aa44"
+checksum = "48ed7feb4bdb2ea3fe07de299f9fb1cbc4246c91991d6ccc2a29eb387f7c7625"
 dependencies = [
  "anyhow",
- "bindgen 0.72.1",
+ "bindgen 0.73.2",
  "bitflags 2.13.2",
  "blake3",
  "bytemuck",
@@ -1732,7 +1729,7 @@ dependencies = [
  "mshv-bindings",
  "mshv-ioctls",
  "oci-spec",
- "opentelemetry 0.32.0",
+ "opentelemetry 0.33.1",
  "page_size",
  "parking_lot",
  "rand 0.10.3",
@@ -1745,7 +1742,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-core",
- "tracing-opentelemetry 0.33.0",
+ "tracing-opentelemetry 0.34.0",
  "uuid",
  "vmm-sys-util",
  "windows",
@@ -1827,19 +1824,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "spin 0.12.3",
+ "spin",
  "tempfile",
  "tracing",
 ]
 
 [[package]]
 name = "hyperlight-libc"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a74af1c1cc60140c000a6ebd4eba3121bc2b8f56f134163c25eadca1146b73e0"
+checksum = "4f0631fc2defbb09008f2dbcff3c995a8378e7e0efa614228cd6250f7b52c3be"
 dependencies = [
  "anyhow",
- "bindgen 0.72.1",
+ "bindgen 0.73.2",
  "cc",
  "glob",
 ]
@@ -3710,12 +3707,6 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "spin"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 
 [[package]]
 name = "spin"

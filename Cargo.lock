@@ -2420,7 +2420,7 @@ dependencies = [
  "napi-derive-backend",
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -2433,7 +2433,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "semver",
- "syn 3.0.3",
+ "syn 3.0.10",
 ]
 
 [[package]]

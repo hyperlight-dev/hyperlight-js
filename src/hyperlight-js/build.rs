@@ -232,7 +232,7 @@ fn build_js_runtime(custom: Option<PathBuf>) -> PathBuf {
     println!("cargo:rerun-if-changed={}", include_dir.display());
     // Forward slashes keep Clang's include path intact so it finds the ARM math shim.
     let cflags = format!("-I{} {QUICKJS_CFLAGS}", include_dir.display()).replace('\\', "/");
-    
+
     let toolchain_file = include_dir.with_file_name("rust-toolchain.toml");
     println!("cargo:rerun-if-changed={}", toolchain_file.display());
 

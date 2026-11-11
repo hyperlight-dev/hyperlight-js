@@ -96,7 +96,7 @@ where
 fn try_extract_uint8array(value: &Value<'_>) -> Option<Vec<u8>> {
     let obj = value.as_object()?;
     let typed_array = obj.as_typed_array::<u8>()?;
-    typed_array.as_bytes().map(|b| b.to_vec())
+    unsafe { typed_array.as_bytes() }.map(|b| b.to_vec())
 }
 
 /// Recursively processes a JS value, extracting binary data and replacing with placeholders.

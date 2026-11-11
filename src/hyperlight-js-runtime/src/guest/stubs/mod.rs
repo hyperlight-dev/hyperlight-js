@@ -18,3 +18,10 @@ limitations under the License.
 //! here. We also re-export the generated bindings for the rest of the libc functions.
 
 mod clock;
+// Preserve QuickJS's previous fallback when allocation size is unavailable.
+// QuickJS now calls malloc_usable_size to determine the usable size of an allocation when __wasi__ is specified.
+// previously it returned zero.
+#[unsafe(no_mangle)]
+extern "C" fn malloc_usable_size(_ptr: *mut core::ffi::c_void) -> usize {
+    0
+}

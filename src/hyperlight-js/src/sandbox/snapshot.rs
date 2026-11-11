@@ -30,7 +30,8 @@ use super::js_sandbox::{validate_module_identifier, validate_namespace_not_reser
 use crate::{new_error, JSSandbox, LoadedJSSandbox, Result, Script};
 
 const METADATA_NAMESPACE: &str = "dev.hyperlight.hyperlight-js.snapshot.v1";
-const METADATA_SCHEMA_VERSION: u32 = 1;
+// Version 2 guarantees that a snapshot's base registers its recorded host functions.
+const METADATA_SCHEMA_VERSION: u32 = 2;
 const BASE_TAG_SUFFIX: &str = ".hljs-base";
 const MAX_OCI_TAG_LENGTH: usize = 128;
 const MAX_LOADED_SNAPSHOT_TAG_LENGTH: usize = MAX_OCI_TAG_LENGTH - BASE_TAG_SUFFIX.len();
@@ -117,6 +118,10 @@ impl SnapshotMetadata {
 
     pub(crate) fn kind(&self) -> SnapshotKind {
         self.kind
+    }
+
+    pub(crate) fn host_functions(&self) -> &HostFunctionManifest {
+        &self.host_functions
     }
 
     pub(crate) fn handlers(&self) -> impl Iterator<Item = (String, Script)> + '_ {
@@ -541,6 +546,16 @@ mod tests {
         assert!(error
             .to_string()
             .contains("produced by hyperlight-js 9.8.7"));
+    }
+
+    #[test]
+    fn metadata_rejects_schema_version_1() {
+        let mut metadata = metadata(SnapshotKind::JsSandbox);
+        metadata.schema_version = 1;
+
+        let error = metadata.validate().unwrap_err();
+
+        assert!(error.to_string().contains("metadata version 1 "));
     }
 
     #[test]

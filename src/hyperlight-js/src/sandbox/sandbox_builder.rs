@@ -424,6 +424,9 @@ impl<T: SnapshotTarget> SandboxBuilder<Snapshot<T>> {
     ///
     /// The snapshot's memory layout overrides heap, scratch, and transport
     /// settings. Supply every host function and module loader the snapshot uses.
+    /// Host functions the snapshot does not record are registered in the guest,
+    /// which costs one guest call and a copy of guest state. A `JSSandbox` pays
+    /// this in `build()`, and a `LoadedJSSandbox` in `unload()`.
     pub fn from_snapshot(snapshot: Snapshot<T>) -> Self {
         Self::with_source(snapshot)
     }

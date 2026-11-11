@@ -38,6 +38,8 @@ use crate::sandbox::metrics::SandboxMetricsGuard;
 pub struct LoadedJSSandbox {
     inner: Sandbox,
     // Snapshot of state before the sandbox was loaded and before any handlers were added.
+    // Its guest state has the host functions in `snapshot_metadata` registered,
+    // which `unload` relies on.
     // This is used to restore state back to a JSSandbox.
     snapshot: Arc<HyperlightSnapshot>,
     // Metadata for the currently captured loaded guest state. Its host-function
@@ -205,8 +207,13 @@ impl LoadedJSSandbox {
     /// Unloads the Handlers from the sandbox and returns a `JSSandbox` with the JavaScript runtime loaded.
     #[instrument(err(Debug), skip_all, level=Level::DEBUG)]
     pub fn unload(self) -> Result<JSSandbox> {
-        JSSandbox::from_loaded(self.inner, self.snapshot, self.available_host_functions)
-            .inspect(|_| metrics::counter!(METRIC_SANDBOX_UNLOADS).increment(1))
+        JSSandbox::from_loaded(
+            self.inner,
+            self.snapshot,
+            &self.snapshot_metadata,
+            self.available_host_functions,
+        )
+        .inspect(|_| metrics::counter!(METRIC_SANDBOX_UNLOADS).increment(1))
     }
 
     /// Take a snapshot of the the current state of the sandbox.

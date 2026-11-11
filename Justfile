@@ -24,16 +24,13 @@ export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
 # host, so derive it rather than hardcoding x86_64.
 guest-target := arch() + "-hyperlight-none"
 
-# Temporary pin for guest toolchain selection: hyperlight-dev/cargo-hyperlight#83.
-cargo-hyperlight-rev := "5993b956fdcfd091a02ad3c3592baff67e0a2b9f"
-
 # Install the host and guest toolchains and components from their pin files.
 ensure-toolchains:
     rustup toolchain install
     cd src/hyperlight-js-runtime && rustup toolchain install
 
 ensure-tools: ensure-toolchains
-    cargo install cargo-hyperlight --git https://github.com/hyperlight-dev/cargo-hyperlight --rev {{ cargo-hyperlight-rev }} --locked
+    cargo install cargo-hyperlight --locked
 
 # Check if npm is installed, install automatically if missing (Linux)
 [private]

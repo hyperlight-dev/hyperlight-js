@@ -155,6 +155,12 @@ The guest can call every supplied host function, including ones the snapshot
 does not record. Handlers loaded after `unload()` can import them too. Supply
 only the modules the guest should reach.
 
+If the builder supplies host functions the snapshot does not record,
+hyperlight-js registers them in the guest and copies the guest state. A
+`JSSandbox` does this in `build()` and in each `restore()` of such a snapshot.
+A `LoadedJSSandbox` does it in `unload()` after such a restore. Supply exactly
+the recorded functions to avoid this cost.
+
 A loaded snapshot records the host functions its evaluated handlers need. Saving
 it again after a restore keeps that record, even when the restoring builder
 supplied more functions. A `JSSandbox` snapshot records every function supplied
@@ -239,6 +245,8 @@ the same output routing is required.
   version for diagnostics. It also records the guest runtime ABI version.
   Unsupported metadata schema or guest ABI versions are rejected before starting
   guest execution.
+- Snapshots saved by hyperlight-js 0.5.0 use metadata schema 1 and are
+  rejected. Recreate them.
 - Digest verification detects accidental or malicious mutation, but does not
   authenticate who produced a snapshot. Authenticate snapshot artifacts through
   the distribution mechanism used by your application.

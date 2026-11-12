@@ -19,7 +19,16 @@ limitations under the License.
 // Most tests here cover the deprecated ProtoJSSandbox registration API.
 #![allow(deprecated)]
 
-use hyperlight_js::{HostFunctionModule, LoadedJSSandbox, SandboxBuilder, Script, Snapshot};
+use std::cell::RefCell;
+use std::sync::Once;
+
+use hyperlight_js::{
+    HostFunctionModule, JSSandbox, LoadedJSSandbox, SandboxBuilder, Script, Snapshot,
+};
+use tracing::field::{Field, Visit};
+use tracing::span::{Attributes, Id};
+use tracing::{Metadata, Subscriber};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 #[test]
 fn can_call_host_functions() {
@@ -1242,4 +1251,244 @@ fn restored_js_sandbox_records_supplied_host_functions() {
         .unwrap();
     let error = insufficient.restore(complete_snapshot).unwrap_err();
     assert!(error.to_string().contains("extra"));
+}
+
+fn extra_handler() -> Script {
+    Script::from_content(
+        r#"
+        import * as extra from "extra";
+        function handler(event) { return { value: extra.value(0) }; }
+        "#,
+    )
+}
+
+fn assert_extra_handler_runs(mut sandbox: JSSandbox) -> JSSandbox {
+    sandbox.add_handler("extra", extra_handler()).unwrap();
+    let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+    let result = loaded.handle_event("extra", "{}".to_owned(), None).unwrap();
+    assert_eq!(result, r#"{"value":2}"#);
+    loaded.unload().unwrap()
+}
+
+fn both_host_function_modules() -> [HostFunctionModule; 2] {
+    [
+        required_host_function_module(),
+        extra_host_function_module(),
+    ]
+}
+
+#[test]
+fn handlers_call_host_functions_across_reload_cycles() {
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    for _ in 0..5 {
+        sandbox = assert_extra_handler_runs(sandbox);
+    }
+}
+
+#[test]
+fn restored_js_sandbox_can_call_supplied_host_functions() {
+    let mut source = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    let snapshot = source.snapshot().unwrap();
+
+    let mut restored = SandboxBuilder::from_snapshot(snapshot)
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap();
+    for _ in 0..3 {
+        restored = assert_extra_handler_runs(restored);
+    }
+
+    let snapshot = restored.snapshot().unwrap();
+    let restored = SandboxBuilder::from_snapshot(snapshot)
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap();
+    assert_extra_handler_runs(restored);
+}
+
+#[test]
+fn restore_into_sandbox_with_more_host_functions_can_call_them() {
+    let snapshot = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap()
+        .snapshot()
+        .unwrap();
+
+    let mut destination = SandboxBuilder::new()
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    destination.restore(snapshot).unwrap();
+    for _ in 0..3 {
+        destination = assert_extra_handler_runs(destination);
+    }
+}
+
+#[test]
+fn loaded_restore_into_sandbox_with_more_host_functions_can_call_them_after_unload() {
+    let mut destination = SandboxBuilder::new()
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+    destination
+        .add_handler(
+            "destination",
+            Script::from_content("function handler(event) { return event; }"),
+        )
+        .unwrap();
+    let mut loaded = destination.get_loaded_sandbox().unwrap();
+    loaded
+        .restore(loaded_snapshot_requiring_host_function())
+        .unwrap();
+    let result = loaded
+        .handle_event("source", "{}".to_owned(), None)
+        .unwrap();
+    assert_eq!(result, r#"{"value":1}"#);
+
+    let mut unloaded = loaded.unload().unwrap();
+    for _ in 0..2 {
+        unloaded = assert_extra_handler_runs(unloaded);
+    }
+}
+
+#[test]
+fn restored_loaded_sandbox_snapshot_after_unload_can_call_supplied_host_functions() {
+    let snapshot = loaded_snapshot_requiring_host_function();
+    let restored = SandboxBuilder::from_snapshot(snapshot)
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap();
+    let mut unloaded = assert_extra_handler_runs(restored.unload().unwrap());
+
+    let snapshot = unloaded.snapshot().unwrap();
+    let restored = SandboxBuilder::from_snapshot(snapshot)
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap();
+    assert_extra_handler_runs(restored);
+}
+
+thread_local! {
+    static GUEST_CALLS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+// Records the `func_name` of hyperlight-host's instrumented `Sandbox::call` spans
+// on threads inside `guest_calls`. It is a global subscriber because tracing caches
+// callsite interest per process, so thread-scoped subscribers can miss spans.
+struct GuestCalls;
+
+impl<S: Subscriber> Layer<S> for GuestCalls {
+    fn enabled(&self, metadata: &Metadata<'_>, _: Context<'_, S>) -> bool {
+        metadata.name() == "call" && metadata.target().starts_with("hyperlight_host")
+    }
+
+    fn on_new_span(&self, attrs: &Attributes<'_>, _: &Id, _: Context<'_, S>) {
+        struct FuncName(Option<String>);
+        impl Visit for FuncName {
+            fn record_str(&mut self, field: &Field, value: &str) {
+                if field.name() == "func_name" {
+                    self.0 = Some(value.to_owned());
+                }
+            }
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "func_name" {
+                    self.0 = Some(format!("{value:?}").trim_matches('"').to_owned());
+                }
+            }
+        }
+        let mut name = FuncName(None);
+        attrs.record(&mut name);
+        GUEST_CALLS.with_borrow_mut(|calls| {
+            if let Some(calls) = calls {
+                calls.extend(name.0);
+            }
+        });
+    }
+}
+
+fn guest_calls<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(GuestCalls))
+            .unwrap();
+    });
+    // Replace interest a callsite may have cached before the subscriber was installed.
+    tracing::callsite::rebuild_interest_cache();
+    GUEST_CALLS.set(Some(Vec::new()));
+    let result = f();
+    (result, GUEST_CALLS.take().unwrap())
+}
+
+#[test]
+fn reload_cycle_makes_two_guest_calls() {
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules(both_host_function_modules())
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
+
+    let (_, calls) = guest_calls(|| {
+        for _ in 0..3 {
+            sandbox = assert_extra_handler_runs(sandbox);
+        }
+    });
+
+    assert_eq!(calls.len(), 6, "guest calls: {calls:?}");
+    assert!(calls
+        .chunks(2)
+        .all(|cycle| cycle == ["register_handler", "RunHandler"]));
+}
+
+#[test]
+fn restore_registers_host_functions_only_when_they_differ() {
+    let snapshot = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap()
+        .snapshot()
+        .unwrap();
+    let restore = |modules: Vec<HostFunctionModule>| {
+        guest_calls(|| {
+            SandboxBuilder::from_snapshot(snapshot.clone())
+                .with_host_function_modules(modules)
+                .build()
+                .unwrap()
+        })
+    };
+
+    let (_, calls) = restore(vec![
+        required_host_function_module(),
+        HostFunctionModule::new("empty"),
+    ]);
+    assert!(calls.is_empty(), "guest calls: {calls:?}");
+
+    let (mut sandbox, calls) = restore(both_host_function_modules().into());
+    assert_eq!(calls, ["RegisterHostModules"]);
+
+    let (_, calls) = guest_calls(|| {
+        for _ in 0..2 {
+            sandbox = assert_extra_handler_runs(sandbox);
+        }
+    });
+    assert_eq!(calls.len(), 4, "guest calls: {calls:?}");
 }

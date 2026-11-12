@@ -74,6 +74,23 @@ pub fn validate_namespace_not_reserved(namespace: &str) -> Result<()> {
     Ok(())
 }
 
+/// Return a base snapshot whose guest state registers `host_functions`.
+///
+/// `inner` must hold the guest state of `base`, which registers the host
+/// functions recorded in `metadata`.
+fn snapshot_base_with_host_functions(
+    inner: &mut Sandbox,
+    base: Arc<HyperlightSnapshot>,
+    metadata: &SnapshotMetadata,
+    host_functions: &HostFunctionManifest,
+) -> Result<Arc<HyperlightSnapshot>> {
+    if metadata.host_functions() == host_functions {
+        return Ok(base);
+    }
+    register_host_function_manifest(inner, host_functions)?;
+    inner.snapshot()
+}
+
 /// A Hyperlight Sandbox with a JavaScript run time loaded but no guest code.
 pub struct JSSandbox {
     pub(super) inner: Sandbox,
@@ -84,7 +101,8 @@ pub struct JSSandbox {
     modules: HashMap<String, Script>,
     // Host functions selected by SandboxBuilder.
     host_functions: HostFunctionManifest,
-    // Snapshot of state before any handlers are added.
+    // Snapshot of state before any handlers are added. Its guest state has
+    // `host_functions` registered and matches the current guest state.
     // This is used to restore state back to a neutral JSSandbox.
     snapshot: Arc<HyperlightSnapshot>,
     // metric drop guard to manage sandbox metric
@@ -109,10 +127,12 @@ impl JSSandbox {
     pub(crate) fn from_loaded(
         mut loaded: Sandbox,
         snapshot: Arc<HyperlightSnapshot>,
+        metadata: &SnapshotMetadata,
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
         loaded.restore(snapshot.clone())?;
-        register_host_function_manifest(&mut loaded, &host_functions)?;
+        let snapshot =
+            snapshot_base_with_host_functions(&mut loaded, snapshot, metadata, &host_functions)?;
         Ok(Self {
             inner: loaded,
             handlers: HashMap::new(),
@@ -124,16 +144,22 @@ impl JSSandbox {
     }
 
     pub(crate) fn from_snapshot(
-        inner: Sandbox,
+        mut inner: Sandbox,
         snapshot: &Snapshot<JSSandbox>,
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
+        let base = snapshot_base_with_host_functions(
+            &mut inner,
+            snapshot.inner(),
+            snapshot.metadata(),
+            &host_functions,
+        )?;
         Ok(Self {
             inner,
             handlers: snapshot.metadata().handlers().collect(),
             modules: snapshot.metadata().modules().collect(),
             host_functions,
-            snapshot: snapshot.inner(),
+            snapshot: base,
             _metric_guard: SandboxMetricsGuard::new(),
         })
     }
@@ -164,9 +190,23 @@ impl JSSandbox {
             .metadata()
             .validate_host_functions(&self.host_functions)?;
         self.inner.restore(snapshot.inner())?;
+        let base = snapshot_base_with_host_functions(
+            &mut self.inner,
+            snapshot.inner(),
+            snapshot.metadata(),
+            &self.host_functions,
+        );
+        self.snapshot = match base {
+            Ok(base) => base,
+            Err(error) => {
+                // Return the guest to the state the unchanged fields describe.
+                // Report the original error even if that fails.
+                let _ = self.inner.restore(self.snapshot.clone());
+                return Err(error);
+            }
+        };
         self.handlers = snapshot.metadata().handlers().collect();
         self.modules = snapshot.metadata().modules().collect();
-        self.snapshot = snapshot.inner();
         Ok(())
     }
 
@@ -376,10 +416,6 @@ impl JSSandbox {
             std::iter::empty(),
             self.host_functions.clone(),
         ));
-
-        // Publish the builder-selected host functions before compiling modules
-        // and handlers that may import them.
-        register_host_function_manifest(&mut self.inner, &self.host_functions)?;
 
         // Register user modules first so that handlers can import them.
         // NOTE: HashMap iteration order is non-deterministic, but this is safe

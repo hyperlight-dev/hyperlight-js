@@ -68,6 +68,8 @@ pub(crate) fn register_host_function_manifest(
 }
 
 /// Return the registered host functions grouped by module.
+///
+/// Modules without functions are omitted because the guest has nothing to register for them.
 pub(crate) fn host_function_manifest(
     modules: &HashMap<String, HostModule>,
 ) -> HostFunctionManifest {
@@ -81,6 +83,7 @@ pub(crate) fn host_function_manifest(
             functions.sort();
             (module.clone(), functions)
         })
+        .filter(|(_, functions)| !functions.is_empty())
         .collect()
 }
 

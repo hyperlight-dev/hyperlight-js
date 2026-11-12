@@ -50,7 +50,6 @@ crossbeam-queue = { version = "0.3", features = ["std"] }
 crossterm = "0.29.0"
 dashmap = "6.2.1"
 env_logger = "0.11"
-lazy_static = "1.4.0"
 metrics-exporter-prometheus = "0.18"
 metrics-util = "0.20.4"
 opentelemetry = "0.33.1"

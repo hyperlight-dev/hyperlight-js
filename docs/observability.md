@@ -13,11 +13,9 @@ To provide a registry to hyperlight-js, use the `set_metrics_registry` function 
 ```rust
 use hyperlight_host::metrics::set_metrics_registry;
 use prometheus::Registry;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
-lazy_static! {
-    static ref REGISTRY: Registry = Registry::new();
-}
+static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
 set_metrics_registry(&REGISTRY);
 ```

@@ -1775,7 +1775,6 @@ dependencies = [
  "hyperlight-host",
  "hyperlight-js-common",
  "hyperlight-js-runtime",
- "lazy_static",
  "libc",
  "metrics",
  "metrics-exporter-prometheus",

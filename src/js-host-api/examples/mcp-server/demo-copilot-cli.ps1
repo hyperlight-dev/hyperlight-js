@@ -36,11 +36,8 @@
 .PARAMETER WallTimeout
     Wall-clock backstop per execution in milliseconds (default: 5000).
 
-.PARAMETER HeapSize
-    Guest heap size in megabytes (default: 16).
-
 .PARAMETER ScratchSize
-    Guest scratch size in megabytes (default: 1).
+    Shared guest writable-memory budget in MiB (default: 16, minimum: 5).
 
 .EXAMPLE
     .\demo-copilot-cli.ps1
@@ -67,7 +64,7 @@
     # Show the copilot CLI command being used
 
 .EXAMPLE
-    .\demo-copilot-cli.ps1 -CpuTimeout 2000 -HeapSize 32 -Mode Headless
+    .\demo-copilot-cli.ps1 -CpuTimeout 2000 -ScratchSize 32 -Mode Headless
     # Custom sandbox limits
 #>
 
@@ -91,10 +88,7 @@ param(
     [int]$WallTimeout = $(if ($env:HYPERLIGHT_WALL_TIMEOUT_MS) { [int]$env:HYPERLIGHT_WALL_TIMEOUT_MS } else { 5000 }),
 
     [ValidateRange(1, [int]::MaxValue)]
-    [int]$HeapSize = $(if ($env:HYPERLIGHT_HEAP_SIZE_MB) { [int]$env:HYPERLIGHT_HEAP_SIZE_MB } else { 16 }),
-
-    [ValidateRange(1, [int]::MaxValue)]
-    [int]$ScratchSize = $(if ($env:HYPERLIGHT_SCRATCH_SIZE_MB) { [int]$env:HYPERLIGHT_SCRATCH_SIZE_MB } else { 1 })
+    [int]$ScratchSize = $(if ($env:HYPERLIGHT_SCRATCH_SIZE_MB) { [int]$env:HYPERLIGHT_SCRATCH_SIZE_MB } else { 16 })
 )
 
 # ── Strict Mode ──────────────────────────────────────────────────────
@@ -250,7 +244,6 @@ function Build-McpJson {
 
     $env:HYPERLIGHT_CPU_TIMEOUT_MS  = $CpuTimeout
     $env:HYPERLIGHT_WALL_TIMEOUT_MS = $WallTimeout
-    $env:HYPERLIGHT_HEAP_SIZE_MB    = $HeapSize
     $env:HYPERLIGHT_SCRATCH_SIZE_MB   = $ScratchSize
 
     $config = [ordered]@{
@@ -276,7 +269,6 @@ function Build-McpServerEntry {
     $envHash = [ordered]@{
         HYPERLIGHT_CPU_TIMEOUT_MS  = [string]$CpuTimeout
         HYPERLIGHT_WALL_TIMEOUT_MS = [string]$WallTimeout
-        HYPERLIGHT_HEAP_SIZE_MB    = [string]$HeapSize
         HYPERLIGHT_SCRATCH_SIZE_MB   = [string]$ScratchSize
     }
 
@@ -474,8 +466,7 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
         $installFlags = ''
         if ($CpuTimeout  -ne 1000) { $installFlags += " -CpuTimeout $CpuTimeout" }
         if ($WallTimeout -ne 5000) { $installFlags += " -WallTimeout $WallTimeout" }
-        if ($HeapSize    -ne 16)   { $installFlags += " -HeapSize $HeapSize" }
-        if ($ScratchSize   -ne 1)    { $installFlags += " -ScratchSize $ScratchSize" }
+        if ($ScratchSize   -ne 16)    { $installFlags += " -ScratchSize $ScratchSize" }
 
         Write-Host ''
         Write-Host '🔧 Copy-pasteable command:' -ForegroundColor Cyan
@@ -672,7 +663,7 @@ INSTRUCTIONS: You have an MCP tool called 'execute_javascript' from the 'hyperli
 
 Write-Banner
 Write-Info "Using model: $Model"
-Write-Info "Sandbox limits: CPU ${CpuTimeout}ms, wall ${WallTimeout}ms, heap ${HeapSize}MB, scratch ${ScratchSize}MB"
+Write-Info "Sandbox limits: CPU ${CpuTimeout}ms, wall ${WallTimeout}ms, requested scratch ${ScratchSize}MiB (minimum 5MiB)"
 
 switch ($Mode) {
     'Install' {

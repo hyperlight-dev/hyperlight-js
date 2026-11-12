@@ -41,11 +41,11 @@ const DEFAULT_CPU_TIMEOUT_MS = 1000;
 /** Default maximum wall-clock time per execution (milliseconds). */
 const DEFAULT_WALL_CLOCK_TIMEOUT_MS = 5000;
 
-/** Default guest heap size in megabytes. */
-const DEFAULT_HEAP_SIZE_MB = 16;
+/** Default shared guest writable-memory budget in MiB. */
+const DEFAULT_SCRATCH_SIZE_MB = 16;
 
-/** Default guest scratch size in megabytes. */
-const DEFAULT_SCRATCH_SIZE_MB = 1;
+/** Matches the JS runtime builder's minimum scratch budget. */
+const MIN_SCRATCH_SIZE_MB = 5;
 
 // ── Configuration ────────────────────────────────────────────────────
 //
@@ -89,27 +89,25 @@ const WALL_CLOCK_TIMEOUT_MS = parsePositiveInt(
     DEFAULT_WALL_CLOCK_TIMEOUT_MS
 );
 
-/** Maximum byte size for heap/scratch to avoid exceeding u32 range at the N-API boundary. */
+/** Maximum scratch byte size at the u32 N-API boundary. */
 const MAX_BYTES = 0xffffffff;
 
-/** Maximum heap/scratch size that still fits within MAX_BYTES.
+/** Maximum scratch size that still fits within MAX_BYTES.
  *  Clamping at the MiB level (rather than clamping the byte total) keeps the
  *  configured size aligned to a whole MiB, so the value we set and print stays
  *  consistent (e.g. 5000MB clamps to 4095MB, not 4095.999…MB). */
 const MAX_MIB = Math.floor(MAX_BYTES / (1024 * 1024));
 
-/** Guest heap size in bytes. Override with HYPERLIGHT_HEAP_SIZE_MB (megabytes). */
-const HEAP_SIZE_BYTES =
-    Math.min(parsePositiveInt(process.env.HYPERLIGHT_HEAP_SIZE_MB, DEFAULT_HEAP_SIZE_MB), MAX_MIB) *
-    1024 *
-    1024;
-
-/** Guest scratch size in bytes. Override with HYPERLIGHT_SCRATCH_SIZE_MB (megabytes).
- *  Maps to setScratchSize() on the SandboxBuilder API. */
+/** Shared heap, stack, transport, page-table, and copy-on-write budget.
+ *  Override with HYPERLIGHT_SCRATCH_SIZE_MB (MiB). Match the builder's clamp
+ *  so advertised limits describe the effective configuration. */
 const SCRATCH_SIZE_BYTES =
-    Math.min(
-        parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB),
-        MAX_MIB
+    Math.max(
+        MIN_SCRATCH_SIZE_MB,
+        Math.min(
+            parsePositiveInt(process.env.HYPERLIGHT_SCRATCH_SIZE_MB, DEFAULT_SCRATCH_SIZE_MB),
+            MAX_MIB
+        )
     ) *
     1024 *
     1024;
@@ -164,7 +162,6 @@ let executionLock = Promise.resolve();
  */
 async function initializeSandbox() {
     const builder = new SandboxBuilder();
-    builder.setHeapSize(HEAP_SIZE_BYTES);
     builder.setScratchSize(SCRATCH_SIZE_BYTES);
 
     const proto = await builder.build();
@@ -322,7 +319,7 @@ mcpServer.registerTool(
             'The code runs as the body of a function — use `return` to produce',
             `a JSON-serializable result. CPU time is hard-limited to ${CPU_TIMEOUT_MS}ms`,
             `with a ${WALL_CLOCK_TIMEOUT_MS}ms wall-clock backstop.`,
-            `Memory: ${HEAP_SIZE_BYTES / (1024 * 1024)}MB heap, ${SCRATCH_SIZE_BYTES / (1024 * 1024)}MB scratch.`,
+            `Memory: ${SCRATCH_SIZE_BYTES / (1024 * 1024)}MiB scratch shared by heap, stack, and runtime overhead.`,
             '',
             'The sandbox has NO access to:',
             '  - Filesystem, network, or host environment',
@@ -427,8 +424,7 @@ await mcpServer.connect(transport);
 console.error('🔒 Hyperlight JS MCP Server running on stdio');
 console.error(`   CPU timeout:       ${CPU_TIMEOUT_MS}ms`);
 console.error(`   Wall-clock timeout: ${WALL_CLOCK_TIMEOUT_MS}ms`);
-console.error(`   Heap size:          ${HEAP_SIZE_BYTES / (1024 * 1024)}MB`);
-console.error(`   Scratch size:       ${SCRATCH_SIZE_BYTES / (1024 * 1024)}MB`);
+console.error(`   Scratch budget:     ${SCRATCH_SIZE_BYTES / (1024 * 1024)}MiB`);
 
 // ── Graceful Shutdown ───────────────────────────────────────────────
 

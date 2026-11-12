@@ -469,12 +469,11 @@ macro_rules! map_builder {
 ///
 /// Use the builder to set memory limits before constructing the sandbox.
 /// All size setters support method chaining. A snapshot's memory layout
-/// overrides heap, scratch, and transport settings.
+/// overrides scratch and transport settings.
 ///
 /// ```js
 /// const proto = await new SandboxBuilder()
-///     .setHeapSize(8 * 1024 * 1024)
-///     .setScratchSize(1024 * 1024)
+///     .setScratchSize(8 * 1024 * 1024)
 ///     .build();
 ///
 /// const snapshot = await Snapshot.checkedLoad('./snapshots', 'app');
@@ -598,9 +597,11 @@ impl SandboxBuilderWrapper {
 
     /// Set the guest scratch size in bytes.
     ///
-    /// Controls how much scratch space (which includes the stack) is available
-    /// for guest code execution. Deep recursion or large local variables need
-    /// a bigger scratch region.
+    /// Shared writable-memory budget for the guest heap, stack, transport pools,
+    /// page tables, and copy-on-write pages, not a JavaScript heap allowance.
+    /// Defaults to 5 MiB; smaller positive values are raised to this minimum.
+    /// Exhaustion aborts and poisons the guest (`ERR_GUEST_ABORT`); restore a
+    /// snapshot before reusing it.
     ///
     /// @param size - Scratch size in bytes (must be > 0)
     /// @returns this (for chaining)
@@ -611,23 +612,6 @@ impl SandboxBuilderWrapper {
             return Err(invalid_arg_error("Scratch size must be greater than 0"));
         }
         self.with_inner(|state| map_builder!(state, b => b.with_guest_scratch_size(size as usize)))
-    }
-
-    /// Set the guest heap size in bytes.
-    ///
-    /// Controls how much heap memory the guest JavaScript engine can
-    /// allocate. If handlers create many objects or large strings, increase
-    /// this. Too small will cause `malloc failed` errors in the guest.
-    ///
-    /// @param size - Heap size in bytes (must be > 0)
-    /// @returns this (for chaining)
-    /// @throws If size is 0
-    #[napi]
-    pub fn set_heap_size(&self, size: u32) -> napi::Result<&Self> {
-        if size == 0 {
-            return Err(invalid_arg_error("Heap size must be greater than 0"));
-        }
-        self.with_inner(|state| map_builder!(state, b => b.with_guest_heap_size(size as u64)))
     }
 
     /// Supply host-function modules for this sandbox.

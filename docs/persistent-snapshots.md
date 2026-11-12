@@ -67,7 +67,7 @@ snapshot. TypeScript types the result as `JSSandbox | LoadedJSSandbox`. Narrow i
 with `instanceof`.
 
 Configure process-local host resources on the builder before calling `build()`.
-A snapshot's memory layout overrides heap, scratch, and transport settings.
+A snapshot's memory layout overrides scratch and transport settings.
 
 `Snapshot::checked_load()` in Rust and `Snapshot.checkedLoad()` in Node check
 every OCI blob against its recorded digest. `Snapshot::load()` and

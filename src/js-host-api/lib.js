@@ -287,7 +287,6 @@ native.Snapshot = withWrappedStatics(Snapshot, {
 });
 
 for (const method of [
-    'setHeapSize',
     'setScratchSize',
     'setInputTransportPoolPages',
     'setOutputTransportPoolPages',

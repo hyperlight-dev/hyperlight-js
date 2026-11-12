@@ -15,7 +15,42 @@ limitations under the License.
 */
 //! Test some key aspects of the JavaScript runtime
 
+use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
+use hyperlight_host::HyperlightError;
 use hyperlight_js::{SandboxBuilder, Script};
+
+#[test]
+fn guest_allocation_respects_scratch_limit() {
+    const MIB: usize = 1024 * 1024;
+    const ALLOCATION_BYTES: usize = 8 * MIB;
+
+    fn invoke(scratch_bytes: usize) -> hyperlight_js::Result<String> {
+        let handler = Script::from_content(
+            r#"
+        function handler(event) {
+            const bytes = new Uint8Array(event.bytes);
+            bytes.fill(7);
+            return bytes[bytes.length - 1];
+        }
+        "#,
+        );
+
+        let proto = SandboxBuilder::new()
+            .with_guest_scratch_size(scratch_bytes)
+            .build()?;
+        let mut sandbox = proto.load_runtime()?;
+        sandbox.add_handler("handler", handler)?;
+        let mut loaded = sandbox.get_loaded_sandbox()?;
+        let event = serde_json::json!({ "bytes": ALLOCATION_BYTES }).to_string();
+        loaded.handle_event("handler", event, None)
+    }
+
+    std::assert_matches!(
+        invoke(5 * MIB),
+        Err(HyperlightError::GuestAborted(code, _)) if code == ErrorCode::MallocFailed as u8
+    );
+    assert_eq!(invoke(32 * MIB).unwrap(), "7");
+}
 
 #[test]
 fn js_date_time_now_is_correct() {

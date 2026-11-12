@@ -110,7 +110,7 @@ describe('Persistent snapshots', () => {
         );
 
         available.register('stillAvailable', () => true);
-        expect(builder.setHeapSize(8 * 1024 * 1024)).toBe(builder);
+        expect(builder.setScratchSize(8 * 1024 * 1024)).toBe(builder);
     });
 
     it('rejects duplicate module objects without consuming them', () => {

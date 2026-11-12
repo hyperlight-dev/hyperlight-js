@@ -1,7 +1,7 @@
 // ── Hyperlight JS MCP Server — Configuration Tests ──────────────────
 //
-// Validates that sandbox limits (CPU timeout, wall-clock timeout, heap
-// size, scratch size) are configurable via environment variables, that
+// Validates that sandbox limits (CPU timeout, wall-clock timeout, scratch
+// budget) are configurable via environment variables, that
 // invalid values fall back to defaults gracefully, and that the tool
 // description dynamically reflects the configured limits.
 //
@@ -59,7 +59,6 @@ describe('Tool description reflects configured limits', () => {
         ctx = await spawnServer({
             HYPERLIGHT_CPU_TIMEOUT_MS: '2000',
             HYPERLIGHT_WALL_TIMEOUT_MS: '8000',
-            HYPERLIGHT_HEAP_SIZE_MB: '32',
             HYPERLIGHT_SCRATCH_SIZE_MB: '2',
         });
     });
@@ -81,16 +80,10 @@ describe('Tool description reflects configured limits', () => {
         expect(jsTool.description).toContain('8000ms');
     });
 
-    it('should include custom heap size in tool description', async () => {
-        const response = await ctx.listTools();
-        const jsTool = response.result.tools.find((t) => t.name === 'execute_javascript');
-        expect(jsTool.description).toContain('32MB');
-    });
-
     it('should include custom scratch size in tool description', async () => {
         const response = await ctx.listTools();
         const jsTool = response.result.tools.find((t) => t.name === 'execute_javascript');
-        expect(jsTool.description).toContain('2MB');
+        expect(jsTool.description).toContain('5MiB scratch');
     });
 });
 
@@ -104,7 +97,6 @@ describe('Invalid env vars fall back to defaults', () => {
         ctx = await spawnServer({
             HYPERLIGHT_CPU_TIMEOUT_MS: 'banana',
             HYPERLIGHT_WALL_TIMEOUT_MS: '-999',
-            HYPERLIGHT_HEAP_SIZE_MB: '0',
             HYPERLIGHT_SCRATCH_SIZE_MB: '3.14',
         });
     });
@@ -147,15 +139,49 @@ describe('Invalid env vars fall back to defaults', () => {
         // Default values should appear since the invalid ones were rejected
         expect(jsTool.description).toContain('1000ms');
         expect(jsTool.description).toContain('5000ms');
-        expect(jsTool.description).toContain('16MB');
-        expect(jsTool.description).toContain('1MB');
+        expect(jsTool.description).toContain('16MiB scratch');
     });
 
     it('should log warnings to stderr about invalid values', () => {
         const stderr = ctx.stderrChunks.join('');
         expect(stderr).toContain('ignoring invalid value "banana"');
         expect(stderr).toContain('ignoring invalid value "-999"');
-        expect(stderr).toContain('ignoring invalid value "0"');
         expect(stderr).toContain('ignoring invalid value "3.14"');
+    });
+});
+
+describe('Scratch budget controls guest allocations', () => {
+    let constrained;
+    let larger;
+    const allocation =
+        'const bytes = new Uint8Array(8 * 1024 * 1024); bytes.fill(7); return bytes[bytes.length - 1];';
+
+    beforeAll(async () => {
+        constrained = await spawnServer({ HYPERLIGHT_SCRATCH_SIZE_MB: '1' });
+        larger = await spawnServer({ HYPERLIGHT_SCRATCH_SIZE_MB: '32' });
+    });
+
+    afterAll(() => {
+        constrained?.server.kill();
+        larger?.server.kill();
+    });
+
+    it('advertises the effective minimum rather than the smaller request', async () => {
+        const response = await constrained.listTools();
+        const tool = response.result.tools.find((entry) => entry.name === 'execute_javascript');
+        expect(tool.description).toContain('5MiB scratch');
+    });
+
+    it('fails when scratch is exhausted and rebuilds for the next request', async () => {
+        const failed = await constrained.callTool(allocation);
+        expect(failed.result.isError).toBe(true);
+        const recovered = await constrained.callTool('return { ok: true };');
+        expect(JSON.parse(recovered.result.content[0].text)).toEqual({ ok: true });
+    });
+
+    it('runs the same allocation with a larger scratch budget', async () => {
+        const response = await larger.callTool(allocation);
+        expect(response.result.isError).not.toBe(true);
+        expect(JSON.parse(response.result.content[0].text)).toBe(7);
     });
 });

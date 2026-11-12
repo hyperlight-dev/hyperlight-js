@@ -8,8 +8,7 @@ async function main() {
     // Step 1: Create and configure the sandbox builder
     console.log('1. Creating sandbox builder...');
     const builder = new SandboxBuilder();
-    builder.setHeapSize(8 * 1024 * 1024); // 8MB heap
-    builder.setScratchSize(1024 * 1024); // 1MB scratch (includes stack)
+    builder.setScratchSize(8 * 1024 * 1024);
     console.log('   ✓ Builder configured\n');
 
     // Step 2: Build the proto sandbox (async — returns a Promise)

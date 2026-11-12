@@ -150,12 +150,12 @@ node persistent-snapshot.js read ../../target/persistent-node-snapshot
 ### SandboxBuilder
 ```javascript
 const { SandboxBuilder } = require('../lib.js');
+const MiB = 1024 * 1024;
 
 async function main() {
     const builder = new SandboxBuilder();
-    builder.setHeapSize(8 * 1024 * 1024);   // Set heap size
-    builder.setScratchSize(1024 * 1024);        // Set scratch size (includes stack)
-    const protoSandbox = await builder.build(); // Build sandbox
+   builder.setScratchSize(8 * MiB);
+   const protoSandbox = await builder.build();
 }
 main();
 ```

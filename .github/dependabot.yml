@@ -22,6 +22,9 @@ updates:
     labels:
       - "kind/dependencies"
     groups:
+      hyperlight:
+        patterns:
+          - "hyperlight-*"
       napi:
         patterns:
           - "napi"

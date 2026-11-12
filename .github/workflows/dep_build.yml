@@ -111,6 +111,7 @@ jobs:
 
     - uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
       with:
+          additional-toolchain-directory: src/hyperlight-js-runtime
           just-version: "1.51"
 
     # Unlike upstream hyperlight, which builds its guests once per architecture
@@ -123,10 +124,11 @@ jobs:
     # to /usr/bin/ar when llvm-ar is missing from PATH, which yields a guest
     # link with every QuickJS and libc symbol undefined. Prefer a provisioned
     # llvm-ar when the runner image supplies one; otherwise use the active Rust
-    # toolchain's llvm-tools component, installing it if necessary.
+    # guest toolchain's llvm-tools component, installing it if necessary.
     - name: Set up LLVM guest toolchain (macOS)
       if: runner.os == 'macOS'
       shell: bash
+      working-directory: src/hyperlight-js-runtime
       run: |
         set -euo pipefail
         if command -v llvm-ar >/dev/null 2>&1; then

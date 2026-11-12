@@ -24,7 +24,12 @@ export CMAKE_GENERATOR := if os() == "windows" { "Ninja" } else { "" }
 # host, so derive it rather than hardcoding x86_64.
 guest-target := arch() + "-hyperlight-none"
 
-ensure-tools:
+# Install the host and guest toolchains and components from their pin files.
+ensure-toolchains:
+    rustup toolchain install
+    cd src/hyperlight-js-runtime && rustup toolchain install
+
+ensure-tools: ensure-toolchains
     cargo install cargo-hyperlight --locked
 
 # Check if npm is installed, install automatically if missing (Linux)
@@ -46,7 +51,7 @@ check-license-headers:
     ./dev/check-license-headers.sh
 
 clippy target=default-target features="": (ensure-tools)
-    cargo hyperlight clippy -p hyperlight-js-runtime \
+    cd src/hyperlight-js-runtime && cargo hyperlight clippy -p hyperlight-js-runtime \
             --target={{ guest-target }} \
             --profile={{ if target == "debug" {"dev"} else { target } }} \
             -- -D warnings
@@ -113,11 +118,11 @@ build-trace target=default-target features="": (build-rust-trace target features
 build-native-runtime target=default-target:
     cargo build --manifest-path=./src/hyperlight-js-runtime/Cargo.toml --profile={{ if target == "debug" {"dev"} else { target } }}
 
-build-rust target=default-target features="":
+build-rust target=default-target features="": ensure-toolchains
     cd src/hyperlight-js && \
       cargo build {{ if features =="" {''} else if features=="no-default-features" {"--no-default-features" } else {"--no-default-features -F " + features } }} --profile={{ if target == "debug" {"dev"} else { target } }}
 
-build-rust-trace target=default-target features="":
+build-rust-trace target=default-target features="": ensure-toolchains
     cd src/hyperlight-js && \
       cargo build {{ if features =="" {'-F trace_guest'} else if features=="no-default-features" {"--no-default-features -F trace_guest" } else {"--no-default-features -F trace_guest," + features } }} --profile={{ if target == "debug" {"dev"} else { target } }}
 

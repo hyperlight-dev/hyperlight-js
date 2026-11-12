@@ -1637,6 +1637,25 @@ dependencies = [
  "smallvec",
  "spin 0.12.3",
  "thiserror",
+ "tracing-core",
+]
+
+[[package]]
+name = "hyperlight-common"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8255ebc8f04272f64137e19f5c42cdcc1c92df56a63df964d258923c553add6"
+dependencies = [
+ "anyhow",
+ "bitflags 2.13.2",
+ "bytemuck",
+ "bytes",
+ "fixedbitset",
+ "flatbuffers",
+ "log",
+ "smallvec",
+ "spin 0.12.3",
+ "thiserror",
  "tracing",
  "tracing-core",
 ]
@@ -1649,8 +1668,8 @@ checksum = "7faceeab52cbc0f128e75fa4b0ee9fce17c3c462d7776feca66f41e98bf2a4bb"
 dependencies = [
  "anyhow",
  "flatbuffers",
- "hyperlight-common",
- "hyperlight-guest-tracing",
+ "hyperlight-common 0.18.0",
+ "hyperlight-guest-tracing 0.18.0",
  "itertools 0.15.0",
  "serde_json",
  "tracing",
@@ -1664,10 +1683,10 @@ checksum = "e7eff3c3b94ae4da51f03d535e9a13a4132f5f87694a19514c038a9517cfd750"
 dependencies = [
  "buddy_system_allocator",
  "flatbuffers",
- "hyperlight-common",
+ "hyperlight-common 0.18.0",
  "hyperlight-guest",
  "hyperlight-guest-macro",
- "hyperlight-guest-tracing",
+ "hyperlight-guest-tracing 0.18.0",
  "hyperlight-libc",
  "linkme",
  "log",
@@ -1693,7 +1712,19 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a12c240f87acd92e80ea08e9a405e781e4a15b9f38fee5fe261e9ce69b816d3"
 dependencies = [
- "hyperlight-common",
+ "hyperlight-common 0.18.0",
+ "spin 0.12.3",
+ "tracing",
+ "tracing-core",
+]
+
+[[package]]
+name = "hyperlight-guest-tracing"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "386e053d56679610902ef68feb1966e043c67c55006954a6afdca89567a2ce21"
+dependencies = [
+ "hyperlight-common 0.19.0",
  "spin 0.12.3",
  "tracing",
  "tracing-core",
@@ -1701,12 +1732,12 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-host"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40f8b85ddd688890477158b9921b228973d1b70c84b866698838df0f32d2aa44"
+checksum = "48ed7feb4bdb2ea3fe07de299f9fb1cbc4246c91991d6ccc2a29eb387f7c7625"
 dependencies = [
  "anyhow",
- "bindgen 0.72.1",
+ "bindgen 0.73.2",
  "bitflags 2.13.2",
  "blake3",
  "bytemuck",
@@ -1721,8 +1752,8 @@ dependencies = [
  "gdbstub_arch",
  "goblin",
  "hex",
- "hyperlight-common",
- "hyperlight-guest-tracing",
+ "hyperlight-common 0.19.0",
+ "hyperlight-guest-tracing 0.19.0",
  "kvm-bindings",
  "kvm-ioctls",
  "lazy_static",
@@ -1732,7 +1763,7 @@ dependencies = [
  "mshv-bindings",
  "mshv-ioctls",
  "oci-spec",
- "opentelemetry 0.32.0",
+ "opentelemetry",
  "page_size",
  "parking_lot",
  "rand 0.10.3",
@@ -1745,7 +1776,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-core",
- "tracing-opentelemetry 0.33.0",
+ "tracing-opentelemetry",
  "uuid",
  "vmm-sys-util",
  "windows",
@@ -1770,7 +1801,7 @@ dependencies = [
  "dashmap",
  "env_logger",
  "fn-traits",
- "hyperlight-common",
+ "hyperlight-common 0.18.0",
  "hyperlight-host",
  "hyperlight-js-common",
  "hyperlight-js-runtime",
@@ -1778,7 +1809,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-util",
- "opentelemetry 0.33.1",
+ "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
@@ -1792,7 +1823,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-forest",
- "tracing-opentelemetry 0.34.0",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-tracy",
  "uuid",
@@ -1819,7 +1850,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "hex",
  "hmac",
- "hyperlight-common",
+ "hyperlight-common 0.18.0",
  "hyperlight-guest",
  "hyperlight-guest-bin",
  "hyperlight-js-common",
@@ -2569,20 +2600,6 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "opentelemetry"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
-dependencies = [
- "futures-core",
- "futures-sink",
- "js-sys",
- "pin-project-lite",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "opentelemetry"
 version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c1f1a6ac9c875a4941e4c7c085b61e8f4daa326de03b4701768c3491a6ad9ee"
@@ -2604,7 +2621,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
- "opentelemetry 0.33.1",
+ "opentelemetry",
  "reqwest",
 ]
 
@@ -2616,7 +2633,7 @@ checksum = "0756af24841e367128ef31c831999937b8b5c5197d47914590d8f4e2e88c2e1a"
 dependencies = [
  "http",
  "httpdate",
- "opentelemetry 0.33.1",
+ "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-proto",
  "opentelemetry_sdk",
@@ -2634,7 +2651,7 @@ version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d576f5dddc3299341bcd85a04be17b2564844c0c9563214f02d85f2524d1afae"
 dependencies = [
- "opentelemetry 0.33.1",
+ "opentelemetry",
  "opentelemetry_sdk",
  "prost",
  "tonic",
@@ -2656,7 +2673,7 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
- "opentelemetry 0.33.1",
+ "opentelemetry",
  "percent-encoding",
  "portable-atomic",
  "rand 0.9.4",
@@ -4152,28 +4169,12 @@ dependencies = [
 
 [[package]]
 name = "tracing-opentelemetry"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
-dependencies = [
- "js-sys",
- "opentelemetry 0.32.0",
- "smallvec",
- "tracing",
- "tracing-core",
- "tracing-log",
- "tracing-subscriber",
- "web-time",
-]
-
-[[package]]
-name = "tracing-opentelemetry"
 version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0a904802a1b902f43638b677ff2a650847e3b4404101b6c586d648e8c1e3e8fe"
 dependencies = [
  "js-sys",
- "opentelemetry 0.33.1",
+ "opentelemetry",
  "smallvec",
  "tracing",
  "tracing-core",

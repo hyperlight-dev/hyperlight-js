@@ -23,35 +23,33 @@ use hyperlight_js::{SandboxBuilder, Script};
 fn guest_allocation_respects_scratch_limit() {
     const MIB: usize = 1024 * 1024;
     const ALLOCATION_BYTES: usize = 8 * MIB;
-    let handler = Script::from_content(
-        r#"
+
+    fn invoke(scratch_bytes: usize) -> hyperlight_js::Result<String> {
+        let handler = Script::from_content(
+            r#"
         function handler(event) {
             const bytes = new Uint8Array(event.bytes);
             bytes.fill(7);
             return bytes[bytes.length - 1];
         }
         "#,
-    );
+        );
 
-    for (scratch_bytes, should_succeed) in [(5 * MIB, false), (32 * MIB, true)] {
         let proto = SandboxBuilder::new()
             .with_guest_scratch_size(scratch_bytes)
-            .build()
-            .unwrap();
-        let mut sandbox = proto.load_runtime().unwrap();
-        sandbox.add_handler("handler", handler.clone()).unwrap();
-        let mut loaded = sandbox.get_loaded_sandbox().unwrap();
+            .build()?;
+        let mut sandbox = proto.load_runtime()?;
+        sandbox.add_handler("handler", handler)?;
+        let mut loaded = sandbox.get_loaded_sandbox()?;
         let event = serde_json::json!({ "bytes": ALLOCATION_BYTES }).to_string();
-        let result = loaded.handle_event("handler", event, None);
-
-        if should_succeed {
-            assert_eq!(result.unwrap(), "7");
-        } else {
-            assert!(
-                matches!(result, Err(HyperlightError::GuestAborted(code, _)) if code == ErrorCode::MallocFailed as u8)
-            );
-        }
+        loaded.handle_event("handler", event, None)
     }
+
+    std::assert_matches!(
+        invoke(5 * MIB),
+        Err(HyperlightError::GuestAborted(code, _)) if code == ErrorCode::MallocFailed as u8
+    );
+    assert_eq!(invoke(32 * MIB).unwrap(), "7");
 }
 
 #[test]

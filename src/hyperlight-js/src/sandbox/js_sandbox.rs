@@ -78,7 +78,7 @@ pub fn validate_namespace_not_reserved(namespace: &str) -> Result<()> {
 ///
 /// `inner` must hold the guest state of `base`, which registers the host
 /// functions recorded in `metadata`.
-fn base_with_host_functions(
+fn snapshot_base_with_host_functions(
     inner: &mut Sandbox,
     base: Arc<HyperlightSnapshot>,
     metadata: &SnapshotMetadata,
@@ -131,7 +131,8 @@ impl JSSandbox {
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
         loaded.restore(snapshot.clone())?;
-        let snapshot = base_with_host_functions(&mut loaded, snapshot, metadata, &host_functions)?;
+        let snapshot =
+            snapshot_base_with_host_functions(&mut loaded, snapshot, metadata, &host_functions)?;
         Ok(Self {
             inner: loaded,
             handlers: HashMap::new(),
@@ -147,7 +148,7 @@ impl JSSandbox {
         snapshot: &Snapshot<JSSandbox>,
         host_functions: HostFunctionManifest,
     ) -> Result<Self> {
-        let base = base_with_host_functions(
+        let base = snapshot_base_with_host_functions(
             &mut inner,
             snapshot.inner(),
             snapshot.metadata(),
@@ -189,7 +190,7 @@ impl JSSandbox {
             .metadata()
             .validate_host_functions(&self.host_functions)?;
         self.inner.restore(snapshot.inner())?;
-        let base = base_with_host_functions(
+        let base = snapshot_base_with_host_functions(
             &mut self.inner,
             snapshot.inner(),
             snapshot.metadata(),

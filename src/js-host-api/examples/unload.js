@@ -7,7 +7,7 @@ async function main() {
 
     // Create sandbox
     const builder = new SandboxBuilder();
-    builder.setHeapSize(8 * 1024 * 1024);
+    builder.setScratchSize(8 * 1024 * 1024);
 
     const protoSandbox = await builder.build();
     let jsSandbox = await protoSandbox.loadRuntime();

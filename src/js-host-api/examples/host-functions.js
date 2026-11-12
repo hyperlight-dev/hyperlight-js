@@ -41,8 +41,7 @@ async function main() {
     // Call hostFunctionModules() again for another builder. Each call creates
     // fresh module objects, callbacks, and captured state.
     const proto = await new SandboxBuilder()
-        .setHeapSize(8 * 1024 * 1024)
-        .setScratchSize(1024 * 1024)
+        .setScratchSize(8 * 1024 * 1024)
         .setHostFunctionModules(hostFunctionModules())
         .build();
 

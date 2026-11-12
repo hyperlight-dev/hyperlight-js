@@ -273,7 +273,7 @@ cd src\js-host-api\examples\mcp-server
 .\demo-copilot-cli.ps1 -Prompt "Solve 8-queens" -ShowCode -ShowCommand -Model gpt-4o -Mode Headless
 
 # Custom sandbox limits
-.\demo-copilot-cli.ps1 -CpuTimeout 2000 -HeapSize 32 -Mode Headless
+.\demo-copilot-cli.ps1 -CpuTimeout 2000 -ScratchSize 32 -Mode Headless
 
 # Install the MCP server permanently
 .\demo-copilot-cli.ps1 -Mode Install
@@ -298,8 +298,7 @@ cd src\js-host-api\examples\mcp-server
 | `--show-command`    | `-ShowCommand`      | Display the copilot CLI command line being executed       |
 | `--cpu-timeout <ms>`| `-CpuTimeout <ms>`  | CPU time limit per execution (default: 1000ms)           |
 | `--wall-timeout <ms>`| `-WallTimeout <ms>`| Wall-clock backstop per execution (default: 5000ms)      |
-| `--heap-size <MB>`  | `-HeapSize <MB>`    | Guest heap size (default: 16MB)                          |
-| `--scratch-size <MB>` | `-ScratchSize <MB>`   | Guest scratch size (default: 1MB)                          |
+| `--scratch-size <MiB>` | `-ScratchSize <MiB>` | Shared guest writable-memory budget (default: 16 MiB, minimum: 5 MiB) |
 
 **What the script does:**
 
@@ -457,7 +456,7 @@ Output (when MCP server is not yet installed, with non-default sandbox limits):
 ⚠  The MCP server must be installed before this command will work.
   Install it now:
 
-    ./demo-copilot-cli.sh --install --cpu-timeout 5000 --heap-size 32
+    ./demo-copilot-cli.sh --install --cpu-timeout 5000 --scratch-size 32
 
   To remove it later:
 
@@ -633,7 +632,7 @@ The Hyperlight sandbox provides **hardware-level isolation**:
 - 🌐 **No network access** — can't make HTTP requests
 - 🖥️ **No host access** — can't access environment variables, processes, or system calls
 - ⏱️ **CPU bounded** — configurable limit (default 1000ms), enforced by the hypervisor
-- 💾 **Memory bounded** — configurable (default 16MB heap, 1MB scratch)
+- 💾 **Guest writable memory bounded** — shared scratch budget (default 16 MiB)
 - 🔄 **Automatic recovery** — sandbox rebuilds after failures
 
 This makes it safe to execute untrusted, AI-generated code.
@@ -644,16 +643,21 @@ This makes it safe to execute untrusted, AI-generated code.
 | ------------------------------ | -------- | ---------------------------------------------------------------------------------- |
 | `HYPERLIGHT_CPU_TIMEOUT_MS`    | `1000`   | Maximum CPU time per execution (milliseconds). The hypervisor hard-kills the guest when exceeded. |
 | `HYPERLIGHT_WALL_TIMEOUT_MS`   | `5000`   | Maximum wall-clock time per execution (milliseconds). Backstop for edge cases where CPU time alone doesn't catch the issue. |
-| `HYPERLIGHT_HEAP_SIZE_MB`      | `16`     | Guest heap size in megabytes. Increase for memory-heavy computations (large arrays, BigInt work). |
-| `HYPERLIGHT_SCRATCH_SIZE_MB`     | `1`      | Guest scratch size in megabytes. Increase for deeply recursive algorithms. |
+| `HYPERLIGHT_SCRATCH_SIZE_MB`   | `16`     | Shared guest writable-memory budget in MiB (minimum 5). Includes heap, stack, transport pools, page tables, and copy-on-write pages. Increase for large arrays, BigInt work, or deep recursion. |
 | `HYPERLIGHT_TIMING_LOG`        | —        | Path to a file. When set, the server appends one JSON line per tool call with a timing breakdown (init, setup, compile, execute, total). Used by the demo script to show model vs. tool time. |
 | `HYPERLIGHT_CODE_LOG`          | —        | Path to a file. When set, the server writes the received JavaScript source code on each tool call. Used by the demo script's `--show-code` flag. |
 
 Example — tighten limits for a multi-tenant deployment:
 
 ```bash
-HYPERLIGHT_CPU_TIMEOUT_MS=500 HYPERLIGHT_HEAP_SIZE_MB=8 node server.js
+HYPERLIGHT_CPU_TIMEOUT_MS=500 HYPERLIGHT_SCRATCH_SIZE_MB=8 node server.js
 ```
+
+The scratch budget is not a JavaScript-only heap allowance or a total
+host-process memory limit. Exhausting it aborts and poisons the guest; the server
+rebuilds the sandbox for the next request. Separate heap-size options are no
+longer supported. Reinstall existing MCP configurations with the updated launcher
+to replace their old memory settings.
 
 ## Troubleshooting
 

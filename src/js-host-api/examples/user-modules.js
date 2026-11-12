@@ -15,10 +15,7 @@ async function main() {
 
     // ── Build sandbox ────────────────────────────────────────────────
     console.log('1. Creating sandbox...');
-    const proto = await new SandboxBuilder()
-        .setHeapSize(8 * 1024 * 1024)
-        .setScratchSize(1024 * 1024)
-        .build();
+    const proto = await new SandboxBuilder().setScratchSize(8 * 1024 * 1024).build();
     const sandbox = await proto.loadRuntime();
     console.log('   ✓ Sandbox created\n');
 
@@ -120,10 +117,7 @@ async function main() {
     // We need a fresh sandbox for the shared-state demo because
     // getLoadedSandbox() consumes the JSSandbox.
     console.log('5. Cross-handler shared mutable state...\n');
-    const proto2 = await new SandboxBuilder()
-        .setHeapSize(8 * 1024 * 1024)
-        .setScratchSize(1024 * 1024)
-        .build();
+    const proto2 = await new SandboxBuilder().setScratchSize(8 * 1024 * 1024).build();
     const sandbox2 = await proto2.loadRuntime();
 
     // ── Shared mutable state module ──────────────────────────────────

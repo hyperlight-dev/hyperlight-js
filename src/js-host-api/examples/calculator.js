@@ -7,7 +7,7 @@ async function main() {
 
     // Create and configure sandbox
     const builder = new SandboxBuilder();
-    builder.setHeapSize(16 * 1024 * 1024); // 16MB heap
+    builder.setScratchSize(16 * 1024 * 1024);
 
     const protoSandbox = await builder.build();
     const jsSandbox = await protoSandbox.loadRuntime();

@@ -13,7 +13,7 @@ describe('SandboxBuilder', () => {
 
     it('should support method chaining on setters', () => {
         const builder = new SandboxBuilder();
-        const returned = builder.setHeapSize(8 * 1024 * 1024);
+        const returned = builder.setScratchSize(8 * 1024 * 1024);
         // Builder setters should return `this` for chaining
         expect(returned).toBe(builder);
     });
@@ -21,8 +21,7 @@ describe('SandboxBuilder', () => {
     it('should chain multiple setters', () => {
         const builder = new SandboxBuilder();
         const result = builder
-            .setHeapSize(8 * 1024 * 1024)
-            .setScratchSize(1024 * 1024)
+            .setScratchSize(8 * 1024 * 1024)
             .setInputBufferSize(4096)
             .setOutputBufferSize(4096)
             .setInputTransportPoolPages(4)
@@ -47,7 +46,7 @@ describe('SandboxBuilder', () => {
     it('should throw CONSUMED on setters after build()', async () => {
         const builder = new SandboxBuilder();
         await builder.build();
-        expectThrowsWithCode(() => builder.setHeapSize(1024), 'ERR_CONSUMED');
+        expectThrowsWithCode(() => builder.setScratchSize(1024), 'ERR_CONSUMED');
         expectThrowsWithCode(() => builder.setInputTransportPoolPages(4), 'ERR_CONSUMED');
         expectThrowsWithCode(() => builder.setOutputTransportPoolPages(4), 'ERR_CONSUMED');
         expectThrowsWithCode(() => builder.setInputTransportBufferSize(4096), 'ERR_CONSUMED');
@@ -55,11 +54,6 @@ describe('SandboxBuilder', () => {
     });
 
     // ── Validation ───────────────────────────────────────────────────
-
-    it('should reject zero heap size', () => {
-        const builder = new SandboxBuilder();
-        expectThrowsWithCode(() => builder.setHeapSize(0), 'ERR_INVALID_ARG');
-    });
 
     it('should reject zero scratch size', () => {
         const builder = new SandboxBuilder();
@@ -249,6 +243,42 @@ describe('LoadedJSSandbox', () => {
         const handle = loaded.interruptHandle;
         expect(handle).toBeDefined();
         expect(typeof handle.kill).toBe('function');
+    });
+});
+
+describe('Scratch allocation budget', () => {
+    it.each([5, 32])('enforces a %i MiB scratch budget and restores safely', async (scratchMiB) => {
+        const mib = 1024 * 1024;
+        const proto = await new SandboxBuilder().setScratchSize(scratchMiB * mib).build();
+        const sandbox = await trackSandbox(proto.loadRuntime());
+        sandbox.addHandler(
+            'handler',
+            `
+            function handler(event) {
+                const bytes = new Uint8Array(event.bytes);
+                bytes.fill(7);
+                return bytes[bytes.length - 1];
+            }
+        `
+        );
+        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
+        const snapshot = await loaded.snapshot();
+        if (scratchMiB === 5) {
+            await expectRejectsWithCode(
+                loaded.callHandler('handler', { bytes: 8 * mib }),
+                'ERR_GUEST_ABORT'
+            );
+            expect(loaded.poisoned).toBe(true);
+            await expectRejectsWithCode(
+                loaded.callHandler('handler', { bytes: 1 }),
+                'ERR_POISONED'
+            );
+        } else {
+            expect(await loaded.callHandler('handler', { bytes: 8 * mib })).toBe(7);
+        }
+        await loaded.restore(snapshot);
+        expect(loaded.poisoned).toBe(false);
+        expect(await loaded.callHandler('handler', { bytes: 1 })).toBe(7);
     });
 });
 

@@ -91,6 +91,21 @@ To run the tests, run:
 just test
 ```
 
+Use `just test-all` to also run monitor and Node.js binding tests.
+
+## Guest Memory
+
+`SandboxBuilder::with_guest_scratch_size(bytes)` controls the shared
+writable-memory budget for the guest heap, stack, transport pools, page tables,
+and copy-on-write pages. The default and minimum are 5 MiB; smaller requests
+are clamped to that minimum.
+Increase scratch for allocation-heavy handlers or larger transport pools. This
+budget is not a JavaScript-only heap limit or a total host-process memory limit.
+
+Exhaustion aborts the guest with `GuestAborted(MallocFailed, ...)` and poisons the
+sandbox. Restore a snapshot or build a replacement before executing again.
+Node.js uses `SandboxBuilder.setScratchSize(bytes)` and reports `ERR_GUEST_ABORT`.
+
 ## Running the examples
 
 ### run_handler example

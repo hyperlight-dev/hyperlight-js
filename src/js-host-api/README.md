@@ -51,8 +51,7 @@ console.log(result); // { name: 'World', message: 'Hello, World!' }
 Creates and configures a new sandbox.
 
 **Methods:**
-- `setHeapSize(bytes: number)` → `this` — Set guest heap size (must be > 0, chainable)
-- `setScratchSize(bytes: number)` → `this` — Set guest scratch size, includes stack (must be > 0, chainable)
+- `setScratchSize(bytes: number)` → `this` — Set the shared guest writable-memory budget (must be > 0, chainable; default and minimum: 5 MiB)
 - `setInputTransportPoolPages(pages: number)` → `this` — Set the host-to-guest buffer pool size in 4 KiB pages (must be > 0, chainable)
 - `setOutputTransportPoolPages(pages: number)` → `this` — Set the guest-to-host buffer pool size in 4 KiB pages (must be > 0, chainable)
 - `setInputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each host-to-guest transport buffer (must be > 0, chainable)
@@ -63,12 +62,11 @@ Creates and configures a new sandbox.
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
 
 **Static methods:**
-- `SandboxBuilder.fromSnapshot(snapshot)` → `SandboxBuilder` — Creates a builder whose `build()` returns the `JSSandbox` or `LoadedJSSandbox` the snapshot captured. The snapshot's memory layout overrides heap, scratch, and transport settings.
+- `SandboxBuilder.fromSnapshot(snapshot)` → `SandboxBuilder` — Creates a builder whose `build()` returns the `JSSandbox` or `LoadedJSSandbox` the snapshot captured. The snapshot's memory layout overrides scratch and transport settings.
 
 ```javascript
 const builder = new SandboxBuilder()
-    .setHeapSize(8 * 1024 * 1024)
-    .setScratchSize(1024 * 1024)
+    .setScratchSize(8 * 1024 * 1024)
     .setInputTransportBufferSize(16 * 1024)
     .setOutputTransportBufferSize(16 * 1024)
     .setInputTransportPoolPages(8)

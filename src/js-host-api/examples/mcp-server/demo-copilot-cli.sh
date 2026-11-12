@@ -17,7 +17,7 @@
 #   ./demo-copilot-cli.sh --install    # Install MCP config permanently
 #   ./demo-copilot-cli.sh --uninstall  # Remove MCP config
 #   ./demo-copilot-cli.sh --model gpt-4o  # Use a specific model
-#   ./demo-copilot-cli.sh --cpu-timeout 2000 --heap-size 32  # Custom limits
+#   ./demo-copilot-cli.sh --cpu-timeout 2000 --scratch-size 32  # Custom limits
 #
 # Options:
 #   --model <name>          LLM model to use (default: claude-opus-4.6)
@@ -26,8 +26,7 @@
 #   --prompt <text>         Run a single custom prompt instead of built-in demos
 #   --cpu-timeout <ms>      CPU time limit per execution (default: 1000)
 #   --wall-timeout <ms>     Wall-clock backstop per execution (default: 5000)
-#   --heap-size <MB>        Guest heap size in megabytes (default: 16)
-#   --scratch-size <MB>       Guest scratch size in megabytes (default: 1)
+#   --scratch-size <MiB>    Shared guest writable-memory budget (default: 16, minimum: 5)
 #
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -54,8 +53,7 @@ CUSTOM_PROMPT=""
 # CLI flags take precedence over env vars, env vars over defaults.
 CPU_TIMEOUT="${HYPERLIGHT_CPU_TIMEOUT_MS:-1000}"
 WALL_TIMEOUT="${HYPERLIGHT_WALL_TIMEOUT_MS:-5000}"
-HEAP_SIZE="${HYPERLIGHT_HEAP_SIZE_MB:-16}"
-SCRATCH_SIZE="${HYPERLIGHT_SCRATCH_SIZE_MB:-1}"
+SCRATCH_SIZE="${HYPERLIGHT_SCRATCH_SIZE_MB:-16}"
 
 # ── Paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -186,7 +184,6 @@ build_mcp_json() {
 
     export HYPERLIGHT_CPU_TIMEOUT_MS="${CPU_TIMEOUT}"
     export HYPERLIGHT_WALL_TIMEOUT_MS="${WALL_TIMEOUT}"
-    export HYPERLIGHT_HEAP_SIZE_MB="${HEAP_SIZE}"
     export HYPERLIGHT_SCRATCH_SIZE_MB="${SCRATCH_SIZE}"
 
     # Pass paths/names to node via the environment rather than string
@@ -201,7 +198,6 @@ build_mcp_json() {
         const env = {
             HYPERLIGHT_CPU_TIMEOUT_MS:  process.env.HYPERLIGHT_CPU_TIMEOUT_MS,
             HYPERLIGHT_WALL_TIMEOUT_MS: process.env.HYPERLIGHT_WALL_TIMEOUT_MS,
-            HYPERLIGHT_HEAP_SIZE_MB:    process.env.HYPERLIGHT_HEAP_SIZE_MB,
             HYPERLIGHT_SCRATCH_SIZE_MB: process.env.HYPERLIGHT_SCRATCH_SIZE_MB,
         };
         if (installMode) {
@@ -252,7 +248,6 @@ install_mcp_config() {
         MCP_SERVER_NAME="${MCP_SERVER_NAME}" \
         MCP_CPU_TIMEOUT="${CPU_TIMEOUT}" \
         MCP_WALL_TIMEOUT="${WALL_TIMEOUT}" \
-        MCP_HEAP_SIZE="${HEAP_SIZE}" \
         MCP_SCRATCH_SIZE="${SCRATCH_SIZE}" \
         node -e "
             const fs = require('fs');
@@ -265,7 +260,6 @@ install_mcp_config() {
                 env: {
                     HYPERLIGHT_CPU_TIMEOUT_MS:  process.env.MCP_CPU_TIMEOUT,
                     HYPERLIGHT_WALL_TIMEOUT_MS: process.env.MCP_WALL_TIMEOUT,
-                    HYPERLIGHT_HEAP_SIZE_MB:    process.env.MCP_HEAP_SIZE,
                     HYPERLIGHT_SCRATCH_SIZE_MB: process.env.MCP_SCRATCH_SIZE,
                     HYPERLIGHT_TIMING_LOG:      '/tmp/hyperlight-timing.jsonl',
                 },
@@ -475,8 +469,7 @@ Your task is complete the moment you present the result."
         local install_flags=""
         [[ "${CPU_TIMEOUT}"  != "1000" ]] && install_flags+=" --cpu-timeout ${CPU_TIMEOUT}"
         [[ "${WALL_TIMEOUT}" != "5000" ]] && install_flags+=" --wall-timeout ${WALL_TIMEOUT}"
-        [[ "${HEAP_SIZE}"    != "16" ]]   && install_flags+=" --heap-size ${HEAP_SIZE}"
-        [[ "${SCRATCH_SIZE}"   != "1" ]]    && install_flags+=" --scratch-size ${SCRATCH_SIZE}"
+        [[ "${SCRATCH_SIZE}"   != "16" ]]    && install_flags+=" --scratch-size ${SCRATCH_SIZE}"
 
         echo ""
         echo -e "${CYAN}${BOLD}🔧 Copy-pasteable command:${RESET}"
@@ -629,13 +622,8 @@ main() {
                 WALL_TIMEOUT="$2"
                 shift 2
                 ;;
-            --heap-size)
-                if [[ -z "${2:-}" ]]; then fail "--heap-size requires a value in MB"; fi
-                HEAP_SIZE="$2"
-                shift 2
-                ;;
             --scratch-size)
-                if [[ -z "${2:-}" ]]; then fail "--scratch-size requires a value in MB"; fi
+                if [[ -z "${2:-}" ]]; then fail "--scratch-size requires a value in MiB"; fi
                 SCRATCH_SIZE="$2"
                 shift 2
                 ;;
@@ -644,14 +632,14 @@ main() {
                 shift
                 ;;
             *)
-                fail "Unknown argument: $1\nUsage: $0 [--headless] [--install] [--uninstall] [--model <name>] [--prompt <text>] [--show-code] [--show-command] [--cpu-timeout <ms>] [--wall-timeout <ms>] [--heap-size <MB>] [--scratch-size <MB>]"
+                fail "Unknown argument: $1\nUsage: $0 [--headless] [--install] [--uninstall] [--model <name>] [--prompt <text>] [--show-code] [--show-command] [--cpu-timeout <ms>] [--wall-timeout <ms>] [--scratch-size <MiB>]"
                 ;;
         esac
     done
 
     banner
     info "Using model: ${BOLD}${MODEL}${RESET}"
-    info "Sandbox limits: CPU ${BOLD}${CPU_TIMEOUT}ms${RESET}, wall ${BOLD}${WALL_TIMEOUT}ms${RESET}, heap ${BOLD}${HEAP_SIZE}MB${RESET}, scratch ${BOLD}${SCRATCH_SIZE}MB${RESET}"
+    info "Sandbox limits: CPU ${BOLD}${CPU_TIMEOUT}ms${RESET}, wall ${BOLD}${WALL_TIMEOUT}ms${RESET}, requested scratch ${BOLD}${SCRATCH_SIZE}MiB${RESET} (minimum 5MiB)"
 
     case "${mode}" in
         --install)

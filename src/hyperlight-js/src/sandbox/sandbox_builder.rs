@@ -42,7 +42,7 @@ pub struct NewSandbox;
 ///
 /// [`SandboxBuilder::new`] builds a [`ProtoJSSandbox`].
 /// [`SandboxBuilder::from_snapshot`] builds the sandbox type the snapshot captured.
-/// A snapshot's memory layout overrides heap, scratch, and transport settings.
+/// A snapshot's memory layout overrides scratch and transport settings.
 ///
 /// Transport setters record choices. [`Self::get_config`] and
 /// [`SandboxBuilder::build`] resolve buffer sizes, pool budgets, and descriptor
@@ -73,24 +73,11 @@ pub struct SandboxBuilder<S = NewSandbox> {
 
 /// The minimum scratch size for the JS runtime sandbox.
 ///
-/// The scratch region provides writable physical memory for:
-///   - Transport queues and buffer pools
-///   - Page table copies (proportional to snapshot size — our ~13 MB guest
-///     binary + heap produce ~72 KiB of page tables)
-///   - Dynamically allocated pages (GDT/IDT, stack growth, Copy-on-Write
-///     resolution during QuickJS initialisation)
-///   - Exception stack and metadata (2 pages at the top)
-///
-/// Hyperlight's default scratch is sized for smaller guests. The JS
-/// runtime needs 1 MiB (0x10_0000) to leave room for QuickJS initialisation
-/// after the transport and page-table overheads.
-const MIN_SCRATCH_SIZE: usize = 0x10_0000; // 1 MiB
-
-/// The minimum heap size is 4 MiB.  The QuickJS engine needs a
-/// reasonable amount of heap during initialisation for builtins,
-/// global objects, and the bytecode compiler.  This lives in the
-/// identity-mapped snapshot region (NOT scratch).
-const MIN_HEAP_SIZE: u64 = 4096 * 1024;
+/// Scratch backs the guest heap and stack, transport queues and buffer pools,
+/// page tables, exception handling, and copy-on-write pages. These allocations
+/// share one budget; the configured size is not a JavaScript heap allowance.
+/// Increase it for allocation-heavy handlers or larger transport pools.
+const MIN_SCRATCH_SIZE: usize = 5 * 1024 * 1024;
 
 /// The previous 16 KiB message capacity for each direction.
 const DEFAULT_LEGACY_BUFFER_SIZE: usize = 16 * 1024;
@@ -104,7 +91,6 @@ const MIN_LEGACY_BUFFER_SIZE: usize = 8 * 1024;
 impl<S> SandboxBuilder<S> {
     fn with_source(source: S) -> Self {
         let mut config = SandboxConfiguration::default();
-        config.set_heap_size(MIN_HEAP_SIZE);
         config.set_scratch_size(MIN_SCRATCH_SIZE);
 
         Self {
@@ -259,26 +245,15 @@ impl<S> SandboxBuilder<S> {
     }
 
     /// Set the guest scratch size in bytes.
-    /// The scratch region provides writable memory for the guest, including the
-    /// dynamically-sized stack. Increase this if your guest code needs deep
-    /// recursion or large local variables.
+    /// Scratch backs the heap, stack, transport pools, page tables, and
+    /// copy-on-write pages. Increase it for large objects, deep recursion,
+    /// or larger transport pools. Exhaustion aborts the guest with `MallocFailed`
+    /// and poisons the sandbox; restore a snapshot before reusing it.
     ///
-    /// Values at or below the JS runtime default (1 MiB) are ignored.
+    /// Defaults to 5 MiB. Smaller values are raised to this minimum.
     pub fn with_guest_scratch_size(mut self, guest_scratch_size: usize) -> Self {
-        if guest_scratch_size > MIN_SCRATCH_SIZE {
-            self.base_config.set_scratch_size(guest_scratch_size);
-        }
-        self
-    }
-
-    /// Set the guest heap size
-    /// This is the size of the heap that code executing in the guest can use.
-    /// If this value is too small then the guest will fail, usually with a malloc failed error
-    /// The default (and minimum) value for this is set to the value of the MIN_HEAP_SIZE const.
-    pub fn with_guest_heap_size(mut self, guest_heap_size: u64) -> Self {
-        if guest_heap_size > MIN_HEAP_SIZE {
-            self.base_config.set_heap_size(guest_heap_size);
-        }
+        self.base_config
+            .set_scratch_size(guest_scratch_size.max(MIN_SCRATCH_SIZE));
         self
     }
 
@@ -422,7 +397,7 @@ impl SandboxBuilder<NewSandbox> {
 impl<T: SnapshotTarget> SandboxBuilder<Snapshot<T>> {
     /// Create a builder that restores `snapshot`.
     ///
-    /// The snapshot's memory layout overrides heap, scratch, and transport
+    /// The snapshot's memory layout overrides scratch and transport
     /// settings. Supply every host function and module loader the snapshot uses.
     pub fn from_snapshot(snapshot: Snapshot<T>) -> Self {
         Self::with_source(snapshot)

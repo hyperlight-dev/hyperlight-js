@@ -13,7 +13,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Keep the host and guest on the same release for transport compatibility.
-hyperlight-guest-bin = { version = "0.18.0", features = ["libc"] }
+hyperlight-guest-bin = { version = "0.19.0", features = ["libc"] }
 hyperlight-host = { version = "0.18.0", default-features = false }
 hyperlight-common = { version = "0.18.0", default-features = false }
 hyperlight-guest = { version = "0.18.0" }

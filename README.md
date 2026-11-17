@@ -93,10 +93,6 @@ just test
 
 Use `just test-all` to also run monitor and Node.js binding tests.
 
-On Windows, the test recipes set `HYPERLIGHT_INITIAL_SURROGATES=0` so surrogate
-processes are created on demand rather than pre-created for every test process.
-The maximum surrogate pool size is unchanged.
-
 ## Guest Memory
 
 `SandboxBuilder::with_guest_scratch_size(bytes)` controls the shared

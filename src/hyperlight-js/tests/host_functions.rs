@@ -319,7 +319,6 @@ fn register_js_chunked_sidecar_round_trip() {
     let proto = SandboxBuilder::new()
         .with_input_transport_pool_pages(64)
         .with_output_transport_pool_pages(128)
-        .with_guest_scratch_size(2 * 1024 * 1024)
         .with_host_function_modules([host])
         .build()
         .unwrap();

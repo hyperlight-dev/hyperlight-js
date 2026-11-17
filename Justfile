@@ -161,7 +161,8 @@ clean:
     -rm -f src/js-host-api/index.d.ts
 
 # TESTING
-# Avoid eagerly creating the Windows surrogate pool in each test process.
+# On Windows, create surrogates on demand rather than pre-creating the pool in
+# every test process. This leaves the maximum surrogate pool size unchanged.
 test-env-command := if os() == "windows" { "$env:HYPERLIGHT_INITIAL_SURROGATES='0'; " } else { "" }
 
 # Metrics tests cannot run with other tests they are marked as ignored so that cargo test works

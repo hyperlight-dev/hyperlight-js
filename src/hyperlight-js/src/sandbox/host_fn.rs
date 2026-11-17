@@ -159,9 +159,9 @@ pub(crate) fn decode_binaries(data: Vec<Bytes>) -> crate::Result<Vec<Vec<u8>>> {
         .map_err(|e| crate::HyperlightError::Error(e.to_string()))
 }
 
-/// A module containing host functions that can be called from the guest JavaScript code.
+/// Internal callback storage for a [`HostFunctionModule`].
 #[derive(Default)]
-pub struct HostModule {
+pub(crate) struct HostModule {
     functions: HashMap<String, HostFn>,
 }
 
@@ -182,22 +182,8 @@ impl HostModule {
         self.functions.keys().map(String::as_str)
     }
 
-    /// Register a typed host function that can be called from the guest
-    /// JavaScript code.
-    ///
-    /// Arguments are deserialized from JSON via serde and the return value
-    /// is serialized back to JSON automatically.
-    ///
-    /// This variant does **not** support `Uint8Array`/`Buffer` arguments.
-    /// For binary data support, use the JS bridge API instead.
-    ///
-    /// ```text
-    /// module.register("add", |a: i32, b: i32| a + b);
-    /// ```
-    ///
-    /// Registering a function with the same `name` as an existing function
-    /// overwrites the previous registration.
-    pub fn register<Output: Serialize, Args: DeserializeOwned>(
+    /// Store a typed callback supplied through [`HostFunctionModule::register`].
+    pub(crate) fn register<Output: Serialize, Args: DeserializeOwned>(
         &mut self,
         name: impl Into<String>,
         func: impl Function<Output, Args> + Send + Sync + 'static,
@@ -207,16 +193,8 @@ impl HostModule {
         self
     }
 
-    /// Register a host function for the JavaScript bridge (NAPI layer).
-    ///
-    /// This is an internal API used by the `js-host-api` NAPI bridge.
-    /// Rust users should use [`register`](Self::register) instead, which
-    /// handles binary data transparently via serde.
-    ///
-    /// The closure receives parsed `JsonValue` args and decoded binary
-    /// blobs directly. Return [`FnReturn::Json`] or [`FnReturn::Binary`].
-    #[doc(hidden)]
-    pub fn register_js(
+    /// Store a callback supplied through [`HostFunctionModule::register_js`].
+    pub(crate) fn register_js(
         &mut self,
         name: impl Into<String>,
         func: impl Fn(JsonValue, Vec<Vec<u8>>) -> crate::Result<FnReturn> + Send + Sync + 'static,
@@ -316,6 +294,19 @@ impl HostFunctionModule {
     }
 
     /// Register a typed host function on this module.
+    ///
+    /// Arguments are deserialized from JSON via serde and the return value
+    /// is serialized back to JSON automatically.
+    ///
+    /// This variant does **not** support `Uint8Array`/`Buffer` arguments.
+    /// For binary data support, use the JS bridge API instead.
+    ///
+    /// ```text
+    /// module.register("add", |a: i32, b: i32| a + b);
+    /// ```
+    ///
+    /// Registering a function with the same `name` as an existing function
+    /// overwrites the previous registration.
     pub fn register<Output: Serialize, Args: DeserializeOwned>(
         &mut self,
         name: impl Into<String>,
@@ -326,6 +317,9 @@ impl HostFunctionModule {
     }
 
     /// Register a JavaScript-bridge host function on this module.
+    ///
+    /// The closure receives parsed JSON arguments and decoded binary blobs.
+    /// Return [`FnReturn::Json`] or [`FnReturn::Binary`].
     #[doc(hidden)]
     pub fn register_js(
         &mut self,

@@ -79,7 +79,7 @@ const MIN_SCRATCH_SIZE: usize = 5 * 1024 * 1024;
 const DEFAULT_TRANSPORT_MESSAGE_CAPACITY: usize = 16 * 1024;
 
 /// Default capacity of each full-size transport buffer.
-const DEFAULT_TRANSPORT_BUFFER_SIZE: usize = DEFAULT_TRANSPORT_MESSAGE_CAPACITY;
+const DEFAULT_TRANSPORT_BUFFER_SIZE: usize = 16 * 1024;
 
 impl<S> SandboxBuilder<S> {
     fn with_source(source: S) -> Self {

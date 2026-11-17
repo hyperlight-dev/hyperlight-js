@@ -43,7 +43,7 @@ pub const DEFAULT_MODULE_NAMESPACE: &str = "user";
 /// Reserved namespaces that cannot be used for user modules.
 ///
 /// The `host` namespace is reserved for host-function modules registered via
-/// [`ProtoJSSandbox::host_module`].
+/// [`SandboxBuilder::with_host_function_modules`](crate::SandboxBuilder::with_host_function_modules).
 pub const RESERVED_NAMESPACES: &[&str] = &["host"];
 
 /// Validates a module identifier (name or namespace).

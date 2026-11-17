@@ -48,7 +48,7 @@ async function main() {
         console.log(`   ✅ SUCCESS: Handler completed!`);
         console.log(`   📊 Counter: ${result.counter.toLocaleString()}`);
         printCallStats(loaded);
-        console.log(`   🔒 Poisoned: ${loaded.poisoned}\n`);
+        console.log(`   🔒 Status: ${loaded.status}\n`);
     } catch (err) {
         console.log(`   ❌ Unexpected timeout: ${err.message}\n`);
     }
@@ -101,13 +101,13 @@ async function main() {
             console.log(`   ⚡ CPU time limit: 500ms (fired first for compute-bound work)`);
             console.log(`   ⏱️  Wall-clock limit: 5000ms (backstop, not reached)`);
             printCallStats(loaded);
-            console.log(`   🔒 Poisoned: ${loaded.poisoned} (sandbox is in inconsistent state)`);
+            console.log(`   🔒 Status: ${loaded.status} (sandbox is in inconsistent state)`);
             console.log(`   ✅ SUCCESS: Timeout enforced correctly!\n`);
 
             // Demonstrate recovery from poisoned state
             console.log('📸 Restoring sandbox from snapshot...');
             await loaded.restore(snapshot);
-            console.log(`   🔒 Poisoned after restore: ${loaded.poisoned}`);
+            console.log(`   🔒 Status after restore: ${loaded.status}`);
             console.log('   ✅ Sandbox recovered and ready for use!\n');
         } else {
             console.log(`   ❌ Unexpected error: ${err.message}\n`);

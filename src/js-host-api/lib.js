@@ -117,15 +117,8 @@ function wrapSync(fn) {
 // cached by require(), so prototypes are patched once per process, after
 // this module has been required at least once.
 
-const {
-    LoadedJSSandbox,
-    JSSandbox,
-    ProtoJSSandbox,
-    SandboxBuilder,
-    Snapshot,
-    HostFunctionModule,
-    HostModule,
-} = native;
+const { LoadedJSSandbox, JSSandbox, ProtoJSSandbox, SandboxBuilder, Snapshot, HostFunctionModule } =
+    native;
 
 /**
  * Wrap a getter so that thrown errors have enriched codes.
@@ -157,7 +150,7 @@ for (const method of ['callHandler', 'unload', 'snapshot', 'restore', 'dispose']
     if (!orig) throw new Error(`Cannot wrap missing method: LoadedJSSandbox.${method}`);
     LoadedJSSandbox.prototype[method] = wrapAsync(orig);
 }
-wrapGetter(LoadedJSSandbox, 'poisoned');
+wrapGetter(LoadedJSSandbox, 'status');
 wrapGetter(LoadedJSSandbox, 'interruptHandle');
 wrapGetter(LoadedJSSandbox, 'lastCallStats');
 
@@ -182,28 +175,12 @@ for (const method of [
     JSSandbox.prototype[method] = wrapSync(orig);
 }
 wrapGetter(JSSandbox, 'status');
-wrapGetter(JSSandbox, 'poisoned');
 
 // ProtoJSSandbox — fresh runtime construction
 for (const method of ['loadRuntime']) {
     const orig = ProtoJSSandbox.prototype[method];
     if (!orig) throw new Error(`Cannot wrap missing method: ProtoJSSandbox.${method}`);
     ProtoJSSandbox.prototype[method] = wrapAsync(orig);
-}
-
-// hostModule() is sync — just wrap for error enrichment
-ProtoJSSandbox.prototype.hostModule = wrapSync(ProtoJSSandbox.prototype.hostModule);
-
-// ProtoJSSandbox — register() handle errors and wraps callback to return Promise
-{
-    const origRegister = ProtoJSSandbox.prototype.register;
-    ProtoJSSandbox.prototype.register = wrapSync(function (moduleName, functionName, callback) {
-        // the rust code expects the host function to return a Promise, so we wrap the callback result in Promise.resolve().then(..) to allow sync functions as well
-        // note that Promise.resolve(callback(...args)) would not work because if callback throws that would not return a rejected promise, it would just throw before returning the promise.
-        return origRegister.call(this, moduleName, functionName, (...args) =>
-            Promise.resolve().then(() => callback(...args))
-        );
-    });
 }
 
 // Host-function modules — register() with Buffer support
@@ -238,7 +215,6 @@ function wrapHostFunctionModule(cls) {
     });
 }
 wrapHostFunctionModule(HostFunctionModule);
-wrapHostFunctionModule(HostModule);
 
 const HostFunctionModuleExport = new Proxy(HostFunctionModule, {
     construct(target, args, newTarget) {
@@ -292,8 +268,6 @@ for (const method of [
     'setOutputTransportPoolPages',
     'setInputTransportBufferSize',
     'setOutputTransportBufferSize',
-    'setInputBufferSize',
-    'setOutputBufferSize',
     'setHostFunctionModules',
 ]) {
     const orig = SandboxBuilder.prototype[method];

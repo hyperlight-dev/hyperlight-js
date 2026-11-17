@@ -375,12 +375,6 @@ impl JSSandbox {
         self.modules.clear();
     }
 
-    /// Returns whether the sandbox is currently poisoned.
-    #[deprecated(since = "0.4.0", note = "use status().is_poisoned()")]
-    pub fn poisoned(&self) -> bool {
-        self.inner.status().is_poisoned()
-    }
-
     /// Returns the sandbox lifecycle status.
     pub fn status(&self) -> SandboxStatus {
         self.inner.status()

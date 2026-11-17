@@ -16,8 +16,6 @@ limitations under the License.
 //! Test for host modules / functions.
 
 #![allow(clippy::disallowed_macros)]
-// Most tests here cover the deprecated ProtoJSSandbox registration API.
-#![allow(deprecated)]
 
 use std::cell::RefCell;
 use std::sync::Once;
@@ -47,20 +45,20 @@ fn can_call_host_functions() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox
-        .register("host", "print", |msg: String| {
-            assert_eq!(msg, "Hello, World!!");
-            42
-        })
-        .unwrap();
-    proto_js_sandbox
-        .register("utils", "add", |a: i32, b: i32| {
-            assert_eq!(a, 42);
-            assert_eq!(b, 24);
-            66
-        })
+    let mut host = HostFunctionModule::new("host");
+    host.register("print", |msg: String| {
+        assert_eq!(msg, "Hello, World!!");
+        42
+    });
+    let mut utils = HostFunctionModule::new("utils");
+    utils.register("add", |a: i32, b: i32| {
+        assert_eq!(a, 42);
+        assert_eq!(b, 24);
+        66
+    });
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host, utils])
+        .build()
         .unwrap();
 
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
@@ -90,20 +88,20 @@ fn should_fail_for_invalid_host_function() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox
-        .register("host", "print", |msg: String| {
-            assert_eq!(msg, "Hello, World!!");
-            42
-        })
-        .unwrap();
-    proto_js_sandbox
-        .register("utils", "add", |a: i32, b: i32| {
-            assert_eq!(a, 42);
-            assert_eq!(b, 24);
-            66
-        })
+    let mut host = HostFunctionModule::new("host");
+    host.register("print", |msg: String| {
+        assert_eq!(msg, "Hello, World!!");
+        42
+    });
+    let mut utils = HostFunctionModule::new("utils");
+    utils.register("add", |a: i32, b: i32| {
+        assert_eq!(a, 42);
+        assert_eq!(b, 24);
+        66
+    });
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host, utils])
+        .build()
         .unwrap();
 
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
@@ -132,17 +130,14 @@ fn host_modules_should_contain_all_host_functions() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox.register("host", "life", || 42).unwrap();
-    proto_js_sandbox
-        .register("host", "add", |a: i32, b: i32| a + b)
-        .unwrap();
-    proto_js_sandbox
-        .register("host", "hello", || String::from("Hello, World!"))
-        .unwrap();
-    proto_js_sandbox
-        .register("host", "no-op", || String::from("Hello, World!"))
+    let mut host = HostFunctionModule::new("host");
+    host.register("life", || 42);
+    host.register("add", |a: i32, b: i32| a + b);
+    host.register("hello", || String::from("Hello, World!"));
+    host.register("no-op", || String::from("Hello, World!"));
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
         .unwrap();
 
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
@@ -174,10 +169,11 @@ fn host_fn_call_should_fail_if_wrong_arg_types() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox
-        .register("host", "add", |a: i32, b: i32| a + b)
+    let mut host = HostFunctionModule::new("host");
+    host.register("add", |a: i32, b: i32| a + b);
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
         .unwrap();
 
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
@@ -206,10 +202,11 @@ fn host_fn_with_unusual_names() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox
-        .register("host", "scoped/add/😊", |a: i32, b: i32| a + b)
+    let mut host = HostFunctionModule::new("host");
+    host.register("scoped/add/😊", |a: i32, b: i32| a + b);
+    let proto_js_sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
         .unwrap();
 
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
@@ -246,10 +243,9 @@ fn minimum_pool_pages_support_host_callbacks() {
         assert_eq!(config.get_h2g_pool_pages(), input_pages);
         assert_eq!(config.get_g2h_pool_pages(), output_pages);
 
-        let mut proto = builder.build().unwrap();
-        proto
-            .register("host", "echo", |value: String| value)
-            .unwrap();
+        let mut host = HostFunctionModule::new("host");
+        host.register("echo", |value: String| value);
+        let proto = builder.with_host_function_modules([host]).build().unwrap();
 
         let mut sandbox = proto.load_runtime().unwrap();
         sandbox
@@ -300,33 +296,33 @@ fn register_js_chunked_sidecar_round_trip() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new()
+    let mut host = HostFunctionModule::new("host");
+    host.register_js("echo", |args, mut blobs| {
+        assert_eq!(
+            args,
+            serde_json::json!([
+                { "payload": { "__bin__": 0 }, "empty": { "__bin__": 1 } },
+                { "__bin__": 2 },
+            ])
+        );
+        assert_eq!(blobs.len(), 3);
+        assert!(blobs[1].is_empty());
+        assert_eq!(blobs[2], [9, 8, 7]);
+
+        for (index, byte) in blobs[0].iter().enumerate() {
+            assert_eq!(*byte as usize, (index + 1) % 251);
+        }
+
+        Ok(hyperlight_js::FnReturn::Binary(blobs.remove(0)))
+    });
+
+    let proto = SandboxBuilder::new()
         .with_input_transport_pool_pages(64)
         .with_output_transport_pool_pages(128)
+        .with_guest_scratch_size(2 * 1024 * 1024)
+        .with_host_function_modules([host])
         .build()
         .unwrap();
-
-    proto
-        .host_module("host")
-        .register_js("echo", |args, mut blobs| {
-            assert_eq!(
-                args,
-                serde_json::json!([
-                    { "payload": { "__bin__": 0 }, "empty": { "__bin__": 1 } },
-                    { "__bin__": 2 },
-                ])
-            );
-            assert_eq!(blobs.len(), 3);
-            assert!(blobs[1].is_empty());
-            assert_eq!(blobs[2], [9, 8, 7]);
-
-            for (index, byte) in blobs[0].iter().enumerate() {
-                assert_eq!(*byte as usize, (index + 1) % 251);
-            }
-
-            Ok(hyperlight_js::FnReturn::Binary(blobs.remove(0)))
-        });
-
     let mut sandbox = proto.load_runtime().unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
@@ -371,9 +367,8 @@ fn register_js_binary_arg_round_trip() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "byte_length",
         |_args: serde_json::Value, blobs: Vec<Vec<u8>>| {
             // The first arg should be a placeholder {"__bin__": 0}
@@ -390,7 +385,12 @@ fn register_js_binary_arg_round_trip() {
         },
     );
 
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -416,16 +416,20 @@ fn register_js_binary_return() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "get_bytes",
         |_args: serde_json::Value, _blobs: Vec<Vec<u8>>| {
             Ok(hyperlight_js::FnReturn::Binary(vec![10, 20, 30, 40, 50]))
         },
     );
 
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -451,9 +455,8 @@ fn register_js_mixed_args() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "describe",
         |args: serde_json::Value, blobs: Vec<Vec<u8>>| {
             // args is [{"__bin__": 0}, "pfx", 42] or ["pfx", {"__bin__": 0}, 42]
@@ -478,7 +481,12 @@ fn register_js_mixed_args() {
         },
     );
 
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -508,12 +516,14 @@ fn register_typed_rejects_binary_args_e2e() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-    proto_js_sandbox
-        .register("host", "add", |a: i32, b: i32| a + b)
+    let mut host = HostFunctionModule::new("host");
+    host.register("add", |a: i32, b: i32| a + b);
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
         .unwrap();
-
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -540,9 +550,8 @@ fn register_js_empty_uint8array() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "byte_length",
         |_args: serde_json::Value, blobs: Vec<Vec<u8>>| {
             let len = blobs.first().map(|b| b.len()).unwrap_or(0);
@@ -552,7 +561,12 @@ fn register_js_empty_uint8array() {
         },
     );
 
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -579,9 +593,8 @@ fn register_js_multiple_binary_args() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
-
-    proto_js_sandbox.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "total_length",
         |_args: serde_json::Value, blobs: Vec<Vec<u8>>| {
             let total: usize = blobs.iter().map(|b| b.len()).sum();
@@ -591,7 +604,12 @@ fn register_js_multiple_binary_args() {
         },
     );
 
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -621,25 +639,26 @@ fn register_js_binary_in_nested_object() {
 
     let event = r#"{}"#;
 
-    let mut proto_js_sandbox = SandboxBuilder::new().build().unwrap();
+    let mut host = HostFunctionModule::new("host");
+    host.register_js("process", |args: serde_json::Value, blobs: Vec<Vec<u8>>| {
+        // The object should have {"name": "test", "data": {"__bin__": 0}, "count": 3}
+        // with blobs containing [10, 20, 30]
+        let arr = args.as_array().unwrap();
+        let obj = arr[0].as_object().unwrap();
+        let name = obj.get("name").unwrap().as_str().unwrap();
+        let blob_len = blobs.first().map(|b| b.len()).unwrap_or(0);
+        let result = format!("{name}-{blob_len}");
+        let json = serde_json::to_string(&result)
+            .map_err(|e| hyperlight_js::HyperlightError::Error(format!("{e}")))?;
+        Ok(hyperlight_js::FnReturn::Json(json))
+    });
 
-    proto_js_sandbox.host_module("host").register_js(
-        "process",
-        |args: serde_json::Value, blobs: Vec<Vec<u8>>| {
-            // The object should have {"name": "test", "data": {"__bin__": 0}, "count": 3}
-            // with blobs containing [10, 20, 30]
-            let arr = args.as_array().unwrap();
-            let obj = arr[0].as_object().unwrap();
-            let name = obj.get("name").unwrap().as_str().unwrap();
-            let blob_len = blobs.first().map(|b| b.len()).unwrap_or(0);
-            let result = format!("{name}-{blob_len}");
-            let json = serde_json::to_string(&result)
-                .map_err(|e| hyperlight_js::HyperlightError::Error(format!("{e}")))?;
-            Ok(hyperlight_js::FnReturn::Json(json))
-        },
-    );
-
-    let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded_sandbox = sandbox.get_loaded_sandbox().unwrap();
 
@@ -669,10 +688,14 @@ fn host_fn_with_i32_arg_from_event_data() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.register("math", "double", |x: i32| x * 2).unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut math = HostFunctionModule::new("math");
+    math.register("double", |x: i32| x * 2);
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([math])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -693,10 +716,14 @@ fn host_fn_with_i64_arg_from_event_data() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.register("math", "negate", |x: i64| -x).unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut math = HostFunctionModule::new("math");
+    math.register("negate", |x: i64| -x);
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([math])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -718,10 +745,14 @@ fn host_fn_with_f64_arg_preserves_fractional() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.register("math", "half", |x: f64| x / 2.0).unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut math = HostFunctionModule::new("math");
+    math.register("half", |x: f64| x / 2.0);
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([math])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -748,10 +779,14 @@ fn host_fn_with_bool_arg() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.register("logic", "flip", |b: bool| !b).unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut logic = HostFunctionModule::new("logic");
+    logic.register("flip", |flag: bool| !flag);
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([logic])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -773,14 +808,16 @@ fn host_fn_with_mixed_numeric_types() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto
-        .register("math", "weighted_add", |a: i32, b: i32, w: f64| {
-            (a as f64 * w + b as f64 * (1.0 - w)) as i32
-        })
+    let mut math = HostFunctionModule::new("math");
+    math.register("weighted_add", |a: i32, b: i32, w: f64| {
+        (a as f64 * w + b as f64 * (1.0 - w)) as i32
+    });
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([math])
+        .build()
+        .unwrap()
+        .load_runtime()
         .unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -805,10 +842,14 @@ fn host_fn_with_negative_integer() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.register("math", "abs", |x: i32| x.abs()).unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut math = HostFunctionModule::new("math");
+    math.register("abs", |x: i32| x.abs());
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([math])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -829,10 +870,14 @@ fn host_fn_with_zero() {
         "#,
     );
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-    proto.register("math", "inc", |x: i32| x + 1).unwrap();
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut math = HostFunctionModule::new("math");
+    math.register("inc", |x: i32| x + 1);
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([math])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -849,21 +894,23 @@ fn host_fn_with_zero() {
 /// Borrowed return decoding still produces independently owned, mutable arrays.
 #[test]
 fn register_js_repeated_binary_returns_are_independent() {
-    let mut proto = SandboxBuilder::new().build().unwrap();
+    let mut host = HostFunctionModule::new("host");
+    host.register_js("get_payload", |_, _| {
+        let sidecar = hyperlight_js_common::encode_binaries(&[b"ABC".as_slice(), b""])
+            .map_err(|error| hyperlight_js::HyperlightError::Error(error.to_string()))?;
 
-    proto
-        .host_module("host")
-        .register_js("get_payload", |_, _| {
-            let sidecar = hyperlight_js_common::encode_binaries(&[b"ABC".as_slice(), b""])
-                .map_err(|error| hyperlight_js::HyperlightError::Error(error.to_string()))?;
+        Ok(hyperlight_js::FnReturn::JsonWithBinaries(
+            r#"{"first":{"__bin__":0},"again":{"__bin__":0},"empty":{"__bin__":1}}"#.into(),
+            sidecar,
+        ))
+    });
 
-            Ok(hyperlight_js::FnReturn::JsonWithBinaries(
-                r#"{"first":{"__bin__":0},"again":{"__bin__":0},"empty":{"__bin__":1}}"#.into(),
-                sidecar,
-            ))
-        });
-
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox
         .add_handler(
             "handler",
@@ -921,9 +968,8 @@ fn register_js_nested_binary_return_in_object() {
 
     let event = r#"{}"#;
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-
-    proto.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "get_payload",
         |_args: serde_json::Value, _blobs: Vec<Vec<u8>>| {
             // Return JSON + sidecar: {"name": "test", "data": {"__bin__": 0}}
@@ -939,7 +985,12 @@ fn register_js_nested_binary_return_in_object() {
         },
     );
 
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -970,9 +1021,8 @@ fn register_js_nested_binary_return_in_array() {
 
     let event = r#"{}"#;
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-
-    proto.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "get_items",
         |_args: serde_json::Value, _blobs: Vec<Vec<u8>>| {
             // Return an array of two binary blobs
@@ -985,7 +1035,12 @@ fn register_js_nested_binary_return_in_array() {
         },
     );
 
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -1018,9 +1073,8 @@ fn register_js_deeply_nested_binary_return() {
 
     let event = r#"{}"#;
 
-    let mut proto = SandboxBuilder::new().build().unwrap();
-
-    proto.host_module("host").register_js(
+    let mut host = HostFunctionModule::new("host");
+    host.register_js(
         "get_nested",
         |_args: serde_json::Value, _blobs: Vec<Vec<u8>>| {
             let sidecar = hyperlight_js_common::encode_binaries(&[&[0xABu8, 0xCD][..]])
@@ -1039,7 +1093,12 @@ fn register_js_deeply_nested_binary_return() {
         },
     );
 
-    let mut sandbox = proto.load_runtime().unwrap();
+    let mut sandbox = SandboxBuilder::new()
+        .with_host_function_modules([host])
+        .build()
+        .unwrap()
+        .load_runtime()
+        .unwrap();
     sandbox.add_handler("handler", handler).unwrap();
     let mut loaded = sandbox.get_loaded_sandbox().unwrap();
 
@@ -1052,9 +1111,9 @@ fn register_js_deeply_nested_binary_return() {
 
 #[test]
 fn js_restore_rejects_missing_host_function_before_mutation() {
-    let mut source_proto = SandboxBuilder::new().build().unwrap();
-    source_proto
-        .register("required", "value", |_: i32| 1)
+    let source_proto = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
         .unwrap();
     let mut source = source_proto.load_runtime().unwrap();
     source
@@ -1094,9 +1153,9 @@ fn js_restore_rejects_missing_host_function_before_mutation() {
 
 #[test]
 fn loaded_restore_rejects_missing_host_function_before_mutation() {
-    let mut source_proto = SandboxBuilder::new().build().unwrap();
-    source_proto
-        .register("required", "value", |_: i32| 1)
+    let source_proto = SandboxBuilder::new()
+        .with_host_function_modules([required_host_function_module()])
+        .build()
         .unwrap();
     let mut source = source_proto.load_runtime().unwrap();
     source

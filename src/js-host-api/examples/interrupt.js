@@ -49,7 +49,7 @@ async function main() {
         console.log(`   ✅ SUCCESS: Handler completed in ${elapsed}ms`);
         console.log(`   📊 Counter: ${result.counter.toLocaleString()}`);
         console.log(`   🎯 Timeout: 1000ms (not reached)`);
-        console.log(`   🔒 Poisoned: ${loaded.poisoned}\n`);
+        console.log(`   🔒 Status: ${loaded.status}\n`);
     } catch (err) {
         console.log(`   ❌ Unexpected timeout: ${err.message}\n`);
     }
@@ -94,13 +94,13 @@ async function main() {
         if (err.code === 'ERR_CANCELLED') {
             console.log(`   💀 Handler killed after ~${elapsed}ms`);
             console.log(`   ⏱️  Expected: ~1000ms`);
-            console.log(`   🔒 Poisoned: ${loaded.poisoned} (sandbox is in inconsistent state)`);
+            console.log(`   🔒 Status: ${loaded.status} (sandbox is in inconsistent state)`);
             console.log(`   ✅ SUCCESS: Handler was properly interrupted!\n`);
 
             // Demonstrate recovery from poisoned state
             console.log('📸 Restoring sandbox from snapshot...');
             await loaded.restore(snapshot);
-            console.log(`   🔒 Poisoned after restore: ${loaded.poisoned}`);
+            console.log(`   🔒 Status after restore: ${loaded.status}`);
             console.log('   ✅ Sandbox recovered and ready for use!\n');
         } else {
             console.log(`   ❌ Unexpected error: ${err.message}\n`);

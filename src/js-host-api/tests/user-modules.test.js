@@ -5,7 +5,7 @@
 // using the `<namespace>:<name>` convention.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SandboxBuilder } from '../lib.js';
+import { HostFunctionModule, SandboxBuilder } from '../lib.js';
 import { expectThrowsWithCode, expectRejectsWithCode, trackSandbox } from './test-helpers.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -217,8 +217,9 @@ describe('Inter-module imports', () => {
 
 describe('User module importing host functions', () => {
     it('should allow a user module to call a host function', async () => {
-        const proto = await new SandboxBuilder().build();
-        proto.hostModule('db').register('lookup', (id) => ({ id, name: `User ${id}` }));
+        const db = new HostFunctionModule('db');
+        db.register('lookup', (id) => ({ id, name: `User ${id}` }));
+        const proto = await new SandboxBuilder().setHostFunctionModules([db]).build();
 
         const sandbox = await trackSandbox(proto.loadRuntime());
 

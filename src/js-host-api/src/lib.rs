@@ -120,10 +120,6 @@ impl SandboxStatus {
             _ => unreachable!("invalid sandbox status"),
         }
     }
-
-    const fn is_poisoned(self) -> bool {
-        matches!(self, Self::Poisoned)
-    }
 }
 
 // ── Error codes ──────────────────────────────────────────────────────
@@ -547,54 +543,6 @@ impl SandboxBuilderWrapper {
         }
     }
 
-    /// Set the legacy guest-to-host message capacity in bytes.
-    ///
-    /// Preserves the legacy 8 KiB minimum and rounds up to whole 4 KiB pages.
-    /// The output pool also reserves the last legacy input capacity for host
-    /// replies and one page for small buffers, so its total memory is larger.
-    ///
-    /// @param size - Buffer size in bytes (must be > 0)
-    /// @returns this (for chaining)
-    /// @throws If size is 0
-    /// @deprecated Use setOutputTransportPoolPages for an explicit pool budget.
-    #[napi]
-    #[allow(deprecated)]
-    pub fn set_output_buffer_size(&self, size: u32) -> napi::Result<&Self> {
-        if size == 0 {
-            return Err(invalid_arg_error(
-                "Output buffer size must be greater than 0",
-            ));
-        }
-
-        self.with_inner(
-            |state| map_builder!(state, b => b.with_guest_output_buffer_size(size as usize)),
-        )
-    }
-
-    /// Set the legacy host-to-guest message capacity in bytes.
-    ///
-    /// Preserves the legacy 8 KiB minimum and rounds up to whole 4 KiB pages.
-    /// Adds a spare input transport buffer and also sizes the output pool for
-    /// host callback replies. Larger capacities may need more scratch space.
-    ///
-    /// @param size - Buffer size in bytes (must be > 0)
-    /// @returns this (for chaining)
-    /// @throws If size is 0
-    /// @deprecated Use setInputTransportPoolPages and setOutputTransportPoolPages for explicit pool budgets.
-    #[napi]
-    #[allow(deprecated)]
-    pub fn set_input_buffer_size(&self, size: u32) -> napi::Result<&Self> {
-        if size == 0 {
-            return Err(invalid_arg_error(
-                "Input buffer size must be greater than 0",
-            ));
-        }
-
-        self.with_inner(
-            |state| map_builder!(state, b => b.with_guest_input_buffer_size(size as usize)),
-        )
-    }
-
     /// Set the guest scratch size in bytes.
     ///
     /// Shared writable-memory budget for the guest heap, stack, transport pools,
@@ -839,17 +787,13 @@ impl SandboxBuilderWrapper {
 
 /// A sandbox with VM resources allocated, ready to load the JS runtime.
 ///
-/// This is a transitional state — register host functions with
-/// `hostModule()` / `register()`, then call `loadRuntime()` to proceed
-/// to `JSSandbox` where you can register handlers.
+/// Configure host functions on `SandboxBuilder` before building this state.
+/// Call `loadRuntime()` to proceed to `JSSandbox` and register handlers.
 ///
 /// ```js
-/// const proto = await new SandboxBuilder().build();
-///
-/// // Register host functions callable from guest JS
-/// const math = proto.hostModule('math');
+/// const math = new HostFunctionModule('math');
 /// math.register('add', (a, b) => a + b);
-///
+/// const proto = await new SandboxBuilder().setHostFunctionModules([math]).build();
 /// const sandbox = await proto.loadRuntime();
 /// ```
 #[napi(js_name = "ProtoJSSandbox")]
@@ -859,18 +803,6 @@ pub struct ProtoJSSandboxWrapper {
 }
 
 impl ProtoJSSandboxWrapper {
-    /// Borrow the inner value mutably via Mutex, or error if consumed.
-    fn with_inner_mut<F, R>(&self, f: F) -> napi::Result<R>
-    where
-        F: FnOnce(&mut ProtoJSSandbox) -> napi::Result<R>,
-    {
-        let mut guard = self.inner.lock().map_err(|_| lock_error())?;
-        let sandbox = guard
-            .as_mut()
-            .ok_or_else(|| consumed_error("ProtoJSSandbox"))?;
-        f(sandbox)
-    }
-
     /// Take ownership of the inner value, returning a consumed-state error if
     /// this instance has already been used.
     fn take_inner(&self) -> napi::Result<ProtoJSSandbox> {
@@ -886,9 +818,8 @@ impl ProtoJSSandboxWrapper {
 impl ProtoJSSandboxWrapper {
     /// Load the JavaScript runtime into the sandbox.
     ///
-    /// All host functions registered via `hostModule()` / `register()`
-    /// are applied before the runtime is loaded. The `ProtoJSSandbox` is
-    /// consumed and cannot be reused.
+    /// Host functions supplied on the builder are applied before the runtime
+    /// is loaded. The `ProtoJSSandbox` is consumed and cannot be reused.
     ///
     /// Returns a `Promise` — does not block the Node.js event loop.
     ///
@@ -907,69 +838,6 @@ impl ProtoJSSandboxWrapper {
             inner: Arc::new(Mutex::new(Some(js_sandbox))),
             busy_flag: Arc::new(AtomicBool::new(false)),
         })
-    }
-
-    /// Get a builder for registering host functions in a named module.
-    ///
-    /// Host modules are namespaces for host functions that guest JavaScript
-    /// can import:
-    ///
-    /// ```js
-    /// // Host side (Node.js)
-    /// const math = proto.hostModule('math');
-    /// math.register('add', (a, b) => a + b);
-    ///
-    /// // Guest side (sandboxed JS)
-    /// import * as math from "host:math";
-    /// const result = math.add(1, 2); // calls host function
-    /// ```
-    ///
-    /// The returned `HostModule` stores registrations that are
-    /// applied during `loadRuntime()`.
-    ///
-    /// @param name - Module name that guest JS uses in `import * as name from "host:name"`
-    /// @returns A `HostModule` for registering functions
-    /// @throws If the module name is empty
-    /// @deprecated Use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
-    #[napi]
-    pub fn host_module(&self, name: String) -> napi::Result<HostModuleWrapper> {
-        validate_module_name(&name)?;
-        Ok(HostModuleWrapper {
-            module_name: format!("{HOST_MODULE_PREFIX}{name}"),
-            sandbox: self.clone(),
-        })
-    }
-
-    /// Register a host function in a named module (convenience method).
-    ///
-    /// Equivalent to `proto.hostModule(module).register(name, callback)`.
-    /// The `host:` prefix is added automatically — guest code imports with
-    /// `from "host:<moduleName>"`.
-    ///
-    /// Arguments are automatically parsed from JSON and spread into your
-    /// callback. The return value is automatically JSON-stringified.
-    ///
-    /// @param moduleName - Bare module name (e.g. `'math'`); guest imports as `"host:math"`
-    /// @param functionName - Function name within the module
-    /// @param callback - `(...args) => any | Promise<any>` — the host function implementation
-    /// @throws If module name or function name is empty
-    /// @deprecated Use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
-    #[napi]
-    #[allow(clippy::type_complexity)] // allow the type complexity here so that index.d.ts is cleaner
-    pub fn register(
-        &self,
-        module_name: String,
-        function_name: String,
-        func: ThreadsafeFunction<
-            Rest<Option<JsArg>>,
-            Promise<Option<JsReturn>>,
-            Rest<Option<JsArg>>,
-            Status,
-            false,
-            true,
-        >,
-    ) -> napi::Result<()> {
-        self.host_module(module_name)?.register(function_name, func)
     }
 }
 
@@ -1712,105 +1580,6 @@ impl HostFunctionModuleWrapper {
     }
 }
 
-// ── HostModule compatibility API ────────────────────────────────────
-
-/// A builder for registering host functions in a named module.
-///
-/// Obtained from the compatibility API `ProtoJSSandbox.hostModule(name)`.
-/// Host functions registered here become available to guest JavaScript code via
-/// `import * as <name> from "host:<name>"` after `loadRuntime()` is called.
-///
-/// The `host:` prefix is added automatically by the NAPI layer to prevent
-/// collisions with built-in QuickJS modules (e.g. `io`, `crypto`).
-/// You register with a bare name (`'math'`) and guest code imports with the
-/// prefix (`from "host:math"`).
-///
-/// ```js
-/// // Host side (Node.js)
-/// const math = proto.hostModule('math');
-/// math.register('add', (a, b) => a + b);
-/// math.register('multiply', (a, b) => a * b);
-///
-/// // Guest side (sandboxed JS)
-/// import * as math from "host:math";
-/// math.add(1, 2);       // calls host function
-/// math.multiply(3, 4);  // calls host function
-/// ```
-///
-/// Arguments are automatically parsed from JSON and spread into your
-/// callback. The return value is automatically JSON-stringified.
-#[napi(js_name = "HostModule")]
-pub struct HostModuleWrapper {
-    /// Module name this builder registers functions under.
-    module_name: String,
-
-    /// Fresh sandbox that receives registrations from this compatibility handle.
-    sandbox: ProtoJSSandboxWrapper,
-}
-
-#[napi]
-impl HostModuleWrapper {
-    /// Register a host function in this module.
-    ///
-    /// Arguments are automatically parsed from JSON and spread into your
-    /// callback. The return value is automatically JSON-stringified.
-    /// Both sync and async callbacks are supported — if the callback
-    /// returns a `Promise`, the bridge awaits it automatically.
-    ///
-    /// **Binary data support**: `Uint8Array`/`Buffer` arguments from guest
-    /// code are automatically converted to Node.js `Buffer` objects before
-    /// being passed to your callback. If your callback returns a `Buffer`,
-    /// it will be converted back to a `Uint8Array` on the guest side.
-    ///
-    /// Registering a function with the same name as an existing one in
-    /// this module overwrites the previous registration.
-    ///
-    /// ```js
-    /// const math = proto.hostModule('math');
-    ///
-    /// // Sync callback — args are spread, return value auto-stringified
-    /// math.register('add', (a, b) => a + b);
-    ///
-    /// // Async callback (automatically awaited)
-    /// math.register('fetchData', async (url) => {
-    ///     const res = await fetch(url);
-    ///     return res.json();
-    /// });
-    ///
-    /// // Binary data — Buffer args/returns work natively
-    /// math.register('compress', (data) => {
-    ///     // data is a Buffer if guest passed Uint8Array
-    ///     return zlib.gzipSync(data); // Return Buffer → Uint8Array on guest
-    /// });
-    /// ```
-    ///
-    /// @param name - Function name within the module (must be non-empty)
-    /// @param callback - `(...args) => any | Promise<any>` — the host function
-    /// @throws If the function name is empty
-    #[napi]
-    #[allow(clippy::type_complexity)] // allow the type complexity here so that index.d.ts is cleaner
-    pub fn register(
-        &self,
-        name: String,
-        #[napi(ts_arg_type = "(...args: any[]) => unknown | Promise<unknown>")]
-        func: JsHostFunction,
-    ) -> napi::Result<()> {
-        if name.is_empty() {
-            return Err(invalid_arg_error("Function name must not be empty"));
-        }
-
-        let wrapper = js_host_function(func);
-        self.sandbox.with_inner_mut(|sandbox| {
-            #[allow(deprecated)]
-            sandbox
-                .host_module(&self.module_name)
-                .register_js(name, wrapper);
-            Ok(())
-        })?;
-        Ok(())
-    }
-}
-
 // ── JSSandbox ────────────────────────────────────────────────────────
 
 /// A sandbox with the JavaScript runtime loaded, ready for handlers.
@@ -2088,17 +1857,6 @@ impl JSSandboxWrapper {
     #[napi(getter)]
     pub fn status(&self) -> napi::Result<SandboxStatus> {
         self.with_inner_ref(|sandbox| Ok(SandboxStatus::from_hyperlight(sandbox.status())))
-    }
-
-    /// Whether the sandbox is in a poisoned (inconsistent) state.
-    ///
-    /// A poisoned sandbox has had its guest execution interrupted or
-    /// aborted. Most operations will fail with an `ERR_POISONED` error code.
-    ///
-    /// @deprecated Use `status` instead.
-    #[napi(getter)]
-    pub fn poisoned(&self) -> napi::Result<bool> {
-        self.status().map(SandboxStatus::is_poisoned)
     }
 
     /// Eagerly release the underlying sandbox resources.
@@ -2512,27 +2270,6 @@ impl LoadedJSSandboxWrapper {
             return Err(consumed_error("LoadedJSSandbox"));
         }
         Ok(SandboxStatus::from_u8(self.status.load(Ordering::Acquire)))
-    }
-
-    /// Whether the sandbox is in a poisoned (inconsistent) state.
-    ///
-    /// A sandbox becomes poisoned when guest execution is interrupted
-    /// (e.g., by a monitor timeout), when the guest panics, or on memory
-    /// violations. Most operations will fail with an `ERR_POISONED` error code.
-    ///
-    /// This getter is lock-free — it reads from an atomic flag updated
-    /// after every sandbox operation. It never blocks the event loop,
-    /// even while a handler is executing on a background thread.
-    ///
-    /// Recovery options:
-    /// - `restore(snapshot)` — revert to a captured state
-    /// - `unload()` — discard handlers and start fresh
-    ///
-    /// @deprecated Use `status` instead.
-    /// @throws `ERR_CONSUMED` if the sandbox has been consumed via `dispose()` or `unload()`
-    #[napi(getter)]
-    pub fn poisoned(&self) -> napi::Result<bool> {
-        self.status().map(SandboxStatus::is_poisoned)
     }
 
     /// Execution statistics from the most recent `callHandler()` call.

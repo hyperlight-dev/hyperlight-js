@@ -43,7 +43,7 @@ pub const DEFAULT_MODULE_NAMESPACE: &str = "user";
 /// Reserved namespaces that cannot be used for user modules.
 ///
 /// The `host` namespace is reserved for host-function modules registered via
-/// [`ProtoJSSandbox::host_module`].
+/// [`SandboxBuilder::with_host_function_modules`](crate::SandboxBuilder::with_host_function_modules).
 pub const RESERVED_NAMESPACES: &[&str] = &["host"];
 
 /// Validates a module identifier (name or namespace).
@@ -373,12 +373,6 @@ impl JSSandbox {
     #[instrument(skip_all, level=Level::TRACE)]
     pub fn clear_modules(&mut self) {
         self.modules.clear();
-    }
-
-    /// Returns whether the sandbox is currently poisoned.
-    #[deprecated(since = "0.4.0", note = "use status().is_poisoned()")]
-    pub fn poisoned(&self) -> bool {
-        self.inner.status().is_poisoned()
     }
 
     /// Returns the sandbox lifecycle status.

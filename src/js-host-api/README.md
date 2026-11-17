@@ -56,8 +56,6 @@ Creates and configures a new sandbox.
 - `setOutputTransportPoolPages(pages: number)` → `this` — Set the guest-to-host buffer pool size in 4 KiB pages (must be > 0, chainable)
 - `setInputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each host-to-guest transport buffer (must be > 0, chainable)
 - `setOutputTransportBufferSize(bytes: number)` → `this` — Set the capacity of each large guest-to-host transport buffer (must be > 0, chainable)
-- `setInputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy input/host-reply capacity in bytes; use `setInputTransportPoolPages` and `setOutputTransportPoolPages` for explicit pool budgets
-- `setOutputBufferSize(bytes: number)` → `this` — **Deprecated:** set legacy output/host-request capacity in bytes; use `setOutputTransportPoolPages`
 - `setHostFunctionModules(modules: HostFunctionModule[])` → `this` — Supply host callbacks for one sandbox. Each module is consumed
 - `build()` → `Promise<ProtoJSSandbox>` — Builds a proto sandbox ready to load the JavaScript runtime
 
@@ -81,7 +79,6 @@ Configure host functions on `SandboxBuilder` before calling `build()`.
 
 **Methods:**
 - `loadRuntime()` → `Promise<JSSandbox>` — Loads the JavaScript runtime into the sandbox.
-- `hostModule()` / `register()` — **Deprecated:** use `SandboxBuilder.setHostFunctionModules()`, which also works when restoring snapshots.
 
 ```javascript
 function hostFunctionModules() {
@@ -160,7 +157,6 @@ A sandbox with handlers loaded, ready to process events.
 **Properties:**
 - `interruptHandle` → `InterruptHandle` — Gets a handle to interrupt/kill handler execution (getter, not a method)
 - `status` → `SandboxStatus` — Lifecycle status: `ready`, `poisoned`, or `unrecoverable`
-- `poisoned` → `boolean` — Deprecated compatibility alias for `status === 'poisoned'`
 - `lastCallStats` → `CallStats | null` — Execution statistics from the most recent `callHandler()` call (see [CallStats](#callstats-) below)
 
 ```javascript

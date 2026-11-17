@@ -46,7 +46,7 @@ describe('Wall Clock Timeout', () => {
         expect(typeof result).toBe('object');
         expect(result.counter).toBeGreaterThan(0);
         expect(result.actualRuntime).toBeLessThan(500);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should kill slow handler after timeout', async () => {
@@ -71,7 +71,6 @@ describe('Wall Clock Timeout', () => {
         expect(elapsed).toBeLessThan(2000);
         expect(elapsed).toBeGreaterThan(300);
         expect(loaded.status).toBe('poisoned');
-        expect(loaded.poisoned).toBe(true);
     });
 
     it('should recover from poisoned state with restore', async () => {
@@ -88,13 +87,11 @@ describe('Wall Clock Timeout', () => {
         );
 
         expect(loaded.status).toBe('poisoned');
-        expect(loaded.poisoned).toBe(true);
 
         // Restore from snapshot
         await loaded.restore(snapshot);
 
         expect(loaded.status).toBe('ready');
-        expect(loaded.poisoned).toBe(false);
 
         // Should be able to use the sandbox again
         const result = await loaded.callHandler(
@@ -147,7 +144,7 @@ describe('CPU Time Timeout', () => {
         // Result is now a JS object, not a string
         expect(typeof result).toBe('object');
         expect(result.counter).toBeGreaterThan(0);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should kill CPU-intensive handler after CPU timeout', async () => {
@@ -169,7 +166,7 @@ describe('CPU Time Timeout', () => {
 
         // On a loaded host, CPU time accrues several times slower than wall time.
         expect(elapsed).toBeLessThan(30000);
-        expect(loaded.poisoned).toBe(true);
+        expect(loaded.status).toBe('poisoned');
     }, 90000);
 });
 
@@ -213,7 +210,7 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
         );
 
         expect(result.counter).toBeGreaterThan(0);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should kill CPU-intensive handler (CPU fires first)', async () => {
@@ -236,7 +233,7 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
 
         // On a loaded host, CPU time accrues several times slower than wall time.
         expect(elapsed).toBeLessThan(30000);
-        expect(loaded.poisoned).toBe(true);
+        expect(loaded.status).toBe('poisoned');
     }, 90000);
 
     it('should recover after combined monitor kill', async () => {
@@ -252,11 +249,11 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
             'ERR_CANCELLED'
         );
 
-        expect(loaded.poisoned).toBe(true);
+        expect(loaded.status).toBe('poisoned');
 
         // Restore from snapshot
         await loaded.restore(snapshot);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
 
         // Should work again
         const result = await loaded.callHandler(
@@ -275,21 +272,21 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
         const result = await loaded.callHandler('handler', { runtime: 50 }, {});
         expect(typeof result).toBe('object');
         expect(result.counter).toBeGreaterThan(0);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should call handler with gc: false and no monitors', async () => {
         const result = await loaded.callHandler('handler', { runtime: 50 }, { gc: false });
         expect(typeof result).toBe('object');
         expect(result.counter).toBeGreaterThan(0);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should call handler with gc: true and no monitors', async () => {
         const result = await loaded.callHandler('handler', { runtime: 50 }, { gc: true });
         expect(typeof result).toBe('object');
         expect(result.counter).toBeGreaterThan(0);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should throw INVALID_ARG for timeout exceeding maximum', async () => {
@@ -343,7 +340,7 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
             }
         );
         expect(typeof result).toBe('object');
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should default gc to true when not specified', async () => {
@@ -356,7 +353,7 @@ describe('Combined Monitors (CPU + Wall Clock)', () => {
             }
         );
         expect(typeof result).toBe('object');
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 });
 
@@ -398,7 +395,7 @@ describe('Interrupt Handle', () => {
 
         await expectRejectsWithCode(promise, 'ERR_CANCELLED');
         clearTimeout(timer);
-        expect(loaded.poisoned).toBe(true);
+        expect(loaded.status).toBe('poisoned');
     });
 
     it('should reject empty handler name on callHandler', async () => {

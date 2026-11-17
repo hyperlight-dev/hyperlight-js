@@ -276,7 +276,7 @@ loaded.handle_event_with_monitor("handler", "{}".into(), &monitor, None)?;
 When a handler is terminated by a monitor:
 
 1. `handle_event_with_monitor()` returns an error
-2. The sandbox becomes "poisoned" (`sandbox.poisoned() == true`)
+2. The sandbox becomes "poisoned" (`sandbox.status().is_poisoned()`)
 3. To reuse the sandbox, call `sandbox.restore(&snapshot)`
 
 ```rust
@@ -289,7 +289,7 @@ let result = loaded_sandbox.handle_event_with_monitor(
     None,
 );
 
-if result.is_err() && loaded_sandbox.poisoned() {
+if result.is_err() && loaded_sandbox.status().is_poisoned() {
     // Handler was killed - restore to continue using sandbox
     loaded_sandbox.restore(&snapshot)?;
 }

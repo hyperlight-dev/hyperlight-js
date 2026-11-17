@@ -2,69 +2,39 @@
 //
 // Tests the NAPI bridge for registering host-side JS callbacks that guest
 // sandboxed code can call via `import * as <module> from "host:<module>"`.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { SandboxBuilder } from '../lib.js';
+import { describe, it, expect } from 'vitest';
+import { HostFunctionModule, SandboxBuilder } from '../lib.js';
 import { expectThrowsWithCode, trackSandbox } from './test-helpers.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /**
- * Build a full pipeline: proto → register host fns → runtime → add handler → loaded.
+ * Build a full pipeline with fresh host-function modules and a guest handler.
  *
- * @param {(proto: import('../lib.js').ProtoJSSandbox) => void} registerFns
- *   — callback to register host functions on the proto sandbox
+ * @param {() => import('../lib.js').HostFunctionModule | import('../lib.js').HostFunctionModule[]} createModules
+ *   — factory for this sandbox's host-function modules
  * @param {string} handlerScript
  *   — guest JS source defining a `handler(event)` function
  * @returns {Promise<import('../lib.js').LoadedJSSandbox>}
  */
-async function buildLoadedSandbox(registerFns, handlerScript) {
-    const proto = await new SandboxBuilder().build();
-    registerFns(proto);
+async function buildLoadedSandbox(createModules, handlerScript) {
+    const modules = createModules();
+    const proto = await new SandboxBuilder()
+        .setHostFunctionModules(Array.isArray(modules) ? modules : [modules])
+        .build();
     const sandbox = await trackSandbox(proto.loadRuntime());
     sandbox.addHandler('handler', handlerScript);
     return trackSandbox(sandbox.getLoadedSandbox());
 }
 
-// ── HostModule ────────────────────────────────────────────────
-
-describe('HostModule', () => {
-    let proto;
-
-    beforeEach(async () => {
-        proto = await new SandboxBuilder().build();
-    });
-
-    it('should return a HostModule from hostModule()', () => {
-        const builder = proto.hostModule('math');
-        expect(builder).toBeDefined();
-        expect(typeof builder.register).toBe('function');
-    });
-
+describe('HostFunctionModule', () => {
     it('should throw on empty module name', () => {
-        expectThrowsWithCode(() => proto.hostModule(''), 'ERR_INVALID_ARG');
-    });
-
-    it('should throw on empty function name in register()', () => {
-        const builder = proto.hostModule('math');
-        expectThrowsWithCode(() => builder.register('', () => 42), 'ERR_INVALID_ARG');
-    });
-});
-
-// ── ProtoJSSandbox.register() convenience method ─────────────────────
-
-describe('ProtoJSSandbox.register()', () => {
-    let proto;
-
-    beforeEach(async () => {
-        proto = await new SandboxBuilder().build();
-    });
-
-    it('should throw on empty module name', () => {
-        expectThrowsWithCode(() => proto.register('', 'add', () => 42), 'ERR_INVALID_ARG');
+        expectThrowsWithCode(() => new HostFunctionModule(''), 'ERR_INVALID_ARG');
     });
 
     it('should throw on empty function name', () => {
-        expectThrowsWithCode(() => proto.register('math', '', () => 42), 'ERR_INVALID_ARG');
+        const module = new HostFunctionModule('math');
+        expectThrowsWithCode(() => module.register('', () => 42), 'ERR_INVALID_ARG');
     });
 });
 
@@ -94,8 +64,8 @@ describe('Host function invocation', () => {
                 .setInputTransportBufferSize(256)
                 .setOutputTransportBufferSize(3001),
         ]) {
-            const proto = await builder.build();
-            proto.hostModule('host').register('echo', (value) => value);
+            const host = new HostFunctionModule('host').register('echo', (value) => value);
+            const proto = await builder.setHostFunctionModules([host]).build();
             const sandbox = await trackSandbox(proto.loadRuntime());
             sandbox.addHandler('handler', source);
             const loaded = await trackSandbox(sandbox.getLoadedSandbox());
@@ -109,8 +79,8 @@ describe('Host function invocation', () => {
 
     it('should call a sync host function from guest code', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('math').register('add', (a, b) => a + b);
+            () => {
+                return new HostFunctionModule('math').register('add', (a, b) => a + b);
             },
             `
             import * as math from "host:math";
@@ -126,8 +96,8 @@ describe('Host function invocation', () => {
 
     it('should call an async host function from guest code', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('utils').register('greet', async (name) => {
+            () => {
+                return new HostFunctionModule('utils').register('greet', async (name) => {
                     // Simulate async work (e.g., a database lookup)
                     await new Promise((resolve) => setTimeout(resolve, 10));
                     return `Hello, ${name}!`;
@@ -147,10 +117,11 @@ describe('Host function invocation', () => {
 
     it('should support multiple functions in one module', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                const math = proto.hostModule('math');
+            () => {
+                const math = new HostFunctionModule('math');
                 math.register('add', (a, b) => a + b);
                 math.register('multiply', (a, b) => a * b);
+                return math;
             },
             `
             import * as math from "host:math";
@@ -168,9 +139,12 @@ describe('Host function invocation', () => {
 
     it('should support multiple modules', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('math').register('add', (a, b) => a + b);
-                proto.hostModule('strings').register('upper', (s) => s.toUpperCase());
+            () => {
+                const math = new HostFunctionModule('math').register('add', (a, b) => a + b);
+                const strings = new HostFunctionModule('strings').register('upper', (s) =>
+                    s.toUpperCase()
+                );
+                return [math, strings];
             },
             `
             import * as math from "host:math";
@@ -187,27 +161,10 @@ describe('Host function invocation', () => {
         expect(result).toEqual({ sum: 3, upper: 'HELLO' });
     });
 
-    it('should support the convenience register() method', async () => {
-        const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.register('math', 'add', (a, b) => a + b);
-            },
-            `
-            import * as math from "host:math";
-            function handler(event) {
-                return { result: math.add(3, 4) };
-            }
-            `
-        );
-
-        const result = await loaded.callHandler('handler', {});
-        expect(result).toEqual({ result: 7 });
-    });
-
     it('should propagate errors from host function callbacks', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('explode', () => {
+            () => {
+                return new HostFunctionModule('host').register('explode', () => {
                     throw new Error('💥 kaboom from host');
                 });
             },
@@ -225,8 +182,8 @@ describe('Host function invocation', () => {
 
     it('should handle host function returning complex objects', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('db').register('query', (table) => ({
+            () => {
+                return new HostFunctionModule('db').register('query', (table) => ({
                     rows: [
                         { id: 1, name: 'Alice' },
                         { id: 2, name: 'Bob' },
@@ -249,9 +206,9 @@ describe('Host function invocation', () => {
 
     it('should work with snapshot/restore cycle', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
+            () => {
                 let counter = 0;
-                proto.hostModule('state').register('increment', () => {
+                return new HostFunctionModule('state').register('increment', () => {
                     counter++;
                     return counter;
                 });
@@ -276,70 +233,10 @@ describe('Host function invocation', () => {
         expect(r2.count).toBe(2);
     });
 
-    // ── register() — host function registration ─────────────────
-
-    it('should support register() on HostModule', async () => {
-        const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('math').register('add', (a, b) => {
-                    return a + b;
-                });
-            },
-            `
-            import * as math from "host:math";
-            function handler(event) {
-                return { result: math.add(event.a, event.b) };
-            }
-            `
-        );
-
-        const result = await loaded.callHandler('handler', { a: 10, b: 32 });
-        expect(result).toEqual({ result: 42 });
-    });
-
-    it('should support register() convenience method', async () => {
-        const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.register('math', 'add', (a, b) => {
-                    return a + b;
-                });
-            },
-            `
-            import * as math from "host:math";
-            function handler(event) {
-                return { result: math.add(3, 4) };
-            }
-            `
-        );
-
-        const result = await loaded.callHandler('handler', {});
-        expect(result).toEqual({ result: 7 });
-    });
-
-    it('should support async register() callbacks', async () => {
-        const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('utils').register('greet', async (name) => {
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                    return `Hello, ${name}!`;
-                });
-            },
-            `
-            import * as utils from "host:utils";
-            function handler(event) {
-                return { greeting: utils.greet(event.name) };
-            }
-            `
-        );
-
-        const result = await loaded.callHandler('handler', { name: 'World' });
-        expect(result).toEqual({ greeting: 'Hello, World!' });
-    });
-
     it('should propagate errors from register() callbacks', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('explode', () => {
+            () => {
+                return new HostFunctionModule('host').register('explode', () => {
                     throw new Error('💥 async kaboom from host');
                 });
             },
@@ -365,8 +262,8 @@ describe('Host function invocation', () => {
 
     it('should propagate errors from register() async callbacks', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('explode', async () => {
+            () => {
+                return new HostFunctionModule('host').register('explode', async () => {
                     await new Promise((resolve) => setTimeout(resolve, 10));
                     throw new Error('💥 async kaboom from host');
                 });
@@ -404,11 +301,7 @@ describe('Multi-sandbox isolation', () => {
      * Returns { loaded, tag } so callers can identify which sandbox responded.
      */
     async function buildTaggedSandbox(tag, hostFnImpl, handlerScript) {
-        const proto = await new SandboxBuilder().build();
-        hostFnImpl(proto);
-        const sandbox = await trackSandbox(proto.loadRuntime());
-        sandbox.addHandler('handler', handlerScript);
-        const loaded = await trackSandbox(sandbox.getLoadedSandbox());
+        const loaded = await buildLoadedSandbox(hostFnImpl, handlerScript);
         return { loaded, tag };
     }
 
@@ -416,7 +309,7 @@ describe('Multi-sandbox isolation', () => {
         // Sandbox A: math.compute returns a + b
         const { loaded: loadedA } = await buildTaggedSandbox(
             'A',
-            (proto) => proto.hostModule('math').register('compute', (a, b) => a + b),
+            () => new HostFunctionModule('math').register('compute', (a, b) => a + b),
             `
             import * as math from "host:math";
             function handler(event) {
@@ -428,7 +321,7 @@ describe('Multi-sandbox isolation', () => {
         // Sandbox B: math.compute returns a * b (same module, same fn name!)
         const { loaded: loadedB } = await buildTaggedSandbox(
             'B',
-            (proto) => proto.hostModule('math').register('compute', (a, b) => a * b),
+            () => new HostFunctionModule('math').register('compute', (a, b) => a * b),
             `
             import * as math from "host:math";
             function handler(event) {
@@ -452,8 +345,8 @@ describe('Multi-sandbox isolation', () => {
 
         const { loaded: loadedA } = await buildTaggedSandbox(
             'A',
-            (proto) =>
-                proto.hostModule('stats').register('hit', () => {
+            () =>
+                new HostFunctionModule('stats').register('hit', () => {
                     counterA++;
                     return counterA;
                 }),
@@ -465,8 +358,8 @@ describe('Multi-sandbox isolation', () => {
 
         const { loaded: loadedB } = await buildTaggedSandbox(
             'B',
-            (proto) =>
-                proto.hostModule('stats').register('hit', () => {
+            () =>
+                new HostFunctionModule('stats').register('hit', () => {
                     counterB++;
                     return counterB;
                 }),
@@ -498,8 +391,8 @@ describe('Multi-sandbox isolation', () => {
     it('should isolate async host functions across sandboxes with interleaved calls', async () => {
         const { loaded: loadedA } = await buildTaggedSandbox(
             'A',
-            (proto) =>
-                proto.hostModule('net').register('fetch', async (url) => {
+            () =>
+                new HostFunctionModule('net').register('fetch', async (url) => {
                     await new Promise((resolve) => setTimeout(resolve, 20));
                     return `A:${url}`;
                 }),
@@ -511,8 +404,8 @@ describe('Multi-sandbox isolation', () => {
 
         const { loaded: loadedB } = await buildTaggedSandbox(
             'B',
-            (proto) =>
-                proto.hostModule('net').register('fetch', async (url) => {
+            () =>
+                new HostFunctionModule('net').register('fetch', async (url) => {
                     await new Promise((resolve) => setTimeout(resolve, 20));
                     return `B:${url}`;
                 }),
@@ -541,10 +434,11 @@ describe('Multi-sandbox isolation', () => {
         // sharing the same resolver map, across two independent maps.
         const { loaded: loadedA } = await buildTaggedSandbox(
             'A',
-            (proto) => {
-                const math = proto.hostModule('math');
+            () => {
+                const math = new HostFunctionModule('math');
                 math.register('add', (a, b) => a + b);
                 math.register('multiply', (a, b) => a * b);
+                return math;
             },
             `
             import * as math from "host:math";
@@ -556,11 +450,12 @@ describe('Multi-sandbox isolation', () => {
 
         const { loaded: loadedB } = await buildTaggedSandbox(
             'B',
-            (proto) => {
-                const math = proto.hostModule('math');
+            () => {
+                const math = new HostFunctionModule('math');
                 // Reversed! add does multiply, multiply does add
                 math.register('add', (a, b) => a * b);
                 math.register('multiply', (a, b) => a + b);
+                return math;
             },
             `
             import * as math from "host:math";
@@ -586,19 +481,22 @@ describe('Binary data support', () => {
     it('should retain owned buffers across async callbacks and sandbox disposal', async () => {
         let retained;
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('retain', async (data, nested, label) => {
-                    expect(Buffer.isBuffer(data)).toBe(true);
-                    expect(Buffer.isBuffer(nested.data)).toBe(true);
-                    expect(Buffer.isBuffer(nested.empty)).toBe(true);
-                    expect(label).toBe('tail');
+            () => {
+                return new HostFunctionModule('host').register(
+                    'retain',
+                    async (data, nested, label) => {
+                        expect(Buffer.isBuffer(data)).toBe(true);
+                        expect(Buffer.isBuffer(nested.data)).toBe(true);
+                        expect(Buffer.isBuffer(nested.empty)).toBe(true);
+                        expect(label).toBe('tail');
 
-                    retained = data;
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                    data[0] = 99;
-                    nested.data[0] = 88;
-                    return { data, nested };
-                });
+                        retained = data;
+                        await new Promise((resolve) => setTimeout(resolve, 10));
+                        data[0] = 99;
+                        nested.data[0] = 88;
+                        return { data, nested };
+                    }
+                );
             },
             `
             import * as host from "host:host";
@@ -633,8 +531,8 @@ describe('Binary data support', () => {
 
     it('should keep repeated binary placeholders independently mutable', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('check', (first, rest) => {
+            () => {
+                return new HostFunctionModule('host').register('check', (first, rest) => {
                     expect(Buffer.isBuffer(first)).toBe(true);
                     expect(Buffer.isBuffer(rest.data)).toBe(true);
                     expect(Buffer.isBuffer(rest.last)).toBe(true);
@@ -665,8 +563,8 @@ describe('Binary data support', () => {
 
     it('should pass Buffer args from guest Uint8Array to host', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('byte_length', (data) => {
+            () => {
+                return new HostFunctionModule('host').register('byte_length', (data) => {
                     expect(Buffer.isBuffer(data)).toBe(true);
                     return data.length;
                 });
@@ -685,8 +583,8 @@ describe('Binary data support', () => {
 
     it('should return Buffer from host as Uint8Array on guest', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('get_bytes', () => {
+            () => {
+                return new HostFunctionModule('host').register('get_bytes', () => {
                     return Buffer.from([1, 2, 3, 4, 5]);
                 });
             },
@@ -704,8 +602,8 @@ describe('Binary data support', () => {
 
     it('should handle mixed Buffer and JSON args', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('describe', (prefix, data, num) => {
+            () => {
+                return new HostFunctionModule('host').register('describe', (prefix, data, num) => {
                     expect(typeof prefix).toBe('string');
                     expect(Buffer.isBuffer(data)).toBe(true);
                     expect(typeof num).toBe('number');
@@ -726,8 +624,8 @@ describe('Binary data support', () => {
 
     it('should handle empty Uint8Array', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('check_empty', (data) => {
+            () => {
+                return new HostFunctionModule('host').register('check_empty', (data) => {
                     expect(Buffer.isBuffer(data)).toBe(true);
                     return data.length;
                 });
@@ -748,8 +646,8 @@ describe('Binary data support', () => {
         // empty buffers. JsReturn::from_napi_value must not panic on the
         // null pointer — it should return an empty Vec instead.
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('empty_response', () => {
+            () => {
+                return new HostFunctionModule('host').register('empty_response', () => {
                     return Buffer.alloc(0);
                 });
             },
@@ -767,8 +665,8 @@ describe('Binary data support', () => {
 
     it('should round-trip binary data (send and receive)', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('echo_bytes', (data) => {
+            () => {
+                return new HostFunctionModule('host').register('echo_bytes', (data) => {
                     // Return the same Buffer back
                     return data;
                 });
@@ -797,8 +695,8 @@ describe('Binary data support', () => {
 
     it('should handle nested Buffer in returned object', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('get_payload', () => {
+            () => {
+                return new HostFunctionModule('host').register('get_payload', () => {
                     return {
                         name: 'test',
                         data: Buffer.from([10, 20, 30]),
@@ -829,8 +727,8 @@ describe('Binary data support', () => {
 
     it('should handle nested Buffer in returned array', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('get_items', () => {
+            () => {
+                return new HostFunctionModule('host').register('get_items', () => {
                     return [Buffer.from([1, 2, 3]), Buffer.from([4, 5])];
                 });
             },
@@ -858,8 +756,8 @@ describe('Binary data support', () => {
 
     it('should handle deeply nested Buffer in returned object', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('get_nested', () => {
+            () => {
+                return new HostFunctionModule('host').register('get_nested', () => {
                     return {
                         outer: {
                             inner: {
@@ -892,8 +790,8 @@ describe('Binary data support', () => {
 
     it('should handle mixed Buffers and JSON in returned object', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('get_mixed', () => {
+            () => {
+                return new HostFunctionModule('host').register('get_mixed', () => {
                     return {
                         header: Buffer.from([1, 2]),
                         status: 'ok',
@@ -930,8 +828,8 @@ describe('Binary data support', () => {
 
     it('should handle nested Uint8Array (not just Buffer)', async () => {
         const loaded = await buildLoadedSandbox(
-            (proto) => {
-                proto.hostModule('host').register('get_uint8', () => {
+            () => {
+                return new HostFunctionModule('host').register('get_uint8', () => {
                     return { data: new Uint8Array([7, 8, 9]) };
                 });
             },

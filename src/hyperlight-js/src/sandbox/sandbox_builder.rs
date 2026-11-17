@@ -55,10 +55,6 @@ pub struct SandboxBuilder<S = NewSandbox> {
     #[cfg(gdb)]
     guest_debug_info: Option<hyperlight_host::sandbox::config::DebugInfo>,
     host_print_fn: Option<HostPrintFn>,
-    /// Requested legacy input capacity in bytes, also used for host replies.
-    legacy_input_capacity: usize,
-    /// Requested legacy output capacity in bytes, used for host requests.
-    legacy_output_capacity: usize,
     /// Explicit input budget before minimum-size normalization, if set.
     requested_input_pool_pages: Option<usize>,
     /// Explicit output budget before minimum-size normalization, if set.
@@ -79,14 +75,11 @@ pub struct SandboxBuilder<S = NewSandbox> {
 /// Increase it for allocation-heavy handlers or larger transport pools.
 const MIN_SCRATCH_SIZE: usize = 5 * 1024 * 1024;
 
-/// The previous 16 KiB message capacity for each direction.
-const DEFAULT_LEGACY_BUFFER_SIZE: usize = 16 * 1024;
+/// Message capacity reserved in each direction when no pool budget is supplied.
+const DEFAULT_TRANSPORT_MESSAGE_CAPACITY: usize = 16 * 1024;
 
 /// Default capacity of each full-size transport buffer.
 const DEFAULT_TRANSPORT_BUFFER_SIZE: usize = 16 * 1024;
-
-/// The previous 8 KiB minimum for byte-based buffer configuration.
-const MIN_LEGACY_BUFFER_SIZE: usize = 8 * 1024;
 
 impl<S> SandboxBuilder<S> {
     fn with_source(source: S) -> Self {
@@ -101,8 +94,6 @@ impl<S> SandboxBuilder<S> {
             #[cfg(gdb)]
             guest_debug_info: None,
             host_print_fn: None,
-            legacy_input_capacity: DEFAULT_LEGACY_BUFFER_SIZE,
-            legacy_output_capacity: DEFAULT_LEGACY_BUFFER_SIZE,
             input_transport_buffer_size: DEFAULT_TRANSPORT_BUFFER_SIZE,
             output_transport_buffer_size: DEFAULT_TRANSPORT_BUFFER_SIZE,
             requested_input_pool_pages: None,
@@ -174,26 +165,6 @@ impl<S> SandboxBuilder<S> {
         self
     }
 
-    /// Set the guest-to-host message capacity in bytes.
-    #[deprecated(note = "Use with_output_transport_pool_pages for an explicit pool budget")]
-    pub fn with_guest_output_buffer_size(mut self, guest_output_buffer_size: usize) -> Self {
-        self.legacy_output_capacity = guest_output_buffer_size;
-        self.requested_output_pool_pages = None;
-
-        self
-    }
-
-    /// Set the host-to-guest message capacity in bytes.
-    /// Also reserves output-pool space for host callback replies.
-    #[deprecated(note = "Use with_input_transport_pool_pages for explicit pool budgets")]
-    pub fn with_guest_input_buffer_size(mut self, guest_input_buffer_size: usize) -> Self {
-        self.legacy_input_capacity = guest_input_buffer_size;
-        self.requested_input_pool_pages = None;
-        self.requested_output_pool_pages = None;
-
-        self
-    }
-
     /// Set the total guest-to-host buffer pool size in 4 KiB pages.
     ///
     /// One page is split into small buffers. The rest must fit at least two
@@ -224,7 +195,7 @@ impl<S> SandboxBuilder<S> {
     /// than one buffer, including framing, are split across buffers.
     ///
     /// Pool and descriptor sizing is deferred to configuration resolution,
-    /// preserving explicit page budgets or legacy message capacities.
+    /// preserving explicit page budgets or the default message capacity.
     pub fn with_output_transport_buffer_size(mut self, size: usize) -> Self {
         self.output_transport_buffer_size = size;
 
@@ -237,7 +208,7 @@ impl<S> SandboxBuilder<S> {
     /// Messages larger than one buffer, including framing, are split across buffers.
     ///
     /// Pool and descriptor sizing is deferred to configuration resolution,
-    /// preserving explicit page budgets or legacy message capacities.
+    /// preserving explicit page budgets or the default message capacity.
     pub fn with_input_transport_buffer_size(mut self, size: usize) -> Self {
         self.input_transport_buffer_size = size;
 
@@ -303,8 +274,8 @@ impl<S> SandboxBuilder<S> {
         self
     }
 
-    /// Normalizes buffer sizes, applies explicit pool budgets or legacy
-    /// capacities, and sizes descriptor queues from the complete buffer counts.
+    /// Normalizes buffer sizes and pool budgets, and sizes descriptor queues
+    /// from the complete buffer counts.
     /// Reserves a control spare and room for simultaneous callback requests/replies.
     ///
     /// Saturating arithmetic leaves unrepresentable pool sizes for Hyperlight's
@@ -316,26 +287,20 @@ impl<S> SandboxBuilder<S> {
         let inbufsz = config.get_h2g_buffer_size();
         let outbufsz = config.get_g2h_buffer_size();
 
-        let input_cap = Self::legacy_capacity(self.legacy_input_capacity);
-        let output_cap = Self::legacy_capacity(self.legacy_output_capacity);
-
         let input_pages = match self.requested_input_pool_pages {
             Some(pages) => pages.max(Self::pages_for_buffers(2, inbufsz)),
-            None => {
-                let data_buffers = input_cap.div_ceil(inbufsz);
-
-                // Keep one buffer free for control calls that release retained external payloads.
-                Self::pages_for_buffers(data_buffers + 1, inbufsz)
-            }
+            None => Self::pages_for_buffers(
+                DEFAULT_TRANSPORT_MESSAGE_CAPACITY.div_ceil(inbufsz) + 1,
+                inbufsz,
+            ),
         };
-
         let output_pages = match self.requested_output_pool_pages {
             Some(pages) => pages.max(1 + Self::pages_for_buffers(2, outbufsz)),
             None => {
-                let req_bufs = output_cap.div_ceil(outbufsz);
-                let reply_bufs = input_cap.div_ceil(outbufsz);
-                // The output pool needs one extra page for its fixed 256-byte small-buffer tier.
-                1 + Self::pages_for_buffers(req_bufs + reply_bufs, outbufsz)
+                1 + Self::pages_for_buffers(
+                    2 * DEFAULT_TRANSPORT_MESSAGE_CAPACITY.div_ceil(outbufsz),
+                    outbufsz,
+                )
             }
         };
 
@@ -351,15 +316,6 @@ impl<S> SandboxBuilder<S> {
 
         config.set_h2g_queue_size(input_buffers.max(SandboxConfiguration::DEFAULT_H2G_QUEUE_SIZE));
         config.set_g2h_queue_size(output_buffers.max(SandboxConfiguration::DEFAULT_G2H_QUEUE_SIZE));
-    }
-
-    /// Applies the legacy 8 KiB minimum and rounds byte capacity up to whole pages.
-    /// Saturates if the rounded capacity cannot be represented.
-    fn legacy_capacity(bytes: usize) -> usize {
-        bytes
-            .max(MIN_LEGACY_BUFFER_SIZE)
-            .div_ceil(PAGE_SIZE)
-            .saturating_mul(PAGE_SIZE)
     }
 
     /// Rounds the combined buffer storage up to pages, saturating on overflow.

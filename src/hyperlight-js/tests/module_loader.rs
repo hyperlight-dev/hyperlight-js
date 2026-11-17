@@ -138,12 +138,9 @@ fn test_handler_import_restrictions() {
     }
     "#;
 
-    // Compatibility coverage for callers that still configure a fresh ProtoJSSandbox.
-    #[allow(deprecated)]
     let proto_js_sandbox = SandboxBuilder::new()
+        .with_module_loader(fs)
         .build()
-        .unwrap()
-        .set_module_loader(fs)
         .unwrap();
     let mut sandbox = proto_js_sandbox.load_runtime().unwrap();
 

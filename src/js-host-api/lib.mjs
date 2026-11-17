@@ -22,7 +22,6 @@ import native from './lib.js';
 
 export const {
     HostFunctionModule,
-    HostModule,
     InterruptHandle,
     JSSandbox,
     LoadedJSSandbox,

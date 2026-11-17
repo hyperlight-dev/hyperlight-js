@@ -22,8 +22,6 @@ describe('SandboxBuilder', () => {
         const builder = new SandboxBuilder();
         const result = builder
             .setScratchSize(8 * 1024 * 1024)
-            .setInputBufferSize(4096)
-            .setOutputBufferSize(4096)
             .setInputTransportPoolPages(4)
             .setOutputTransportPoolPages(4)
             .setInputTransportBufferSize(3001)
@@ -62,14 +60,12 @@ describe('SandboxBuilder', () => {
 
     it('should reject zero input buffer size', () => {
         const builder = new SandboxBuilder();
-        expectThrowsWithCode(() => builder.setInputBufferSize(0), 'ERR_INVALID_ARG');
         expectThrowsWithCode(() => builder.setInputTransportPoolPages(0), 'ERR_INVALID_ARG');
         expectThrowsWithCode(() => builder.setInputTransportBufferSize(0), 'ERR_INVALID_ARG');
     });
 
     it('should reject zero output buffer size', () => {
         const builder = new SandboxBuilder();
-        expectThrowsWithCode(() => builder.setOutputBufferSize(0), 'ERR_INVALID_ARG');
         expectThrowsWithCode(() => builder.setOutputTransportPoolPages(0), 'ERR_INVALID_ARG');
         expectThrowsWithCode(() => builder.setOutputTransportBufferSize(0), 'ERR_INVALID_ARG');
     });
@@ -138,7 +134,6 @@ describe('JSSandbox', () => {
 
     it('should report ready status', () => {
         expect(sandbox.status).toBe('ready');
-        expect(sandbox.poisoned).toBe(false);
     });
 
     it('should throw CONSUMED on double getLoadedSandbox()', async () => {
@@ -190,7 +185,7 @@ describe('LoadedJSSandbox', () => {
 
         expect(result.message).toBe('Hello, Default!');
         expect(result.name).toBe('Default');
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should handle events with explicit gc: true', async () => {
@@ -198,12 +193,11 @@ describe('LoadedJSSandbox', () => {
 
         expect(result.message).toBe('Hello, GC!');
         expect(result.name).toBe('GC');
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should not be poisoned initially', () => {
         expect(loaded.status).toBe('ready');
-        expect(loaded.poisoned).toBe(false);
     });
 
     it('should take and restore snapshots', async () => {
@@ -213,7 +207,7 @@ describe('LoadedJSSandbox', () => {
         expect(snapshot).toBeDefined();
 
         await loaded.restore(snapshot);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
     });
 
     it('should unload back to JSSandbox', async () => {
@@ -268,7 +262,7 @@ describe('Scratch allocation budget', () => {
                 loaded.callHandler('handler', { bytes: 8 * mib }),
                 'ERR_GUEST_ABORT'
             );
-            expect(loaded.poisoned).toBe(true);
+            expect(loaded.status).toBe('poisoned');
             await expectRejectsWithCode(
                 loaded.callHandler('handler', { bytes: 1 }),
                 'ERR_POISONED'
@@ -277,7 +271,7 @@ describe('Scratch allocation budget', () => {
             expect(await loaded.callHandler('handler', { bytes: 8 * mib })).toBe(7);
         }
         await loaded.restore(snapshot);
-        expect(loaded.poisoned).toBe(false);
+        expect(loaded.status).toBe('ready');
         expect(await loaded.callHandler('handler', { bytes: 1 })).toBe(7);
     });
 });
@@ -378,14 +372,14 @@ describe('JSSandbox.dispose()', () => {
         sandbox.dispose(); // should not throw
     });
 
-    it('should make poisoned getter throw ERR_CONSUMED', async () => {
+    it('should make status getter throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
         const sandbox = await trackSandbox(proto.loadRuntime());
 
         sandbox.dispose();
 
-        expectThrowsWithCode(() => sandbox.poisoned, 'ERR_CONSUMED');
+        expectThrowsWithCode(() => sandbox.status, 'ERR_CONSUMED');
     });
 });
 
@@ -413,7 +407,7 @@ describe('LoadedJSSandbox.dispose()', () => {
         await loaded.dispose(); // should not throw
     });
 
-    it('should make poisoned getter throw ERR_CONSUMED', async () => {
+    it('should make status getter throw ERR_CONSUMED', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
         const sandbox = await trackSandbox(proto.loadRuntime());
@@ -422,7 +416,7 @@ describe('LoadedJSSandbox.dispose()', () => {
 
         await loaded.dispose();
 
-        expectThrowsWithCode(() => loaded.poisoned, 'ERR_CONSUMED');
+        expectThrowsWithCode(() => loaded.status, 'ERR_CONSUMED');
     });
 
     it('should make interruptHandle getter throw ERR_CONSUMED', async () => {
@@ -453,7 +447,7 @@ describe('LoadedJSSandbox.dispose()', () => {
 // ── unload() consumption ─────────────────────────────────────────────
 
 describe('LoadedJSSandbox.unload()', () => {
-    it('should make poisoned getter throw ERR_CONSUMED after unload', async () => {
+    it('should make status getter throw ERR_CONSUMED after unload', async () => {
         const builder = new SandboxBuilder();
         const proto = await builder.build();
         const sandbox = await trackSandbox(proto.loadRuntime());
@@ -462,7 +456,7 @@ describe('LoadedJSSandbox.unload()', () => {
 
         await trackSandbox(loaded.unload());
 
-        expectThrowsWithCode(() => loaded.poisoned, 'ERR_CONSUMED');
+        expectThrowsWithCode(() => loaded.status, 'ERR_CONSUMED');
     });
 
     it('should make interruptHandle getter throw ERR_CONSUMED after unload', async () => {

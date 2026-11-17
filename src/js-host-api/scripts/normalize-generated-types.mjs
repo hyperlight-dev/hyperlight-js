@@ -20,7 +20,6 @@ import { URL } from 'node:url';
 const declarationsPath = new URL('../index.d.ts', import.meta.url);
 const publicTypes = [
     'HostFunctionModule',
-    'HostModule',
     'InterruptHandle',
     'JSSandbox',
     'LoadedJSSandbox',

@@ -35,6 +35,23 @@ All contributions come through pull requests. To submit a proposed change, we re
 6. Wait for the CI process to finish and make sure all checks are green
 7. A maintainer of the project will be assigned, and you can expect a review within a few days
 
+#### Changelog entries
+
+Include significant and user-facing changes in the `[Prerelease] - Unreleased`
+section of [CHANGELOG.md](CHANGELOG.md) as part of your PR. Follow
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/): use `Added`, `Changed`,
+`Deprecated`, `Removed`, `Fixed`, or `Security` headings, and link each entry to
+its PR. Routine dependency bumps and internal-only changes need not have entries;
+GitHub's generated PR list is included in release notes as well.
+
+Mark every breaking change with **Breaking:** and describe the affected Rust and
+Node.js APIs, replacement APIs, changed units/defaults, and any required snapshot
+or guest rebuilds. Also apply the `breaking-change` label, in addition to the
+required `kind/*` label; labels alone do not populate the curated changelog.
+
+Reviewers should check changelog completeness and migration guidance.
+Release preparation and note previews are described in [the release checklist](docs/release.md).
+
 #### Use work-in-progress PRs for early feedback
 
 A good way to communicate before investing too much time is to create a "Work-in-progress" PR and share it with your reviewers. The standard way of doing this is to add a "[WIP]" prefix in your PR's title and open the pull request as a draft.

@@ -50,6 +50,12 @@ check:
 check-license-headers:
     ./dev/check-license-headers.sh
 
+# Use dev-latest for the Prerelease section, or a release tag such as v0.6.0.
+@create-release-notes tag:
+    echo "## What's Changed"
+    bash dev/extract-changelog.sh {{ if tag == "dev-latest" { "Prerelease" } else { tag } }}
+    gh api repos/{owner}/{repo}/releases/generate-notes -f tag_name={{ tag }} | jq -r '.body' | sed '1,/## What'"'"'s Changed/d'
+
 clippy target=default-target features="": (ensure-tools)
     cd src/hyperlight-js-runtime && cargo hyperlight clippy -p hyperlight-js-runtime \
             --target={{ guest-target }} \

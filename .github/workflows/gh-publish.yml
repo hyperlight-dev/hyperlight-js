@@ -40,6 +40,17 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Hyperlight setup
+        uses: hyperlight-dev/ci-setup-workflow@59673866360458f8dd035f4a9fa766aeebad2038 # v2.3.1
+        with:
+          just-version: "1.51"
+
+      - name: Generate release notes from the changelog and merged PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES_TAG: ${{ inputs.dry_run && 'dev-latest' || format('v{0}', inputs.version) }}
+        run: just create-release-notes "$NOTES_TAG" > RELEASE_NOTES.md
+
       - name: Download benchmarks (Windows)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -68,7 +79,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
             gh release create v${{ inputs.version }} \
-              --generate-notes \
+              --notes-file RELEASE_NOTES.md \
               benchmarks_Windows_whp.tar.gz \
               benchmarks_Linux_kvm.tar.gz \
               benchmarks_Linux_hyperv3.tar.gz

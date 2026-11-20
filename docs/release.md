@@ -34,6 +34,49 @@ Create a PR with these changes and merge it into the `main` branch.
 
 > **Note:** The release workflow sets all npm versions from the tag before publishing.
 
+## Prepare the changelog
+
+Like Hyperlight, we maintain a curated [CHANGELOG.md](../CHANGELOG.md) using
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). It supplies the highlights
+at the start of release notes; GitHub's generated PR list follows them. Do not
+replace the curated entries with generated PR titles.
+
+Before tagging, include these changes in the release-preparation PR:
+
+1. Audit PRs merged since the previous release against the changelog, including
+   dependency updates with user-visible effects. Record significant changes and
+   explicitly mark **Breaking:** entries with migration instructions for Rust,
+   Node.js, custom guests, and persisted snapshots where applicable. Do not rely
+   solely on PR labels to find breaking changes.
+2. Rename `## [Prerelease] - Unreleased` to, for example,
+   `## [v0.18.0] - YYYY-MM-DD`, using the actual release date.
+3. Add a new empty `## [Prerelease] - Unreleased` section at the top for the next
+   release.
+4. Update the comparison links at the bottom, for example:
+
+   ```markdown
+   [Prerelease]: https://github.com/hyperlight-dev/hyperlight-js/compare/v0.18.0...HEAD
+   [v0.18.0]: https://github.com/hyperlight-dev/hyperlight-js/compare/v0.17.0...v0.18.0
+   ```
+
+5. From the repository root, preview the notes with an authenticated
+   GitHub CLI:
+
+   ```console
+   just create-release-notes v0.18.0
+   ```
+
+   Before a version has been prepared, use `just create-release-notes dev-latest`
+   to preview the current `Prerelease` section. These commands combine the
+   extracted changelog section with GitHub's generate-notes API output; they do
+   not publish anything. When working in a fork, set
+   `GH_REPO=hyperlight-dev/hyperlight-js` to preview upstream PR notes.
+
+Review the preview for accuracy and completeness, merge the preparation PR, and
+tag that commit. The release workflow uses the same recipe to generate the notes
+passed to `gh release create --notes-file`. Dry runs use the `Prerelease` section
+and publish nothing.
+
 ## Create a tag
 
 When the `main` branch has reached a state in which you want to release a new Cargo version, you should create a tag. Although you can do this from the GitHub releases page, we currently recommend doing the tag from the command line. Do so with the following commands:
@@ -51,7 +94,7 @@ If you are creating a patch release see the instructions [here](#patching-a-rele
 Pushing a `vX.Y.Z` tag is the **only** manual trigger you need — you do **not** run any workflow by hand. The tag push starts the ["Create a Release"](https://github.com/hyperlight-dev/hyperlight-js/actions/workflows/CreateRelease.yml) workflow ([`CreateRelease.yml`](https://github.com/hyperlight-dev/hyperlight-js/blob/main/.github/workflows/CreateRelease.yml)), which reads the version from the tag and then does everything else automatically:
 
 1. **Creates the release branch** — a `release/v0.18.0` branch is created and pushed for you.
-2. **Creates the GitHub release** — a new [GitHub release](https://github.com/hyperlight-dev/hyperlight-js/releases) is published with automatically generated release notes and the benchmark results attached.
+2. **Creates the GitHub release** — a new [GitHub release](https://github.com/hyperlight-dev/hyperlight-js/releases) is published with curated changelog highlights followed by GitHub-generated PR notes, and the benchmark results attached.
 3. **Publishes the crates to crates.io** — in dependency order (`hyperlight-js-common` → `hyperlight-js-runtime` → `hyperlight-js`). Verify on the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js).
 4. **Publishes the npm packages to npmjs.com** — `@hyperlight-dev/js-host-api` and its platform-specific binary packages, with their versions set from the tag. Verify on the [npmjs.com package page](https://www.npmjs.com/package/@hyperlight-dev/js-host-api).
 
@@ -59,14 +102,17 @@ Both crates.io and established npm packages use trusted publishing (OIDC), so th
 
 ### Release-note labels
 
-GitHub generates release notes from merged pull-request titles and labels using
-`.github/release.yml`. Commit messages, including conventional-commit
-`BREAKING CHANGE` footers, are not used for categorization.
+GitHub generates the full PR-list portion of release notes from merged
+pull-request titles and labels using [`.github/release.yml`](../.github/release.yml).
+Commit messages, including conventional-commit `BREAKING CHANGE` footers, are not
+used for categorization. Curated highlights come from `CHANGELOG.md`, independently
+of these labels.
 
 Any pull request that breaks a released API must have the `breaking-change`
 label so it appears under **Breaking Changes**. This is in addition to the
 single required `kind/*` label enforced by `PRLabelChecker.yml`. Describe the
-affected Rust and Node APIs and their migration in the pull-request body.
+affected Rust and Node APIs and their migration in the pull-request body and
+the changelog.
 
 > **Note:** Only a `vX.Y.Z` **tag** push triggers a real release. Pushing to `main`, or running the workflow manually with **Run workflow**, performs a **dry run** — it builds and validates everything but publishes nothing.
 
@@ -117,6 +163,11 @@ This must be done for all 6 packages:
 If you need to update a previously released version of hyperlight-js then you should open a Pull Request against the release branch you want to patch, for example if you wish to patch the release `v0.18.0` then you should open a PR against the `release/v0.18.0` branch.
 
 Once the PR is merged, then you should follow the instructions above. In this instance the version number of the tag should be a patch version, for example if you are patching the `release/v0.18.0` branch and this is the first patch release to that branch then the tag should be `v0.18.1`. If you are patching a patch release then the tag should be `v0.18.2` and the target branch should be `release/v0.18.1` and so on.
+
+Prepare the patch version's dated changelog section on the branch being tagged.
+Include only changes shipped in that patch, retain its existing release history,
+and compare the patch tag against the previous patch/base release. Do not copy
+unreleased entries from `main` unless those changes are included in the patch.
 
 ## Manual npm publishing (emergency only)
 

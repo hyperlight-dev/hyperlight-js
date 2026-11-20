@@ -4,6 +4,9 @@ Provides a capability to run JavaScript inside of Hyperlight using quickjs as th
 
 ## Documentation
 
+- [Changelog](CHANGELOG.md) - Significant changes and breaking-change migrations
+- [Release checklist](docs/release.md) - Preparing and publishing releases
+
 - [Custom guest runtimes](docs/extending-runtime.md) - Extend with native modules and build and embed a custom guest using cargo-hyperlight
 
 - [Execution Monitors](docs/execution-monitors.md) - Timeout and resource limit enforcement for handler execution

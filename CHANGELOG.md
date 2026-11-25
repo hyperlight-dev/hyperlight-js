@@ -6,6 +6,8 @@ Release notes also include GitHub's automatically generated list of merged pull 
 
 ## [Prerelease] - Unreleased
 
+## [v0.6.0] - 2026-11-25
+
 ### Changed
 
 - **Breaking:** Upgrade Hyperlight from 0.18 to 0.19 and remove the separate guest
@@ -76,6 +78,11 @@ Release notes also include GitHub's automatically generated list of merged pull 
 
 ### Fixed
 
+- Update Node.js binding dependencies: `arc-swap` 1.9.5 includes fixes for
+  use-after-free and cross-instance type confusion, and `napi` 3.16.2 fixes
+  per-environment teardown for multi-load addons and leaking `AsyncTask` promises.
+  ([#443](https://github.com/hyperlight-dev/hyperlight-js/pull/443),
+  [#450](https://github.com/hyperlight-dev/hyperlight-js/pull/450))
 - Avoid redundant host-function registration during load/unload cycles. Restoring
   a snapshot with different host functions registers them once and updates the
   base snapshot, so subsequent cycles avoid unnecessary guest calls.
@@ -91,4 +98,5 @@ Release notes also include GitHub's automatically generated list of merged pull 
 - Remove an unsupported toolchain input from CI setup.
   ([#405](https://github.com/hyperlight-dev/hyperlight-js/pull/405))
 
-[Prerelease]: https://github.com/hyperlight-dev/hyperlight-js/compare/v0.5.0...HEAD
+[Prerelease]: https://github.com/hyperlight-dev/hyperlight-js/compare/v0.6.0...HEAD
+[v0.6.0]: https://github.com/hyperlight-dev/hyperlight-js/compare/v0.5.0...v0.6.0

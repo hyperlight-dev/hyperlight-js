@@ -75,13 +75,54 @@ jobs:
           tar -zcvf benchmarks_Linux_kvm.tar.gz benchmarks_Linux_kvm
           tar -zcvf benchmarks_Linux_hyperv3.tar.gz benchmarks_Linux_hyperv3
 
-      - name: Create GH Release
+      - name: Download attested crates
         if: ${{ !inputs.dry_run }}
-        run: |
-            gh release create v${{ inputs.version }} \
-              --notes-file RELEASE_NOTES.md \
-              benchmarks_Windows_whp.tar.gz \
-              benchmarks_Linux_kvm.tar.gz \
-              benchmarks_Linux_hyperv3.tar.gz
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-crates
+          path: release-crates
+
+      - name: Verify crate provenance
+        if: ${{ !inputs.dry_run }}
         env:
-            GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for archive in release-crates/*.crate; do
+            gh attestation verify "$archive" --repo "$GH_REPO" \
+              --bundle release-crates/crates-provenance.sigstore.jsonl \
+              --signer-workflow "$GH_REPO/.github/workflows/cargo-publish.yml" \
+              --source-digest "$GITHUB_SHA"
+          done
+
+      - name: Publish completed GH Release
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ inputs.version }}
+        run: |
+          draft=$(gh api --paginate "repos/$GH_REPO/releases" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .draft")
+          if [ "$draft" == "false" ]; then
+            gh release verify "$TAG"
+            for archive in release-crates/*.crate; do
+              gh release verify-asset "$TAG" "$archive"
+            done
+            exit 0
+          fi
+          if [ -z "$draft" ]; then
+            gh release create "$TAG" --verify-tag --draft --notes-file RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" --clobber \
+            benchmarks_Windows_whp.tar.gz \
+            benchmarks_Linux_kvm.tar.gz \
+            benchmarks_Linux_hyperv3.tar.gz \
+            release-crates/*.crate \
+            release-crates/crates-provenance.sigstore.jsonl
+          gh release edit "$TAG" --notes-file RELEASE_NOTES.md --draft=false
+          gh release verify "$TAG"
+          for asset in benchmarks_*.tar.gz release-crates/*; do
+            gh release verify-asset "$TAG" "$asset"
+          done

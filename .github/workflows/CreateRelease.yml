@@ -12,6 +12,12 @@ on:
 permissions:
   id-token: write # needed for trusted publishing (OIDC) to npm and crates.io
   contents: write # needed to create a release
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -76,7 +82,7 @@ jobs:
           git push --set-upstream origin release/v${{ needs.set-version.outputs.version }}
 
   publish-gh-release:
-    needs: [build, benchmarks, code-checks, set-version]
+    needs: [build, benchmarks, code-checks, set-version, publish-npm-packages, publish-cargo-crates]
     uses: ./.github/workflows/gh-publish.yml
     with:
       version: ${{ needs.set-version.outputs.version }}

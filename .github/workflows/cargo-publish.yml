@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 
-name: Publish npm packages
+name: Publish Rust crates
 
 on:
   workflow_dispatch:
@@ -34,6 +34,8 @@ on:
 permissions:
   contents: read
   id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   publish-hyperlight-packages:
@@ -104,6 +106,20 @@ jobs:
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
         id: crates-io-auth
 
+      - name: Validate crate versions
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cargo metadata --no-deps --format-version 1 | jq -e --arg version "$VERSION" '
+            [.packages[] | select(.name == "hyperlight-js-common" or
+              .name == "hyperlight-js-runtime" or .name == "hyperlight-js")] |
+            length == 3 and all(.version == $version)
+          ' || {
+            echo "::error::All release crate versions must match $VERSION."
+            exit 1
+          }
+
       - name: Publish hyperlight-js-common
         run: cargo publish -p hyperlight-js-common
         env:
@@ -121,3 +137,63 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         if: ${{ env.PUBLISH_HYPERLIGHT_JS != 'false' && !inputs.dry_run }}
+
+      - name: Check published crate archives
+        if: ${{ !inputs.dry_run }}
+        id: crate-archives
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          target_dir=$(cargo metadata --no-deps --format-version 1 | jq -r '.target_directory')
+          mkdir release-crates
+          echo 'subjects<<EOF' >> "$GITHUB_OUTPUT"
+          for crate in hyperlight-js-common hyperlight-js-runtime hyperlight-js; do
+            archive="$crate-$VERSION.crate"
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              "https://static.crates.io/crates/$crate/$archive" \
+              --output "release-crates/$archive"
+            publish_var="PUBLISH_${crate^^}"
+            publish_var=${publish_var//-/_}
+            if [ "${!publish_var}" != "false" ]; then
+              if ! cmp "$target_dir/package/$archive" "release-crates/$archive"; then
+                echo "::error::Published $archive does not match the archive packaged by this workflow."
+                exit 1
+              fi
+              echo "release-crates/$archive" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          echo EOF >> "$GITHUB_OUTPUT"
+
+      - name: Attest crate archives
+        if: ${{ !inputs.dry_run && steps.crate-archives.outputs.subjects != '' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.crate-archives.outputs.subjects }}
+
+      - name: Collect crate attestation bundle
+        if: ${{ !inputs.dry_run }}
+        working-directory: release-crates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          : > crates-provenance.sigstore.jsonl
+          for archive in *.crate; do
+            gh attestation download "$archive" --repo "$GH_REPO" \
+              --predicate-type https://slsa.dev/provenance/v1
+            digest=$(sha256sum "$archive" | cut -d ' ' -f 1)
+            cat "sha256:$digest.jsonl" >> crates-provenance.sigstore.jsonl
+            rm "sha256:$digest.jsonl"
+          done
+
+      - name: Upload attested crates
+        if: ${{ !inputs.dry_run }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-crates
+          path: release-crates/
+          if-no-files-found: error
+          overwrite: true

@@ -155,3 +155,16 @@ The tracing example demonstrates how to use to configure tracing subscribers
 
 Hyperlight-js supports debugging the guest runtime using GDB or LLDB through the `gdb` feature.
 For instructions on how to set up debugging, see the [Debugging the guest runtime](docs/guest-runtime-debugging.md) guide.
+
+## Verifying releases
+
+Use the GitHub CLI to verify a release's attestation, replacing `<tag>` with the
+release tag:
+
+```console
+gh release verify <tag> --repo hyperlight-dev/hyperlight-js
+```
+
+See [immutable releases and provenance](docs/release.md#immutable-releases-and-provenance)
+for what the release attestations cover. Cargo does not automatically verify build
+provenance.

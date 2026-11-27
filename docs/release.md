@@ -94,11 +94,24 @@ If you are creating a patch release see the instructions [here](#patching-a-rele
 Pushing a `vX.Y.Z` tag is the **only** manual trigger you need — you do **not** run any workflow by hand. The tag push starts the ["Create a Release"](https://github.com/hyperlight-dev/hyperlight-js/actions/workflows/CreateRelease.yml) workflow ([`CreateRelease.yml`](https://github.com/hyperlight-dev/hyperlight-js/blob/main/.github/workflows/CreateRelease.yml)), which reads the version from the tag and then does everything else automatically:
 
 1. **Creates the release branch** — a `release/v0.18.0` branch is created and pushed for you.
-2. **Creates the GitHub release** — a new [GitHub release](https://github.com/hyperlight-dev/hyperlight-js/releases) is published with curated changelog highlights followed by GitHub-generated PR notes, and the benchmark results attached.
+2. **Prepares the GitHub release inputs** — benchmark results are built and validated.
 3. **Publishes the crates to crates.io** — in dependency order (`hyperlight-js-common` → `hyperlight-js-runtime` → `hyperlight-js`). Verify on the [hyperlight-js page on crates.io](https://crates.io/crates/hyperlight-js).
 4. **Publishes the npm packages to npmjs.com** — `@hyperlight-dev/js-host-api` and its platform-specific binary packages, with their versions set from the tag. Verify on the [npmjs.com package page](https://www.npmjs.com/package/@hyperlight-dev/js-host-api).
+5. **Publishes the completed GitHub release** — only after npm and crate publishing succeed, the workflow creates or resumes a draft, attaches benchmarks, the three published `.crate` archives, and their provenance bundles, then publishes it with curated changelog highlights followed by GitHub-generated PR notes.
 
 Both crates.io and established npm packages use trusted publishing (OIDC), so they do not need long-lived publishing tokens. A new npm package needs a short-lived `NPM_TOKEN` for its first release, as described below. Provenance attestations are generated for every npm package.
+
+### Immutable releases and provenance
+
+Release immutability is enabled so that publishing locks the release tag and assets.
+GitHub automatically generates a release attestation recording the commit and
+asset hashes. The workflow requires this attestation: verification fails after
+publication if this attestation is missing or invalid. (i.e. if immutable releases are turned off or disabled)
+
+The three crate archives also have signed build provenance linking them to their
+source and build workflow. Their provenance bundles are included in the release;
+benchmarks do not have separate build provenance. The workflow verifies crate
+provenance before publishing and release integrity afterward.
 
 ### Release-note labels
 
